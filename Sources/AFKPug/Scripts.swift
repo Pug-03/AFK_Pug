@@ -69,6 +69,10 @@ enum Scripts {
     static let watchdog = #"""
     #!/bin/sh
     flag="$HOME/.afkpug/state/lid-override"
+    paused="$HOME/.afkpug/state/paused-pids"
+    if [ -f "$paused" ] && ! /usr/bin/pgrep -x AFKPug >/dev/null 2>&1; then
+      xargs kill -CONT < "$paused" 2>/dev/null; rm -f "$paused"
+    fi
     [ -f "$flag" ] || exit 0
     if ! /usr/bin/pgrep -x AFKPug >/dev/null 2>&1; then
       /usr/bin/sudo -n /usr/bin/pmset -a disablesleep 0 && rm -f "$flag"

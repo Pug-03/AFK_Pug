@@ -38,7 +38,7 @@ struct AgentHold: Identifiable, Equatable {
         switch agent.lowercased() {
         case "claude": return "Claude Code"
         case "codex": return "Codex"
-        case "cli": return reason.map { "Hold · \($0)" } ?? "Manual hold"
+        case "cli": return reason.map { tr("Hold · %@", $0) } ?? tr("Manual hold")
         default: return agent
         }
     }
