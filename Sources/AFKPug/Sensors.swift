@@ -43,11 +43,11 @@ enum Sensors {
 extension ProcessInfo.ThermalState {
     var label: String {
         switch self {
-        case .nominal: return "Cool"
-        case .fair: return "Warm"
-        case .serious: return "Hot"
-        case .critical: return "Too hot"
-        @unknown default: return "Unknown"
+        case .nominal: return tr("Cool")
+        case .fair: return tr("Warm")
+        case .serious: return tr("Hot")
+        case .critical: return tr("Too hot")
+        @unknown default: return tr("Unknown")
         }
     }
 }
