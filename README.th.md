@@ -54,8 +54,8 @@
 ## ติดตั้ง
 
 ```sh
-git clone https://github.com/Pug-03/AKF_Pug.git
-cd AKF_Pug
+git clone https://github.com/Pug-03/AFK_Pug.git
+cd AFK_Pug
 scripts/build.sh --install
 ```
 
@@ -70,7 +70,7 @@ scripts/build.sh --install
 ใช้แทนการให้แอปแก้ `~/.claude/settings.json` ได้ ปลั๊กอินมีทั้ง hook และ MCP server ติดตั้งแอปไว้ใน `/Applications` ก่อน (ปลั๊กอินเรียก `/Applications/AFK Pug.app` และสคริปต์ที่แอปติดตั้งไว้ใน `~/.afkpug/bin`) แล้วพิมพ์ใน Claude Code:
 
 ```
-/plugin marketplace add Pug-03/AKF_Pug
+/plugin marketplace add Pug-03/AFK_Pug
 /plugin install afk-pug@afk-pug
 ```
 

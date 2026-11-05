@@ -79,8 +79,8 @@ Thai and English, switchable in Settings. Follows your macOS language by default
 AFK Pug isn't on the App Store yet. Build it from source:
 
 ```sh
-git clone https://github.com/Pug-03/AKF_Pug.git
-cd AKF_Pug
+git clone https://github.com/Pug-03/AFK_Pug.git
+cd AFK_Pug
 scripts/build.sh --install   # builds, copies to /Applications and launches
 ```
 
@@ -97,7 +97,7 @@ On first launch a 4-step welcome window opens: what AFK Pug does, the one-time l
 Instead of letting the app edit `~/.claude/settings.json`, you can add the hooks and the MCP server as a Claude Code plugin. Install the app first, in `/Applications` (the plugin calls `/Applications/AFK Pug.app` and the scripts the app installs in `~/.afkpug/bin`), then in Claude Code:
 
 ```
-/plugin marketplace add Pug-03/AKF_Pug
+/plugin marketplace add Pug-03/AFK_Pug
 /plugin install afk-pug@afk-pug
 ```
 
