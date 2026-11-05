@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:AFK Pug}",
+            "name": "Debug AFKPug",
+            "target": "AFKPug",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug AFKPug"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:AFK Pug}",
+            "name": "Release AFKPug",
+            "target": "AFKPug",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release AFKPug"
+        }
+    ]
+}

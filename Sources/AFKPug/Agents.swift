@@ -1,0 +1,208 @@
+import Foundation
+
+/// File locations under ~/.afkpug
+enum Paths {
+    static let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".afkpug")
+    static let holds = root.appendingPathComponent("holds")
+    static let events = root.appendingPathComponent("events")
+    static let bin = root.appendingPathComponent("bin")
+    static let state = root.appendingPathComponent("state")
+    static let lidFlag = state.appendingPathComponent("lid-override")
+    static let hookScript = bin.appendingPathComponent("afkpug-hook")
+    static let cliScript = bin.appendingPathComponent("afkpug")
+    static let watchdogScript = bin.appendingPathComponent("watchdog.sh")
+    static let watchdogPlist = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/LaunchAgents/com.pug03.afkpug.watchdog.plist")
+
+    static func ensure() {
+        for dir in [root, holds, events, bin, state] {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+    }
+
+    static func touch(_ url: URL) {
+        ensure()
+        FileManager.default.createFile(atPath: url.path, contents: Data())
+    }
+}
+
+/// One "keep me awake" claim from an agent, the CLI, or `afkpug run`.
+struct AgentHold: Identifiable, Equatable {
+    let id: String
+    let agent: String
+    let started: Date
+    let expires: Date?
+    let reason: String?
+
+    var displayName: String {
+        switch agent.lowercased() {
+        case "claude": return "Claude Code"
+        case "codex": return "Codex"
+        case "cli": return reason.map { "Hold · \($0)" } ?? "Manual hold"
+        default: return agent
+        }
+    }
+}
+
+/// Something an agent reported: finished a turn, or waiting for you.
+struct AgentEvent {
+    enum Kind: String { case done, waiting }
+    let kind: Kind
+    let agent: String
+}
+
+enum HoldStore {
+    /// Holds without an expiry are dropped after this long without being touched.
+    static let staleAfter: TimeInterval = 6 * 3600
+
+    static func scan(now: Date = Date()) -> [AgentHold] {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: Paths.holds, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
+        var result: [AgentHold] = []
+        for url in files where !url.lastPathComponent.hasPrefix(".") {
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? now
+            let json = (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+            let started = (json["started"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? modified
+            let expiresRaw = json["expires"] as? Double ?? 0
+            let expires = expiresRaw > 0 ? Date(timeIntervalSince1970: expiresRaw) : nil
+
+            let stale = expires.map { $0 < now } ?? (now.timeIntervalSince(modified) > staleAfter)
+            if stale {
+                try? fm.removeItem(at: url)
+                continue
+            }
+            let reason = (json["reason"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            result.append(AgentHold(id: url.lastPathComponent, agent: json["agent"] as? String ?? "agent",
+                                    started: started, expires: expires, reason: reason))
+        }
+        return result.sorted { $0.started < $1.started }
+    }
+
+    static func release(_ hold: AgentHold) {
+        try? FileManager.default.removeItem(at: Paths.holds.appendingPathComponent(hold.id))
+    }
+
+    /// Reads and deletes pending event files.
+    static func consumeEvents() -> [AgentEvent] {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: Paths.events, includingPropertiesForKeys: nil) else { return [] }
+        var events: [AgentEvent] = []
+        for url in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            // name: <timestamp>-<agent>-<kind>
+            let parts = url.lastPathComponent.split(separator: "-")
+            if parts.count >= 3, let kind = AgentEvent.Kind(rawValue: String(parts.last!)) {
+                events.append(AgentEvent(kind: kind, agent: parts[1...(parts.count - 2)].joined(separator: "-")))
+            }
+            try? fm.removeItem(at: url)
+        }
+        return events
+    }
+}
+
+/// Writes the helper scripts and the crash watchdog.
+enum Installer {
+    static func installScripts() {
+        Paths.ensure()
+        write(Scripts.hook, to: Paths.hookScript)
+        write(Scripts.cli, to: Paths.cliScript)
+        write(Scripts.watchdog, to: Paths.watchdogScript)
+    }
+
+    /// LaunchAgent that restores normal lid sleep if AFK Pug dies while the override is on.
+    static func installWatchdog() {
+        let plist = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+          <key>Label</key><string>com.pug03.afkpug.watchdog</string>
+          <key>ProgramArguments</key><array><string>/bin/sh</string><string>\(Paths.watchdogScript.path)</string></array>
+          <key>StartInterval</key><integer>30</integer>
+          <key>RunAtLoad</key><true/>
+        </dict></plist>
+        """
+        let existing = try? String(contentsOf: Paths.watchdogPlist, encoding: .utf8)
+        guard existing != plist else { return }
+        try? FileManager.default.createDirectory(at: Paths.watchdogPlist.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? plist.write(to: Paths.watchdogPlist, atomically: true, encoding: .utf8)
+        let domain = "gui/\(getuid())"
+        PowerControl.run("/bin/launchctl", ["bootout", domain, Paths.watchdogPlist.path])
+        PowerControl.run("/bin/launchctl", ["bootstrap", domain, Paths.watchdogPlist.path])
+    }
+
+    private static func write(_ text: String, to url: URL) {
+        try? text.write(to: url, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+}
+
+/// Adds / removes AFK Pug hooks in ~/.claude/settings.json.
+enum ClaudeHooks {
+    static let settingsURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
+    static let marker = "afkpug-hook"
+    static let events: [(event: String, action: String)] = [
+        ("UserPromptSubmit", "start"),
+        ("Stop", "stop"),
+        ("Notification", "wait"),
+        ("SessionEnd", "end"),
+    ]
+
+    static func isInstalled() -> Bool {
+        guard let data = try? Data(contentsOf: settingsURL), let text = String(data: data, encoding: .utf8) else { return false }
+        return text.contains(marker)
+    }
+
+    static func install() throws {
+        var settings = try load()
+        var hooks = settings["hooks"] as? [String: Any] ?? [:]
+        for (event, action) in events {
+            var groups = stripOurs(hooks[event] as? [[String: Any]] ?? [])
+            groups.append(["hooks": [["type": "command", "command": "\"\(Paths.hookScript.path)\" \(action) claude"]]])
+            hooks[event] = groups
+        }
+        settings["hooks"] = hooks
+        try save(settings)
+    }
+
+    static func uninstall() throws {
+        var settings = try load()
+        guard var hooks = settings["hooks"] as? [String: Any] else { return }
+        for (event, _) in events {
+            let groups = stripOurs(hooks[event] as? [[String: Any]] ?? [])
+            hooks[event] = groups.isEmpty ? nil : groups
+        }
+        settings["hooks"] = hooks.isEmpty ? nil : hooks
+        try save(settings)
+    }
+
+    private static func stripOurs(_ groups: [[String: Any]]) -> [[String: Any]] {
+        groups.compactMap { group in
+            var group = group
+            let inner = (group["hooks"] as? [[String: Any]] ?? []).filter { !(($0["command"] as? String) ?? "").contains(marker) }
+            if inner.isEmpty { return nil }
+            group["hooks"] = inner
+            return group
+        }
+    }
+
+    private static func load() throws -> [String: Any] {
+        guard FileManager.default.fileExists(atPath: settingsURL.path) else { return [:] }
+        let data = try Data(contentsOf: settingsURL)
+        if data.isEmpty { return [:] }
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "AFKPug", code: 2, userInfo: [NSLocalizedDescriptionKey: "~/.claude/settings.json is not a JSON object"])
+        }
+        return object
+    }
+
+    private static func save(_ settings: [String: Any]) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if fm.fileExists(atPath: settingsURL.path) {
+            let backup = settingsURL.appendingPathExtension("afkpug-backup")
+            try? fm.removeItem(at: backup)
+            try? fm.copyItem(at: settingsURL, to: backup)
+        }
+        let data = try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        try data.write(to: settingsURL, options: .atomic)
+    }
+}
