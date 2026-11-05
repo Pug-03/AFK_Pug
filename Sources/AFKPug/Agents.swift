@@ -2,17 +2,24 @@ import Foundation
 
 /// File locations under ~/.afkpug
 enum Paths {
-    static let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".afkpug")
+    /// In simulation everything lives in a sandbox so the real app never sees it.
+    static let root = Sim.enabled
+        ? Sim.dir.appendingPathComponent("root")
+        : FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".afkpug")
     static let holds = root.appendingPathComponent("holds")
     static let events = root.appendingPathComponent("events")
     static let bin = root.appendingPathComponent("bin")
     static let state = root.appendingPathComponent("state")
     static let lidFlag = state.appendingPathComponent("lid-override")
+    static let lowPowerFlag = state.appendingPathComponent("lowpower-restore")
+    static let muteFlag = state.appendingPathComponent("mute-restore")
     static let hookScript = bin.appendingPathComponent("afkpug-hook")
     static let cliScript = bin.appendingPathComponent("afkpug")
     static let watchdogScript = bin.appendingPathComponent("watchdog.sh")
-    static let watchdogPlist = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/LaunchAgents/com.pug03.afkpug.watchdog.plist")
+    static let watchdogPlist = Sim.enabled
+        ? root.appendingPathComponent("com.pug03.afkpug.watchdog.plist")
+        : FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/com.pug03.afkpug.watchdog.plist")
 
     static func ensure() {
         for dir in [root, holds, events, bin, state] {
@@ -52,7 +59,12 @@ struct AgentEvent {
 }
 
 enum HoldStore {
-    /// Holds without an expiry are dropped after this long without being touched.
+    /// Holds without an expiry (Claude hooks, `afkpug run`) are re-armed by every
+    /// tool call / every minute. Untouched this long, they are dropped unless the
+    /// owner's process tree is still busy (a single 40 min build is one tool call).
+    /// Covers turns that end without a Stop hook (Esc, some API errors).
+    static let untouchedAfter: TimeInterval = 15 * 60
+    /// Hard cap for holds without an expiry, busy or not.
     static let staleAfter: TimeInterval = 6 * 3600
 
     static func scan(now: Date = Date()) -> [AgentHold] {
@@ -61,12 +73,23 @@ enum HoldStore {
         var result: [AgentHold] = []
         for url in files where !url.lastPathComponent.hasPrefix(".") {
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? now
+            // An unparseable file (e.g. a reason with control characters from an
+            // old CLI) has no expiry and no owner, so it only lives `untouchedAfter`.
             let json = (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
             let started = (json["started"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? modified
             let expiresRaw = json["expires"] as? Double ?? 0
             let expires = expiresRaw > 0 ? Date(timeIntervalSince1970: expiresRaw) : nil
+            let pid = (json["pid"] as? NSNumber)?.int32Value ?? 0
 
-            let stale = expires.map { $0 < now } ?? (now.timeIntervalSince(modified) > staleAfter)
+            var stale: Bool
+            if let expires {
+                stale = expires < now
+            } else {
+                let untouched = now.timeIntervalSince(modified)
+                stale = untouched > staleAfter || (untouched > untouchedAfter && !(pid > 1 && ProcessWatcher.treeBusy(pid)))
+            }
+            // Holds that name their owner die with it (a killed terminal never runs the Stop hook).
+            if pid > 1, kill(pid, 0) != 0, errno == ESRCH { stale = true }
             if stale {
                 try? fm.removeItem(at: url)
                 continue
@@ -82,15 +105,18 @@ enum HoldStore {
         try? FileManager.default.removeItem(at: Paths.holds.appendingPathComponent(hold.id))
     }
 
-    /// Reads and deletes pending event files.
-    static func consumeEvents() -> [AgentEvent] {
+    /// Reads and deletes pending event files. Events written before `notBefore`
+    /// (e.g. while the app wasn't running) are deleted without being reported.
+    static func consumeEvents(notBefore: Date? = nil) -> [AgentEvent] {
         let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: Paths.events, includingPropertiesForKeys: nil) else { return [] }
+        guard let files = try? fm.contentsOfDirectory(at: Paths.events, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
         var events: [AgentEvent] = []
         for url in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
             // name: <timestamp>-<agent>-<kind>
             let parts = url.lastPathComponent.split(separator: "-")
-            if parts.count >= 3, let kind = AgentEvent.Kind(rawValue: String(parts.last!)) {
+            if notBefore.map({ modified >= $0 }) ?? true,
+               parts.count >= 3, let kind = AgentEvent.Kind(rawValue: String(parts.last!)) {
                 events.append(AgentEvent(kind: kind, agent: parts[1...(parts.count - 2)].joined(separator: "-")))
             }
             try? fm.removeItem(at: url)
@@ -110,6 +136,7 @@ enum Installer {
 
     /// LaunchAgent that restores normal lid sleep if AFK Pug dies while the override is on.
     static func installWatchdog() {
+        if Sim.enabled { Sim.record("install watchdog LaunchAgent (skipped)"); return }
         let plist = """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -137,10 +164,13 @@ enum Installer {
 
 /// Adds / removes AFK Pug hooks in ~/.claude/settings.json.
 enum ClaudeHooks {
-    static let settingsURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
+    static let settingsURL = (Sim.enabled ? Paths.root : FileManager.default.homeDirectoryForCurrentUser)
+        .appendingPathComponent(".claude/settings.json")
     static let marker = "afkpug-hook"
     static let events: [(event: String, action: String)] = [
         ("UserPromptSubmit", "start"),
+        ("PreToolUse", "touch"),
+        ("PostToolUse", "touch"),
         ("Stop", "stop"),
         ("Notification", "wait"),
         ("SessionEnd", "end"),
@@ -151,12 +181,24 @@ enum ClaudeHooks {
         return text.contains(marker)
     }
 
+    /// Connected, but by an older version (missing events or other commands).
+    static func needsUpgrade() -> Bool {
+        guard isInstalled(), let settings = try? load(), let hooks = settings["hooks"] as? [String: Any] else { return false }
+        return events.contains { event, action in
+            let commands = (hooks[event] as? [[String: Any]] ?? []).flatMap { $0["hooks"] as? [[String: Any]] ?? [] }
+                .compactMap { $0["command"] as? String }
+            return !commands.contains(command(action))
+        }
+    }
+
+    private static func command(_ action: String) -> String { "\"\(Paths.hookScript.path)\" \(action) claude" }
+
     static func install() throws {
         var settings = try load()
         var hooks = settings["hooks"] as? [String: Any] ?? [:]
         for (event, action) in events {
             var groups = stripOurs(hooks[event] as? [[String: Any]] ?? [])
-            groups.append(["hooks": [["type": "command", "command": "\"\(Paths.hookScript.path)\" \(action) claude"]]])
+            groups.append(["hooks": [["type": "command", "command": command(action)]]])
             hooks[event] = groups
         }
         settings["hooks"] = hooks
@@ -196,13 +238,16 @@ enum ClaudeHooks {
 
     private static func save(_ settings: [String: Any]) throws {
         let fm = FileManager.default
-        try fm.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if fm.fileExists(atPath: settingsURL.path) {
+        // settings.json is often a symlink into a dotfiles repo: write through it
+        // (an atomic write to the link path would replace the link with a file).
+        let target = settingsURL.resolvingSymlinksInPath()
+        try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if fm.fileExists(atPath: target.path) {
             let backup = settingsURL.appendingPathExtension("afkpug-backup")
             try? fm.removeItem(at: backup)
-            try? fm.copyItem(at: settingsURL, to: backup)
+            try? fm.copyItem(at: target, to: backup)
         }
         let data = try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        try data.write(to: settingsURL, options: .atomic)
+        try data.write(to: target, options: .atomic)
     }
 }
