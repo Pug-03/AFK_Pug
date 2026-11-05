@@ -110,6 +110,14 @@ enum LidSensor {
     private static var staleArmed = true
     private static var lastExternal = Date.distantPast
     private static var externalRecently = false
+    /// Last display reading that wasn't an error.
+    private static var lastKnownExternal = false
+    /// Input re-opened a real close while the flag still reads Yes (e.g. a bumped
+    /// Bluetooth mouse). After `rearmIdle` without input the lid counts as closed again.
+    private static var openedByInput = false
+    /// The current close came from a real edge (not from the stale-flag rule).
+    private static var closedByEdge = false
+    static let rearmIdle: TimeInterval = 300
     private static var notifier: io_object_t = 0
     /// Edges delivered by IOKit between ticks (true = closed).
     nonisolated(unsafe) fileprivate static var pending: [Bool] = []
@@ -129,8 +137,9 @@ enum LidSensor {
         lastFlag = flag
         for edge in edges {
             staleArmed = false
+            openedByInput = false
             if edge {
-                if !closed { closed = true; closedAt = now }
+                if !closed { closed = true; closedAt = now; closedByEdge = true }
             } else {
                 closed = false
             }
@@ -140,13 +149,28 @@ enum LidSensor {
 
     /// A session just started: re-check a Yes flag that has no edge behind it.
     static func sessionStarted(now: Date) -> Bool {
-        staleArmed = true
-        return evaluate(now: now, flag: lastFlag ?? Sensors.clamshellFlag())
+        let flag = lastFlag ?? Sensors.clamshellFlag()
+        // Decide once, right now: a stale Yes with someone at the keyboard stays "open"
+        // for this whole session instead of firing later while they watch a video.
+        if flag, !closed, !openedByInput, Sensors.idleSeconds() > staleIdle {
+            closed = true
+            closedAt = now
+            closedByEdge = false
+        }
+        staleArmed = false
+        return evaluate(now: now, flag: flag)
+    }
+
+    /// The flag reads Yes, no monitor, input reopened a real close and the user has
+    /// been idle a while: the Mac is most likely shut in a bag after a bump.
+    static func probablyStillClosed(now: Date) -> Bool {
+        openedByInput && (lastFlag ?? false) && !lastKnownExternal && Sensors.idleSeconds() > staleIdle
     }
 
     private static func evaluate(now: Date, flag: Bool) -> Bool {
-        let external = Sensors.externalDisplay()
-        if external != false { lastExternal = now }
+        // A CoreGraphics error keeps the last known state instead of counting as a monitor.
+        if let external = Sensors.externalDisplay() { lastKnownExternal = external }
+        if lastKnownExternal { lastExternal = now }
         let wasExternal = externalRecently
         externalRecently = now.timeIntervalSince(lastExternal) < monitorDebounce
         // The monitor went away for good: a Yes flag needs re-checking.
@@ -154,18 +178,29 @@ enum LidSensor {
 
         let idle = Sensors.idleSeconds()
         let inputAfterClose = idle < hidInput && now.addingTimeInterval(-idle) > closedAt.addingTimeInterval(2)
-        if closed, external == false, inputAfterClose {
+        if closed, !lastKnownExternal, inputAfterClose {
             closed = false
             staleArmed = false
+            // Only a real close can be "re-closed" later; a stale-flag guess can't.
+            openedByInput = flag && closedByEdge
+            closedByEdge = false
         }
         if !flag {
             staleArmed = false
+            openedByInput = false
+        } else if !closed, openedByInput, idle > rearmIdle {
+            // Nobody has touched it for 5 minutes since the bump: shut again.
+            closed = true
+            closedAt = now
+            closedByEdge = true
+            openedByInput = false
         } else if !closed, staleArmed {
             if idle > staleIdle {
                 closed = true
                 closedAt = now
+                closedByEdge = false
                 staleArmed = false
-            } else if idle < hidInput, external == false {
+            } else if idle < hidInput, !lastKnownExternal {
                 staleArmed = false
             }
         }

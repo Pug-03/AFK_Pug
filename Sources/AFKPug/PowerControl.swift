@@ -214,18 +214,30 @@ enum PowerControl {
     // MARK: One-time setup (admin prompt)
 
     /// Installs the sudoers rule. Shows the standard macOS admin prompt once.
-    static func installSudoers() -> Result<Void, Error> {
+    enum AdminError: Error, Equatable {
+        case cancelled
+        case badUser
+        case failed(String)
+    }
+
+    /// Installs the sudoers rule with one admin prompt. The rule is written by the
+    /// root shell itself into root-owned /etc/sudoers.d, validated, then moved in
+    /// place, so no other process can swap the file between check and install.
+    /// Blocking (it waits for the password dialog): call it off the main thread.
+    nonisolated static func installSudoers() -> Result<Void, AdminError> {
         if Sim.enabled { Sim.record("install sudoers (admin prompt)"); Sim.set("setup", "yes"); return .success(()) }
         let user = NSUserName()
-        let rule = "\(user) ALL=(root) NOPASSWD: " + allowedCommands.joined(separator: ", ") + "\n"
-        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("afkpug-sudoers")
-        do { try rule.write(to: tmp, atomically: true, encoding: .utf8) } catch { return .failure(error) }
-        let shell = "/usr/sbin/visudo -cf '\(tmp.path)' && /usr/bin/install -m 0440 -o root -g wheel '\(tmp.path)' \(sudoersPath)"
-        defer { try? FileManager.default.removeItem(at: tmp) }
+        guard !user.isEmpty, user.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) }) else {
+            return .failure(.badUser)
+        }
+        let rule = "\(user) ALL=(root) NOPASSWD: " + allowedCommands.joined(separator: ", ")
+        let new = "/etc/sudoers.d/.afkpug.new"
+        let shell = "umask 077; rm -f \(new); printf '%s\\n' '\(rule)' > \(new) && chown root:wheel \(new) && chmod 0440 \(new)"
+            + " && /usr/sbin/visudo -cf \(new) && mv -f \(new) \(sudoersPath) || { rm -f \(new); exit 1; }"
         return runAsAdmin(shell, prompt: "AFK Pug needs your password once so it can keep your Mac awake with the lid closed.")
     }
 
-    static func uninstallSudoers() -> Result<Void, Error> {
+    nonisolated static func uninstallSudoers() -> Result<Void, AdminError> {
         if Sim.enabled {
             if sleepDisabled() { setSleepDisabled(false) }
             Sim.record("remove sudoers (admin prompt)"); Sim.set("setup", "no"); return .success(())
@@ -234,16 +246,16 @@ enum PowerControl {
         return runAsAdmin("/bin/rm -f \(sudoersPath)", prompt: "AFK Pug will remove its lid-closed permission.")
     }
 
-    private static func runAsAdmin(_ shell: String, prompt: String) -> Result<Void, Error> {
+    /// Runs a shell command as root through the standard macOS admin dialog
+    /// (osascript in a child process, so it can run off the main thread).
+    nonisolated static func runAsAdmin(_ shell: String, prompt: String) -> Result<Void, AdminError> {
         let escaped = shell.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         let source = "do shell script \"\(escaped)\" with administrator privileges with prompt \"\(prompt)\""
-        var error: NSDictionary?
-        NSAppleScript(source: source)?.executeAndReturnError(&error)
-        if let error {
-            let message = error[NSAppleScript.errorMessage] as? String ?? "Setup was cancelled."
-            return .failure(NSError(domain: "AFKPug", code: 1, userInfo: [NSLocalizedDescriptionKey: message]))
-        }
-        return .success(())
+        let result = run("/usr/bin/osascript", ["-e", source])
+        if result.status == 0 { return .success(()) }
+        if result.output.contains("-128") { return .failure(.cancelled) }
+        let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return .failure(.failed(message.isEmpty ? "exit \(result.status)" : message))
     }
 
     // MARK: Helpers
@@ -271,5 +283,15 @@ enum PowerControl {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+    }
+}
+
+extension PowerControl.AdminError {
+    var message: String {
+        switch self {
+        case .cancelled: return tr("Cancelled")
+        case .badUser: return tr("Your account name has characters a permission rule can't use.")
+        case .failed(let text): return tr("Couldn't set up the permission: %@", text)
+        }
     }
 }

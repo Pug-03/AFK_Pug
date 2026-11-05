@@ -81,6 +81,18 @@ final class Engine: ObservableObject {
     /// own TimelineView, so the whole popover isn't re-rendered every 2 s.
     private(set) var now = Clock.now()
     @Published var setupError: String?
+    @Published private(set) var setupWorking = false
+    @Published private(set) var launchAtLogin = LoginItem.state
+    @Published private(set) var loginError: String?
+    @Published private(set) var uninstalling = false
+    /// Apps producing sound right now (shown next to "Keep music playing").
+    @Published private(set) var musicApps: [String] = []
+    private var snoozeMusic = false
+    private var snoozeCharger = false
+    private var snoozeApp: String?
+    /// Set once uninstall starts: the engine never ticks again.
+    @Published private(set) var uninstalledAll = false
+    @Published private(set) var uninstallErrors: [String] = []
     /// Connect failures, shown in Settings next to the button. Cleared on retry.
     @Published private(set) var claudeError: String?
     @Published private(set) var mcpError: String?
@@ -107,6 +119,22 @@ final class Engine: ObservableObject {
     private var lastOverrideFailure = Date.distantPast
     private var lastReleaseFailure = Date.distantPast
     private var firstTick = true
+    /// wantLid from the last tick: lid actions only engage while lid mode is really wanted.
+    private var lastWantLid = false
+    /// When the last agent hold ended; grace is derived from the current graceMinutes.
+    private var holdsEndedAt: Date?
+    /// Last time audio was heard (music trigger debounce) and whether it was heard around the close.
+    private var lastMusicHeard: Date?
+    private var musicAtClose = false
+    private var closedAt: Date?
+    /// Guard hysteresis and notification rate limits.
+    private var acSince: Date?
+    private var coolSince: Date?
+    private var lastBatteryNotice = Date.distantPast
+    private var lastThermalNotice = Date.distantPast
+    private var lastTickTime: Date?
+    /// "finished" events waiting 10 s to make sure the agent really stopped.
+    private var pendingDone: [(agent: String, at: Date)] = []
 
     private init() {
         let ud = Engine.store
@@ -145,6 +173,12 @@ final class Engine: ObservableObject {
         // Older connections lack the PreToolUse / PostToolUse hooks.
         if ClaudeHooks.needsUpgrade(), (try? ClaudeHooks.install()) != nil { log("link", tr("Updated the Claude Code connection")) }
         recoverFromCrash()
+        if !Engine.store.bool(forKey: "didFirstRun") {
+            Engine.store.set(true, forKey: "didFirstRun")
+            if launchAtLogin == .off, !Sim.enabled { setLaunchAtLogin(true) }
+        }
+        launchAtLogin = LoginItem.state
+        if MCPInstaller.needsRefresh() { background({ MCPInstaller.install() }) { _ in } }
         if Bundle.main.bundleIdentifier != nil, !Sim.enabled {
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         }
@@ -177,16 +211,23 @@ final class Engine: ObservableObject {
 
     private func recoverFromCrash() {
         if FileManager.default.fileExists(atPath: Paths.lidFlag.path) {
-            PowerControl.setSleepDisabled(false)
-            log("arrow.uturn.backward", tr("Restored normal lid sleep after an unexpected quit"))
+            if PowerControl.setSleepDisabled(false) {
+                log("arrow.uturn.backward", tr("Restored normal lid sleep after an unexpected quit"))
+            } else {
+                // Keep lidOverrideOn so apply() keeps retrying the release.
+                lidOverrideOn = true
+                lastReleaseFailure = Clock.now()
+                log("exclamationmark.triangle.fill", tr("Couldn't restore normal lid sleep. Press Set up to fix the permission."))
+            }
         }
         ChatPauser.resume()
         if FileManager.default.fileExists(atPath: Paths.lowPowerFlag.path) {
             let text = (try? String(contentsOf: Paths.lowPowerFlag, encoding: .utf8)) ?? ""
             if let source = PowerControl.PowerSource(rawValue: text.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                PowerControl.setLowPower(false, source: source)
+                if PowerControl.setLowPower(false, source: source) { try? FileManager.default.removeItem(at: Paths.lowPowerFlag) }
+            } else {
+                try? FileManager.default.removeItem(at: Paths.lowPowerFlag)
             }
-            try? FileManager.default.removeItem(at: Paths.lowPowerFlag)
         }
         if FileManager.default.fileExists(atPath: Paths.muteFlag.path) {
             PowerControl.setMuted(false)
@@ -242,9 +283,17 @@ final class Engine: ObservableObject {
         tick()
     }
 
+    /// The admin dialog blocks, so it runs off the main thread; the UI shows "Working…".
     func runSetup() {
+        guard !setupWorking else { return }
         setupError = nil
-        switch PowerControl.installSudoers() {
+        setupWorking = true
+        background({ PowerControl.installSudoers() }) { [weak self] result in self?.finishSetup(result) }
+    }
+
+    private func finishSetup(_ result: Result<Void, PowerControl.AdminError>) {
+        setupWorking = false
+        switch result {
         case .success:
             setupDone = PowerControl.isSetupDone
             if setupDone {
@@ -254,15 +303,23 @@ final class Engine: ObservableObject {
                 setupError = tr("Permission was not applied. Please try again.")
             }
         case .failure(let error):
-            setupError = error.localizedDescription
+            setupError = Engine.describe(error)
         }
         tick()
     }
 
+    static func describe(_ error: PowerControl.AdminError) -> String { error.message }
+
     func removeSetup() {
-        _ = PowerControl.uninstallSudoers()
-        setupDone = PowerControl.isSetupDone
-        if !PowerControl.sleepDisabled() { lidOverrideOn = false }
+        guard !setupWorking else { return }
+        setupWorking = true
+        background({ PowerControl.uninstallSudoers() }) { [weak self] result in
+            guard let self else { return }
+            self.setupWorking = false
+            if case .failure(let error) = result, error != .cancelled { self.setupError = Engine.describe(error) }
+            self.setupDone = PowerControl.isSetupDone
+            if !PowerControl.sleepDisabled() { self.lidOverrideOn = false }
+        }
     }
 
     func connectClaude() {
@@ -273,6 +330,74 @@ final class Engine: ObservableObject {
             log("link", tr("Connected to Claude Code"))
         } catch {
             claudeError = tr("Could not connect: %@", error.localizedDescription)
+        }
+    }
+
+    /// Something besides agents is keeping the Mac awake, so "Sleep now" makes sense.
+    var canSleepNow: Bool { manualOn || triggerReason != nil || graceActive }
+
+    /// Ends the manual session and the grace period, and snoozes triggers (music,
+    /// charger, apps) until each one goes away. Agents still working keep it awake.
+    func sleepNow() {
+        manualOn = false
+        manualEnd = nil
+        manualStart = nil
+        holdsEndedAt = nil
+        graceUntil = nil
+        if musicPlaying { snoozeMusic = true }
+        if battery.onAC { snoozeCharger = true }
+        snoozeApp = Triggers.runningApp(from: autoApps)
+        log("moon.zzz.fill", tr("Sleeping now"))
+        tick()
+    }
+
+    /// afkpug://start?minutes=90, afkpug://stop, afkpug://toggle, afkpug://sleep-now
+    func handle(url: URL) {
+        guard url.scheme?.lowercased() == "afkpug" else { return }
+        let command = (url.host ?? url.path).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        switch command {
+        case "start":
+            let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            if let text = items.first(where: { $0.name == "minutes" })?.value {
+                guard let minutes = Int(text), (0...1440).contains(minutes) else { return }
+                selectedMinutes = minutes
+            }
+            if !manualOn { start() } else { choose(minutes: selectedMinutes) }
+        case "stop": stop()
+        case "toggle": manualOn ? stop() : start()
+        case "sleep-now", "sleepnow": sleepNow()
+        default: break
+        }
+    }
+
+    // MARK: Launch at login / uninstall
+
+    func setLaunchAtLogin(_ on: Bool) {
+        loginError = nil
+        do { try LoginItem.set(on) } catch { loginError = tr("Could not change Open at Login: %@", error.localizedDescription) }
+        launchAtLogin = LoginItem.state
+    }
+
+    /// Removes hooks, MCP registration, watchdog, permission and ~/.afkpug, then quits.
+    func uninstallEverything() {
+        guard !uninstalling else { return }
+        uninstalling = true
+        uninstalledAll = true
+        manualOn = false
+        manualEnd = nil
+        manualStart = nil
+        shutdown()
+        timer?.invalidate()
+        background({ Uninstaller.run() }) { [weak self] report in
+            guard let self else { return }
+            self.uninstalling = false
+            self.uninstallErrors = report.errors
+            if Sim.enabled {
+                Sim.record("uninstall finished (\(report.errors.count) problem(s))")
+            } else {
+                Engine.store.removePersistentDomain(forName: Bundle.main.bundleIdentifier ?? "com.pug03.afkpug")
+                if report.errors.isEmpty { NSApp.terminate(nil) }
+            }
         }
     }
 
@@ -289,6 +414,8 @@ final class Engine: ObservableObject {
                 self.log("cpu", tr("Agents can now ask AFK Pug to stay awake"))
             case .failure(.noClaude):
                 self.mcpError = tr("Could not find the claude command. Is Claude Code installed?")
+            case .failure(.translocated):
+                self.mcpError = tr("Move AFK Pug to the Applications folder first, then connect again.")
             case .failure(.failed(let output)):
                 self.mcpError = output.isEmpty ? tr("claude mcp add failed. Please try again.") : output
             }
@@ -304,7 +431,7 @@ final class Engine: ObservableObject {
             guard let self else { return }
             self.mcpBusy = false
             self.mcpConnected = Sim.enabled ? !ok : MCPInstaller.isInstalled()
-            if self.mcpConnected { self.mcpError = tr("Could not find the claude command. Is Claude Code installed?") }
+            if self.mcpConnected { self.mcpError = tr("Could not disconnect. In Terminal run: claude mcp remove --scope user afkpug") }
         }
     }
 
@@ -379,16 +506,22 @@ final class Engine: ObservableObject {
     // MARK: Loop
 
     func tick() {
+        // After uninstall nothing may run again (it would recreate files and re-arm).
+        guard !uninstalledAll else { return }
         now = Clock.now()
         tickCount += 1
+        if let last = lastTickTime, now < last.addingTimeInterval(-1) { clockWentBack(by: last.timeIntervalSince(now)) }
+        lastTickTime = now
         // Only publish real changes, so SwiftUI isn't invalidated every 2 s.
         let newBattery = Sensors.battery()
         if newBattery != battery { battery = newBattery }
         let newThermal = Sensors.thermal()
         if newThermal != thermal { thermal = newThermal }
+        // Audio before the lid, so a close in this same tick knows music was playing.
+        if AudioWatcher.isPlaying() { lastMusicHeard = now }
         // Read the lid first so this tick's decisions (e.g. sleepnow) never use a stale value.
         let closed = LidSensor.update(now: now)
-        if closed != lidClosed { lidClosed = closed }
+        if closed != lidClosed { lidClosed = closed; lidChanged(closed) }
 
         // Agents. Hold files are still scanned (and cleaned) with Agent mode off,
         // but then nothing counts: no headline, grace or guard.
@@ -399,13 +532,15 @@ final class Engine: ObservableObject {
         // Events left from while the app wasn't running would all fire at once.
         handleEvents(HoldStore.consumeEvents(notBefore: firstTick ? Date().addingTimeInterval(-120) : nil))
         firstTick = false
-        if agentMode, !previous.isEmpty, holds.isEmpty {
-            graceUntil = now.addingTimeInterval(TimeInterval(max(0, graceMinutes) * 60))
-        }
-        if (!holds.isEmpty || !agentMode), graceUntil != nil { graceUntil = nil }
+        if agentMode, !previous.isEmpty, holds.isEmpty { holdsEndedAt = now }
+        if !holds.isEmpty || !agentMode { holdsEndedAt = nil }
+        let newGrace = holdsEndedAt.map { $0.addingTimeInterval(TimeInterval(max(0, graceMinutes) * 60)) }
+        if newGrace != graceUntil { graceUntil = newGrace }
+        if let g = graceUntil, g <= now { holdsEndedAt = nil; graceUntil = nil }
         for hold in holds where !previous.contains(where: { $0.id == hold.id }) {
             log("bolt.fill", tr("%@ started working", hold.displayName))
         }
+        confirmFinished()
 
         // Manual timer
         if manualOn, let end = manualEnd, now >= end {
@@ -418,11 +553,21 @@ final class Engine: ObservableObject {
 
         // Triggers (before the guards, so they see this tick's reasons)
         var reason: String?
-        let music = AudioWatcher.isPlaying()
-        if music != musicPlaying { musicPlaying = music }
-        if keepMusic, music { reason = tr("music playing") }
-        if autoOnPower, battery.hasBattery, battery.onAC { reason = tr("charger connected") }
-        if let app = Triggers.runningApp(from: autoApps) { reason = app }
+        // A short gap between tracks must not end the session.
+        let musicOn = lastMusicHeard.map { now.timeIntervalSince($0) < 30 && now >= $0 } ?? false
+        if musicOn != musicPlaying { musicPlaying = musicOn }
+        // With the lid closed, music only counts if it was already playing when the lid
+        // closed: an idle audio stream must not keep a Mac in a bag awake.
+        let newApps = musicOn ? AudioWatcher.playingApps() : []
+        if newApps != musicApps { musicApps = newApps }
+        // "Sleep now" snoozes a trigger until its condition goes away.
+        if snoozeMusic, !musicOn { snoozeMusic = false }
+        if snoozeCharger, !battery.onAC { snoozeCharger = false }
+        let app = Triggers.runningApp(from: autoApps)
+        if let snoozed = snoozeApp, app != snoozed { snoozeApp = nil }
+        if keepMusic, musicOn, !snoozeMusic, !lidClosed || musicAtClose { reason = tr("music playing") }
+        if autoOnPower, battery.hasBattery, battery.onAC, !snoozeCharger { reason = tr("charger connected") }
+        if let app, app != snoozeApp { reason = app }
         if reason != triggerReason { triggerReason = reason }
 
         // Guards
@@ -434,23 +579,73 @@ final class Engine: ObservableObject {
         if want, !isActive {
             // A session starting: re-check a clamshell flag that read Yes without an edge.
             let closed = LidSensor.sessionStarted(now: now)
-            if closed != lidClosed { lidClosed = closed }
+            if closed != lidClosed { lidClosed = closed; lidChanged(closed) }
         }
+        let wasActiveBefore = isActive
         // Restore first, while the Mac is surely still awake, then drop the override.
         var sleepAfter = false
         if lidEngaged, !(lidClosed && wantLid) {
             disengageLid()
             sleepAfter = lidClosed
         }
+        lastWantLid = wantLid
         apply(active: want, wantLid: wantLid)
         if lidEngaged, !lidOverrideOn {
             // The override could not be re-applied; macOS will sleep on its own.
             disengageLid()
             sleepAfter = lidClosed
         }
+        // Session ended while the lid is most likely still shut after a bump.
+        if wasActiveBefore, !isActive, !sleepAfter, LidSensor.probablyStillClosed(now: now) { sleepAfter = true }
         // Still shut: work is done (or a guard tripped), so sleep now.
         if sleepAfter { PowerControl.sleepNow() }
         updateLidSession()
+    }
+
+    /// Report "finished" only if the agent didn't pick the work up again within 10 s.
+    private func confirmFinished() {
+        guard !pendingDone.isEmpty else { return }
+        var keep: [(agent: String, at: Date)] = []
+        for item in pendingDone {
+            if holds.contains(where: { $0.agent == item.agent }) { continue }   // resumed: drop it
+            if now.timeIntervalSince(item.at) < 10, now >= item.at { keep.append(item); continue }
+            let name = item.agent == "claude" ? "Claude Code" : item.agent
+            openSummary?.agentsFinished += 1
+            log("checkmark.circle.fill", tr("%@ finished", name))
+            if notifyAgents { notify(tr("%@ finished", name), tr("Your agent is done. AFK Pug will let the Mac sleep soon.")) }
+        }
+        pendingDone = keep
+    }
+
+    /// Lid edge bookkeeping for the music rule.
+    private func lidChanged(_ closed: Bool) {
+        if closed {
+            closedAt = now
+            musicAtClose = lastMusicHeard.map { now.timeIntervalSince($0) < 30 } ?? false
+        } else {
+            closedAt = nil
+            musicAtClose = false
+        }
+    }
+
+    /// The wall clock was set back: shift every stored time so timers keep their length.
+    private func clockWentBack(by delta: TimeInterval) {
+        func back(_ d: Date?) -> Date? { d.map { $0.addingTimeInterval(-delta) } }
+        manualStart = back(manualStart)
+        manualEnd = back(manualEnd)
+        holdsEndedAt = back(holdsEndedAt)
+        graceUntil = back(graceUntil)
+        lastDisplayOff = lastDisplayOff.addingTimeInterval(-delta)
+        lastMusicHeard = back(lastMusicHeard)
+        closedAt = back(closedAt)
+        acSince = back(acSince)
+        coolSince = back(coolSince)
+        for (pid, d) in procLastBusy { procLastBusy[pid] = d.addingTimeInterval(-delta) }
+        for (pid, d) in procFirstSeen { procFirstSeen[pid] = d.addingTimeInterval(-delta) }
+        if var s = openSummary { s = LidSummary(closedAt: s.closedAt.addingTimeInterval(-delta), openedAt: s.openedAt,
+                                                startBattery: s.startBattery, endBattery: s.endBattery,
+                                                peakThermal: s.peakThermal, agentsFinished: s.agentsFinished, hadBattery: s.hadBattery)
+            openSummary = s }
     }
 
     /// Agents without hooks, found by process and CPU use.
@@ -480,12 +675,17 @@ final class Engine: ObservableObject {
     }
 
     private func updateGuards() {
+        acSince = battery.onAC ? (acSince ?? now) : nil
+        coolSince = thermal.rawValue <= ProcessInfo.ThermalState.fair.rawValue ? (coolSince ?? now) : nil
         if let current = trip {
             switch current {
             case .battery:
-                if battery.onAC || battery.percent > batteryFloor + 5 { trip = nil }
+                // A loose charger must not flap the trip (and spam notifications).
+                let acSteady = acSince.map { now.timeIntervalSince($0) >= 30 } ?? false
+                if acSteady || battery.percent > batteryFloor + 5 { trip = nil }
             case .thermal:
-                if thermal.rawValue <= ProcessInfo.ThermalState.fair.rawValue { trip = nil }
+                // Stay off until the Mac has been cool for 5 minutes.
+                if let since = coolSince, now.timeIntervalSince(since) >= 300 { trip = nil }
             }
             return
         }
@@ -494,12 +694,18 @@ final class Engine: ObservableObject {
             trip = .battery(battery.percent)
             manualOn = false
             log("battery.25percent", tr("Battery at %d%%. Letting the Mac sleep", battery.percent))
-            notify(tr("Battery low"), tr("AFK Pug stopped at %d%% so your Mac can sleep safely.", battery.percent))
+            if now.timeIntervalSince(lastBatteryNotice) >= 600 || now < lastBatteryNotice {
+                lastBatteryNotice = now
+                notify(tr("Battery low"), tr("AFK Pug stopped at %d%% so your Mac can sleep safely.", battery.percent))
+            }
         } else if thermal == .critical {
             trip = .thermal
             manualOn = false
             log("thermometer.high", tr("Mac too hot. Letting it sleep"))
-            notify(tr("Too hot"), tr("AFK Pug stopped so your Mac can cool down."))
+            if now.timeIntervalSince(lastThermalNotice) >= 600 || now < lastThermalNotice {
+                lastThermalNotice = now
+                notify(tr("Too hot"), tr("AFK Pug stopped so your Mac can cool down."))
+            }
         }
     }
 
@@ -549,7 +755,7 @@ final class Engine: ObservableObject {
     private func updateLidSession() {
         // LidSensor already requires an edge, or a minute without input for a
         // flag that read closed without one, so a stale flag can't lock anyone out.
-        if !lidEngaged, lidClosed, isActive, lidOverrideOn { engageLid() }
+        if !lidEngaged, lidClosed, isActive, lastWantLid, lidOverrideOn { engageLid() }
         guard lidEngaged else { return }
         openSummary?.endBattery = battery.percent
         if thermal.rawValue > (openSummary?.peakThermal.rawValue ?? 0) { openSummary?.peakThermal = thermal }
@@ -560,7 +766,8 @@ final class Engine: ObservableObject {
         }
         // Music started after we muted: give the sound back.
         if keepMusic, musicPlaying, wasMuted == false { unmuteIfWeMuted() }
-        if thermal == .serious, lowPowerOnClose, lowPowerChangedSource == nil, setupDone { enableLowPower() }
+        if lowPowerOnClose, lowPowerChangedSource == nil, setupDone,
+           thermal == .serious || (battery.hasBattery && !battery.onAC) { enableLowPower() }
     }
 
     private func handleEvents(_ events: [AgentEvent]) {
@@ -568,9 +775,11 @@ final class Engine: ObservableObject {
             let name = event.agent == "claude" ? "Claude Code" : event.agent
             switch event.kind {
             case .done:
-                openSummary?.agentsFinished += 1
-                log("checkmark.circle.fill", tr("%@ finished", name))
-                if notifyAgents { notify(tr("%@ finished", name), tr("Your agent is done. AFK Pug will let the Mac sleep soon.")) }
+                // Confirmed later: a Stop hook may continue the turn right away.
+                pendingDone.append((agent: event.agent, at: now))
+            case .failed:
+                log("exclamationmark.triangle.fill", tr("%@ stopped with an error", name))
+                if notifyAgents { notify(tr("%@ stopped with an error", name), tr("Your agent hit an error or a usage limit.")) }
             case .waiting:
                 log("hand.raised.fill", tr("%@ needs you", name))
                 if notifyAgents { notify(tr("%@ needs you", name), tr("Your agent is waiting for your input.")) }
@@ -640,9 +849,9 @@ final class Engine: ObservableObject {
         ChatPauser.resume()
         unmuteIfWeMuted()
         if let source = lowPowerChangedSource {
-            PowerControl.setLowPower(false, source: source)
+            // On failure the flag stays, so the watchdog / next launch retries.
+            if PowerControl.setLowPower(false, source: source) { try? FileManager.default.removeItem(at: Paths.lowPowerFlag) }
             lowPowerChangedSource = nil
-            try? FileManager.default.removeItem(at: Paths.lowPowerFlag)
         }
     }
 
