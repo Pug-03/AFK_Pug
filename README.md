@@ -33,6 +33,19 @@ AFK Pug is a macOS menu bar app that keeps your MacBook awake while you're away,
 **Welcome back**
 - Summary when you open the lid: time closed, battery used, agent turns finished, peak heat.
 
+## New in v0.2
+
+- Redesigned popover: night/day scene with the pug, segmented timer, grouped modes list.
+- Keep music playing: if audio is playing (YouTube, Spotify, Apple Music), the Mac stays awake with the lid closed and sound is not muted.
+- Detects Codex, Gemini CLI, Cursor Agent, Aider, OpenCode, Amp, Goose and Qwen Code by process and CPU use.
+- Locks the screen when the lid closes (on by default).
+- Optional: pause chat apps (Slack, Discord, LINE, WhatsApp, Telegram, Teams) while the lid is closed.
+- Global shortcut ⌥⌘A to start or stop AFK.
+- Phone notifications through the free ntfy app.
+- Start automatically when the charger is connected or while chosen apps are open.
+- MCP server (`AFKPug --mcp`) so Claude Code can call `keep_mac_awake` during long builds or deploys.
+- Thai and English UI, switchable in Settings.
+
 ## CLI
 
 Installed at `~/.afkpug/bin/afkpug` (add it to your PATH):
