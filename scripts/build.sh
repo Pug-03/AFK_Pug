@@ -27,7 +27,9 @@ codesign --force --deep --sign - "$APP"
 echo "Built $APP"
 
 if [[ "${1:-}" == "--install" ]]; then
-  pkill -x AFKPug 2>/dev/null || true
+  # Quit politely (restores everything); never touch Claude's AFKPug --mcp servers.
+  osascript -e 'quit app "AFK Pug"' >/dev/null 2>&1 || true; sleep 1
+  pkill -f 'AFK Pug.app/Contents/MacOS/AFKPug$' 2>/dev/null || true
   rm -rf "/Applications/AFK Pug.app"
   cp -R "$APP" /Applications/
   open "/Applications/AFK Pug.app"
