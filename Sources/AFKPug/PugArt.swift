@@ -14,13 +14,14 @@ enum Palette {
 }
 
 /// The pug, drawn with shapes so it scales from menu to app icon.
+/// Deliberately static: no blink/breathe loops, so nothing animates while the
+/// popover is open (or keeps a task alive while it is closed). Mood changes
+/// crossfade via the caller's `.animation(_, value: mood)`.
 struct PugFace: View {
     var mood: PugMood
     var size: CGFloat = 72
+    /// Shows the "zzz" mark when sleeping. Off for the app icon.
     var animated = true
-
-    @State private var blink = false
-    @State private var breathe = false
 
     var body: some View {
         let s = size
@@ -84,22 +85,9 @@ struct PugFace: View {
             .offset(y: -s * 0.08)
         }
         .frame(width: s * 1.2, height: s)
-        .scaleEffect(mood == .sleeping && breathe ? 1.035 : 1.0, anchor: .bottom)
         .overlay(alignment: .topTrailing) {
-            if mood == .sleeping, animated { Zzz(size: s).offset(x: s * 0.12, y: -s * 0.12) }
-        }
-        .task(id: mood) {
-            guard animated else { return }
-            if mood == .sleeping {
-                withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) { breathe = true }
-            } else {
-                breathe = false
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: UInt64.random(in: 2_500_000_000...5_000_000_000))
-                    withAnimation(.easeInOut(duration: 0.08)) { blink = true }
-                    try? await Task.sleep(nanoseconds: 140_000_000)
-                    withAnimation(.easeInOut(duration: 0.1)) { blink = false }
-                }
+            if mood == .sleeping, animated {
+                Zzz(size: s).offset(x: s * 0.12, y: -s * 0.12).transition(.opacity)
             }
         }
     }
@@ -124,7 +112,6 @@ struct PugFace: View {
                         .offset(y: -s * 0.14)
                 }
             }
-            .scaleEffect(y: blink ? 0.08 : 1)
         }
     }
 }
@@ -173,21 +160,17 @@ private struct Mouth: Shape {
 
 private struct Zzz: View {
     let size: CGFloat
-    @State private var float = false
 
     var body: some View {
         ZStack {
             ForEach(0..<3) { i in
                 Text("z")
                     .font(.system(size: size * (0.14 + CGFloat(i) * 0.05), weight: .heavy, design: .rounded))
-                    .foregroundStyle(Color(red: 0.80, green: 0.82, blue: 1.0))
-                    .offset(x: CGFloat(i) * size * 0.1, y: CGFloat(-i) * size * 0.12 + (float ? -size * 0.06 : 0))
-                    .opacity(float ? (i == 2 ? 0.4 : 1) : (i == 2 ? 1 : 0.6))
+                    .foregroundStyle(Color(red: 0.80, green: 0.82, blue: 1.0).opacity(1 - Double(i) * 0.2))
+                    .offset(x: CGFloat(i) * size * 0.1, y: CGFloat(-i) * size * 0.12)
             }
         }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) { float = true }
-        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -216,38 +199,76 @@ struct AppIconView: View {
     }
 }
 
-/// Monochrome template icon for the menu bar.
+/// Monochrome template icon for the menu bar: an outlined pug face with
+/// folded ears, a dark muzzle and a forehead wrinkle.
 enum MenuIcon {
     static func make(active: Bool) -> NSImage {
         let image = NSImage(size: NSSize(width: 22, height: 18), flipped: false) { _ in
-            NSColor.black.setFill()
-            // ears
-            NSBezierPath(ovalIn: NSRect(x: 1, y: 7.5, width: 6, height: 9)).fill()
-            NSBezierPath(ovalIn: NSRect(x: 15, y: 7.5, width: 6, height: 9)).fill()
-            // head
-            NSBezierPath(roundedRect: NSRect(x: 3.5, y: 1, width: 15, height: 14.5), xRadius: 6.5, yRadius: 6.5).fill()
-
-            guard let ctx = NSGraphicsContext.current else { return true }
-            ctx.compositingOperation = .clear
-            if active {
-                NSBezierPath(ovalIn: NSRect(x: 6.6, y: 7.6, width: 3.2, height: 3.4)).fill()
-                NSBezierPath(ovalIn: NSRect(x: 12.2, y: 7.6, width: 3.2, height: 3.4)).fill()
-            } else {
-                for x in [6.4, 12.0] {
-                    let eye = NSBezierPath()
-                    eye.move(to: NSPoint(x: x, y: 9.6))
-                    eye.curve(to: NSPoint(x: x + 3.6, y: 9.6), controlPoint1: NSPoint(x: x + 0.8, y: 7.9), controlPoint2: NSPoint(x: x + 2.8, y: 7.9))
-                    eye.lineWidth = 1.3
-                    eye.lineCapStyle = .round
-                    eye.stroke()
-                }
-            }
-            // nose
-            NSBezierPath(ovalIn: NSRect(x: 9.5, y: 3.6, width: 3, height: 2)).fill()
-            ctx.compositingOperation = .sourceOver
+            draw(active: active)
             return true
         }
         image.isTemplate = true
         return image
+    }
+
+    static func draw(active: Bool) {
+        NSColor.black.setFill()
+        NSColor.black.setStroke()
+
+        // Wide, soft head
+        let head = NSBezierPath(roundedRect: NSRect(x: 3.4, y: 1.8, width: 15.2, height: 12.6), xRadius: 5.6, yRadius: 5.6)
+        head.lineWidth = 1.35
+        head.stroke()
+
+        // Folded "button" ears: triangles flopping forward over the top corners
+        for flip in [false, true] {
+            func pt(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: flip ? 22 - x : x, y: y) }
+            let ear = NSBezierPath()
+            ear.move(to: pt(2.2, 13.4))
+            ear.curve(to: pt(8.6, 15.0), controlPoint1: pt(3.8, 15.6), controlPoint2: pt(6.6, 15.8))
+            ear.curve(to: pt(4.4, 9.6), controlPoint1: pt(7.4, 12.6), controlPoint2: pt(5.6, 10.6))
+            ear.curve(to: pt(2.2, 13.4), controlPoint1: pt(3.2, 10.6), controlPoint2: pt(2.0, 12.0))
+            ear.close()
+            ear.fill()
+        }
+
+        // Forehead wrinkles
+        for (y, half) in [(12.0, 1.8)] as [(CGFloat, CGFloat)] {
+            let w = NSBezierPath()
+            w.move(to: NSPoint(x: 11 - half, y: y))
+            w.curve(to: NSPoint(x: 11 + half, y: y), controlPoint1: NSPoint(x: 11 - half / 2, y: y + 0.8), controlPoint2: NSPoint(x: 11 + half / 2, y: y + 0.8))
+            w.lineWidth = 0.9
+            w.lineCapStyle = .round
+            w.stroke()
+        }
+
+        // Big round eyes (open) or sleepy arcs (closed)
+        if active {
+            NSBezierPath(ovalIn: NSRect(x: 6.2, y: 7.6, width: 3.0, height: 3.0)).fill()
+            NSBezierPath(ovalIn: NSRect(x: 12.8, y: 7.6, width: 3.0, height: 3.0)).fill()
+        } else {
+            for x in [6.1, 12.7] as [CGFloat] {
+                let eye = NSBezierPath()
+                eye.move(to: NSPoint(x: x, y: 9.4))
+                eye.curve(to: NSPoint(x: x + 3.2, y: 9.4), controlPoint1: NSPoint(x: x + 0.8, y: 8.2), controlPoint2: NSPoint(x: x + 2.4, y: 8.2))
+                eye.lineWidth = 1.2
+                eye.lineCapStyle = .round
+                eye.stroke()
+            }
+        }
+
+        // Wide dark muzzle with nose and mouth cut out
+        NSBezierPath(ovalIn: NSRect(x: 6.6, y: 2.5, width: 8.8, height: 5.0)).fill()
+        guard let ctx = NSGraphicsContext.current else { return }
+        ctx.compositingOperation = .clear
+        NSBezierPath(ovalIn: NSRect(x: 9.5, y: 5.3, width: 3.0, height: 1.5)).fill()
+        let mouth = NSBezierPath()
+        mouth.move(to: NSPoint(x: 9.4, y: 4.0))
+        mouth.curve(to: NSPoint(x: 11, y: 4.3), controlPoint1: NSPoint(x: 9.9, y: 3.5), controlPoint2: NSPoint(x: 10.6, y: 3.6))
+        mouth.curve(to: NSPoint(x: 12.6, y: 4.0), controlPoint1: NSPoint(x: 11.4, y: 3.6), controlPoint2: NSPoint(x: 12.1, y: 3.5))
+        mouth.lineWidth = 0.7
+        mouth.lineCapStyle = .round
+        mouth.stroke()
+        ctx.compositingOperation = .sourceOver
     }
 }

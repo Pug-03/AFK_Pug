@@ -1,434 +1,544 @@
 import SwiftUI
 
+/// Dark, minimal palette and motion used across the popover.
+enum Theme {
+    static let bg = Color(red: 0.055, green: 0.055, blue: 0.063)
+    static let surface = Color.white.opacity(0.045)
+    static let surfaceHover = Color.white.opacity(0.08)
+    static let line = Color.white.opacity(0.07)
+    static let text = Color.white.opacity(0.94)
+    static let sub = Color.white.opacity(0.50)
+    static let faint = Color.white.opacity(0.28)
+    static let accent = Color(red: 0.98, green: 0.63, blue: 0.35)
+    static let live = Color(red: 0.40, green: 0.85, blue: 0.56)
+
+    /// Page slide and segmented selection.
+    static let smooth = Animation.smooth(duration: 0.3)
+    /// Gentle crossfade for state changes (colors, text swaps).
+    static let fade = Animation.easeInOut(duration: 0.2)
+    /// Hover feedback.
+    static let hover = Animation.easeOut(duration: 0.12)
+}
+
 struct RootView: View {
     @ObservedObject var engine: Engine
     @State var page: Page = .home
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Page { case home, settings }
 
+    /// The window is exactly the content: home sizes itself, settings has a
+    /// fixed height (one resize on page change, never a grey margin). The dark
+    /// background fills the whole window, safe areas included.
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             if page == .home {
-                HomeView(engine: engine, openSettings: { withAnimation(.snappy(duration: 0.3)) { page = .settings } })
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+                HomeView(engine: engine, openSettings: { go(.settings) })
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(slide(from: .leading))
             } else {
-                SettingsView(engine: engine, back: { withAnimation(.snappy(duration: 0.3)) { page = .home } })
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                SettingsView(engine: engine, back: { go(.home) })
+                    .frame(height: 520)
+                    .transition(slide(from: .trailing))
             }
         }
-        .frame(width: 360)
+        .frame(width: 340, alignment: .top)
+        .fixedSize(horizontal: false, vertical: true)
+        .clipped()
+        .background(Theme.bg.ignoresSafeArea())
+        .modifier(WindowBackground())
+        .foregroundStyle(Theme.text)
+        .preferredColorScheme(.dark)
+        .tint(Theme.accent)
+    }
+
+    private func go(_ target: Page) {
+        withAnimation(reduceMotion ? Theme.fade : Theme.smooth) { page = target }
+    }
+
+    private func slide(from edge: Edge) -> AnyTransition {
+        reduceMotion ? .opacity : .move(edge: edge).combined(with: .opacity)
     }
 }
 
-// MARK: - Scene colours per state
-
-private enum StageMood {
-    case night, day, alert
-
-    @MainActor init(_ engine: Engine) {
-        if engine.trip != nil { self = .alert } else { self = engine.isActive ? .day : .night }
-    }
-
-    var gradient: [Color] {
-        switch self {
-        case .night: return [Color(red: 0.13, green: 0.14, blue: 0.30), Color(red: 0.27, green: 0.22, blue: 0.45)]
-        case .day: return [Color(red: 1.00, green: 0.72, blue: 0.42), Color(red: 0.93, green: 0.42, blue: 0.24)]
-        case .alert: return [Color(red: 0.45, green: 0.18, blue: 0.20), Color(red: 0.70, green: 0.28, blue: 0.24)]
+/// Paints the MenuBarExtra window itself dark on macOS 15+, so no lighter
+/// window material shows around the content.
+private struct WindowBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.containerBackground(Theme.bg, for: .window)
+        } else {
+            content
         }
     }
 }
 
 // MARK: - Home
 
+/// No container-level implicit animations here: animating layout inside a
+/// MenuBarExtra window makes it jump.
 struct HomeView: View {
     @ObservedObject var engine: Engine
     var openSettings: () -> Void
 
     var body: some View {
-        VStack(spacing: 14) {
-            Stage(engine: engine, openSettings: openSettings)
-            Controls(engine: engine)
+        VStack(alignment: .leading, spacing: 18) {
+            Header(engine: engine, openSettings: openSettings)
+            TimerBlock(engine: engine)
+            Durations(engine: engine)
+            MainAction(engine: engine)
             if let summary = engine.summary {
-                SummaryCard(summary: summary) { withAnimation { engine.summary = nil } }
+                SummaryCard(summary: summary) { engine.summary = nil }
             }
-            ModesList(engine: engine)
+            Modes(engine: engine)
             StatusBar(engine: engine)
         }
-        .padding(12)
+        .padding(18)
     }
 }
 
-// MARK: Stage (hero)
-
-private struct Stage: View {
+private struct Header: View {
     @ObservedObject var engine: Engine
     var openSettings: () -> Void
 
     var body: some View {
-        let scene = StageMood(engine)
-        ZStack(alignment: .top) {
-            LinearGradient(colors: scene.gradient, startPoint: .topLeading, endPoint: .bottomTrailing)
-                .animation(.easeInOut(duration: 0.8), value: engine.isActive)
-
-            if scene == .night { Stars().transition(.opacity) }
-            if scene == .day { Sun().transition(.opacity) }
-
-            VStack(spacing: 0) {
-                HStack {
-                    HStack(spacing: 6) {
-                        Image(systemName: "pawprint.fill").font(.system(size: 10, weight: .bold))
-                        Text("AFK PUG").font(.system(size: 11, weight: .heavy, design: .rounded)).tracking(1.5)
-                    }
-                    .foregroundStyle(.white.opacity(0.85))
-                    Spacer()
-                    GlassButton(symbol: "slider.horizontal.3", action: openSettings)
-                }
-
-                ZStack(alignment: .bottom) {
-                    Ellipse()
-                        .fill(.black.opacity(0.18))
-                        .frame(width: 92, height: 14)
-                        .blur(radius: 3)
-                        .offset(y: 4)
-                    PugFace(mood: engine.mood, size: 92)
-                        .frame(width: 120, height: 96)
-                }
-                .padding(.top, 2)
-
-                VStack(spacing: 3) {
-                    if engine.manualOn, let r = engine.remaining {
-                        Text(Fmt.clock(r))
-                            .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
-                            .contentTransition(.numericText(countsDown: true))
-                            .animation(.snappy, value: Int(r))
-                    } else {
-                        Text(engine.headline)
-                            .font(.system(size: 21, weight: .bold, design: .rounded))
-                    }
-                    Text(engine.manualOn && engine.remaining != nil ? engine.headline : engine.subline)
-                        .font(.system(size: 12, weight: .medium))
-                        .opacity(0.82)
+        HStack(spacing: 12) {
+            PugFace(mood: engine.mood, size: 34)
+                .frame(width: 44, height: 36)
+                .animation(Theme.fade, value: engine.mood)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("AFK Pug").font(.system(size: 13, weight: .semibold))
+                HStack(spacing: 6) {
+                    LiveDot(color: dotColor)
+                    Text(engine.headline)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.sub)
                         .lineLimit(1)
-                }
-                .foregroundStyle(.white)
-                .multilineTextAlignment(.center)
-                .padding(.top, 10)
-            }
-            .padding(14)
-
-            if engine.manualOn, engine.remaining != nil {
-                VStack {
-                    Spacer()
-                    GeometryReader { geo in
-                        Capsule().fill(.white.opacity(0.22))
-                            .overlay(alignment: .leading) {
-                                Capsule().fill(.white).frame(width: geo.size.width * engine.progress)
-                                    .animation(.linear(duration: 0.4), value: engine.progress)
-                            }
-                    }
-                    .frame(height: 4)
-                    .padding(.horizontal, 18)
-                    .padding(.bottom, 12)
+                        .contentTransition(.opacity)
+                        .animation(Theme.fade, value: engine.headline)
                 }
             }
+            Spacer(minLength: 8)
+            IconButton(symbol: "gearshape", action: openSettings)
+                .help(tr("Settings"))
         }
-        .frame(height: 252)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .shadow(color: scene.gradient[1].opacity(0.35), radius: 14, y: 6)
-        .animation(.easeInOut(duration: 0.6), value: scene)
+    }
+
+    private var dotColor: Color {
+        if engine.trip != nil { return Palette.warn }
+        return engine.isActive ? Theme.live : Theme.faint
     }
 }
 
-private struct Stars: View {
-    private let stars: [(CGFloat, CGFloat, CGFloat, Double)] = [
-        (0.10, 0.22, 2.0, 0.0), (0.22, 0.10, 1.4, 0.6), (0.82, 0.30, 2.2, 1.2), (0.70, 0.12, 1.3, 0.3),
-        (0.92, 0.55, 1.5, 0.9), (0.06, 0.62, 1.3, 1.5), (0.30, 0.40, 1.1, 0.4), (0.60, 0.48, 1.0, 1.1),
-        (0.15, 0.85, 1.6, 0.7), (0.88, 0.80, 1.2, 0.2),
-    ]
-    @State private var twinkle = false
+/// Static status dot. Color changes crossfade; nothing loops.
+struct LiveDot: View {
+    let color: Color
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                ForEach(0..<stars.count, id: \.self) { i in
-                    let s = stars[i]
-                    Circle().fill(.white)
-                        .frame(width: s.2 * 1.6, height: s.2 * 1.6)
-                        .position(x: geo.size.width * s.0, y: geo.size.height * s.1)
-                        .opacity(twinkle ? 0.25 + (s.3 / 3) : 0.9)
-                        .animation(.easeInOut(duration: 1.6 + s.3).repeatForever(autoreverses: true), value: twinkle)
+        Circle().fill(color).frame(width: 6, height: 6)
+            .animation(Theme.fade, value: color)
+    }
+}
+
+// MARK: Timer
+
+private struct TimerBlock: View {
+    @ObservedObject var engine: Engine
+
+    /// What the big text shows outside a guard trip.
+    private enum Mode { case manual, grace, working, awake, idle }
+
+    private var mode: Mode {
+        if engine.trip != nil { return .idle }
+        if engine.manualOn { return .manual }
+        if !engine.holds.isEmpty { return .working }
+        if engine.graceActive { return .grace }
+        if engine.isActive { return .awake }
+        return .idle
+    }
+
+    /// A seconds display redraws from the end date once per second while a
+    /// countdown is visible. The timeline is paused otherwise, and stops with the window.
+    private var counting: Bool {
+        switch mode {
+        case .manual: return engine.manualEnd != nil
+        case .grace: return true
+        default: return false
+        }
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.5, paused: !counting)) { _ in
+            // Clock.now() is the timeline date in the app, and the shifted clock in the simulator.
+            let date = Clock.now()
+            let mode = mode
+            VStack(alignment: .leading, spacing: 8) {
+                Text(bigText(mode, at: date))
+                    .font(.system(size: 46, weight: .light, design: .rounded).monospacedDigit())
+                    .foregroundStyle(mode == .idle ? Theme.faint : Theme.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    // Only animates inside an explicit transaction (picking a duration),
+                    // never on the per-second redraw.
+                    .contentTransition(.numericText(countsDown: true))
+                    .animation(Theme.fade, value: engine.manualOn)
+                Text(subline(mode, at: date))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.sub)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                GeometryReader { geo in
+                    Capsule().fill(Theme.line)
+                        .overlay(alignment: .leading) {
+                            Capsule().fill(Theme.text)
+                                .frame(width: geo.size.width * progress(mode, at: date))
+                        }
                 }
-                Circle()
-                    .fill(Color(red: 1, green: 0.95, blue: 0.82))
-                    .frame(width: 26, height: 26)
-                    .overlay(Circle().fill(StageMood.night.gradient[0]).frame(width: 22, height: 22).offset(x: 8, y: -5))
-                    .position(x: geo.size.width * 0.16, y: geo.size.height * 0.36)
-                    .opacity(0.9)
+                .frame(height: 2)
+                .padding(.top, 4)
             }
         }
-        .onAppear { twinkle = true }
-        .allowsHitTesting(false)
     }
-}
 
-private struct Sun: View {
-    @State private var spin = false
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                Circle().fill(.white.opacity(0.18)).frame(width: 220, height: 220)
-                Circle().fill(.white.opacity(0.14)).frame(width: 150, height: 150)
-            }
-            .position(x: geo.size.width * 0.5, y: geo.size.height * 0.42)
-            .scaleEffect(spin ? 1.06 : 0.96)
-            .animation(.easeInOut(duration: 3).repeatForever(autoreverses: true), value: spin)
+    private func bigText(_ mode: Mode, at date: Date) -> String {
+        switch mode {
+        case .manual:
+            guard let end = engine.manualEnd else { return "∞" }
+            return Fmt.clock(max(0, end.timeIntervalSince(date)))
+        case .grace:
+            return Fmt.clock(max(0, (engine.graceUntil ?? date).timeIntervalSince(date)))
+        case .working:
+            return engine.holds.count == 1 ? tr("1 agent") : tr("%d agents", engine.holds.count)
+        case .awake:
+            return tr("Awake")
+        case .idle:
+            let m = engine.selectedMinutes
+            return m > 0 ? Fmt.clock(TimeInterval(m * 60)) : "∞"
         }
-        .onAppear { spin = true }
-        .allowsHitTesting(false)
     }
-}
 
-private struct GlassButton: View {
-    let symbol: String
-    let action: () -> Void
-    @State private var hover = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(.white.opacity(hover ? 0.3 : 0.18)))
+    private func subline(_ mode: Mode, at date: Date) -> String {
+        switch mode {
+        case .manual:
+            if let end = engine.manualEnd { return tr("until %@", end.formatted(date: .omitted, time: .shortened)) }
+        case .grace:
+            // A duration with units: "14:38" here once read as a clock time.
+            return tr("Agents done. Sleeping in %@", Fmt.countdown((engine.graceUntil ?? date).timeIntervalSince(date)))
+        default:
+            break
         }
-        .buttonStyle(.plain)
-        .onHover { hover = $0 }
-        .help(tr("Settings"))
+        return engine.subline
+    }
+
+    private func progress(_ mode: Mode, at date: Date) -> CGFloat {
+        switch mode {
+        case .manual:
+            guard let start = engine.manualStart, let end = engine.manualEnd else { return 0 }
+            let total = end.timeIntervalSince(start)
+            guard total > 0 else { return 0 }
+            return CGFloat(max(0, min(1, end.timeIntervalSince(date) / total)))
+        case .grace:
+            let total = TimeInterval(max(1, engine.graceMinutes) * 60)
+            return CGFloat(max(0, min(1, (engine.graceUntil ?? date).timeIntervalSince(date) / total)))
+        default:
+            return 0
+        }
     }
 }
 
-// MARK: Controls
+// MARK: Durations
 
-private struct Controls: View {
+private struct Durations: View {
     @ObservedObject var engine: Engine
     @Namespace private var ns
     private let choices = [30, 60, 120, 240, 480, 0]
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 2) {
-                ForEach(choices, id: \.self) { m in
-                    let selected = engine.selectedMinutes == m
-                    Button {
-                        withAnimation(.snappy(duration: 0.25)) { engine.choose(minutes: m) }
-                    } label: {
-                        Text(Fmt.minutes(m))
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundStyle(selected ? Color.primary : Color.secondary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 7)
-                            .background {
-                                if selected {
-                                    Capsule().fill(Color(nsColor: .controlBackgroundColor))
-                                        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
-                                        .matchedGeometryEffect(id: "chip", in: ns)
-                                }
-                            }
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
+        HStack(spacing: 0) {
+            ForEach(choices, id: \.self) { m in
+                Segment(title: Fmt.minutes(m), selected: engine.selectedMinutes == m, ns: ns) {
+                    guard engine.selectedMinutes != m else { return }
+                    withAnimation(Theme.smooth) { engine.choose(minutes: m) }
                 }
             }
-            .padding(3)
-            .background(Capsule().fill(Color.primary.opacity(0.07)))
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Theme.surface))
+    }
 
-            if engine.manualOn {
-                HStack(spacing: 8) {
-                    BigButton(title: tr("Stop"), symbol: "stop.fill", style: .secondary) { withAnimation(.snappy) { engine.stop() } }
-                    BigButton(title: tr("+30m"), symbol: "plus", style: .tinted) { engine.addTime(minutes: 30) }
-                        .frame(width: 118)
-                }
-            } else {
-                BigButton(title: tr("Go AFK"), symbol: "pawprint.fill", style: .primary) { withAnimation(.snappy) { engine.start() } }
-                    .disabled(engine.trip != nil)
+    private struct Segment: View {
+        let title: String
+        let selected: Bool
+        let ns: Namespace.ID
+        let action: () -> Void
+        @State private var hover = false
+
+        var body: some View {
+            Button(action: action) {
+                Text(title)
+                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(selected || hover ? Theme.text : Theme.sub)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background {
+                        if selected {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.white.opacity(0.1))
+                                .matchedGeometryEffect(id: "sel", in: ns)
+                        }
+                    }
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .onHover { hover = $0 }
+            .animation(Theme.hover, value: hover)
         }
     }
 }
 
-private struct BigButton: View {
-    enum Style { case primary, secondary, tinted }
+// MARK: Main action
+
+private struct MainAction: View {
+    @ObservedObject var engine: Engine
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if engine.manualOn {
+                ActionButton(title: tr("Stop"), style: .outline) { engine.stop() }
+                ActionButton(title: tr("+30m"), style: .quiet) { engine.addTime(minutes: 30) }
+                    .frame(width: 104)
+                    .disabled(engine.manualEnd == nil)
+            } else {
+                ActionButton(title: tr("Go AFK"), style: .solid) { engine.start() }
+                    .disabled(engine.trip != nil)
+            }
+        }
+        .frame(height: 40)
+        .animation(Theme.fade, value: engine.manualOn)
+    }
+}
+
+private struct ActionButton: View {
+    enum Style { case solid, outline, quiet }
     let title: String
-    let symbol: String
-    var style: Style = .primary
+    var style: Style
     let action: () -> Void
     @State private var hover = false
-    @State private var pressed = false
     @Environment(\.isEnabled) private var enabled
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: symbol).font(.system(size: 13, weight: .bold))
-                Text(title).font(.system(size: 14, weight: .bold, design: .rounded))
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 42)
-            .foregroundStyle(foreground)
-            .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(background))
-            .overlay(
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .stroke(.white.opacity(style == .primary ? 0.25 : 0), lineWidth: 1)
-                    .blendMode(.overlay)
-            )
-            .shadow(color: style == .primary ? Palette.apricotDeep.opacity(hover ? 0.45 : 0.28) : .clear, radius: hover ? 10 : 6, y: 3)
-            .scaleEffect(pressed ? 0.97 : 1)
-            .opacity(enabled ? 1 : 0.4)
+            Text(title)
+                .font(.system(size: 13.5, weight: .semibold))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .frame(height: 40)
+                .foregroundStyle(style == .solid ? Color.black : Theme.text)
+                .background(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(fill)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .stroke(style == .outline ? Color.white.opacity(lit ? 0.35 : 0.2) : .clear, lineWidth: 1)
+                )
+                .opacity(enabled ? 1 : 0.35)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hover = h } }
-        .simultaneousGesture(DragGesture(minimumDistance: 0)
-            .onChanged { _ in withAnimation(.easeOut(duration: 0.08)) { pressed = true } }
-            .onEnded { _ in withAnimation(.spring(duration: 0.25)) { pressed = false } })
+        .buttonStyle(PressStyle())
+        .onHover { hover = $0 }
+        .animation(Theme.hover, value: hover)
     }
 
-    private var foreground: Color {
-        switch style {
-        case .primary: return .white
-        case .secondary: return .primary
-        case .tinted: return Palette.apricotDeep
-        }
-    }
+    private var lit: Bool { hover && enabled }
 
-    private var background: AnyShapeStyle {
+    private var fill: Color {
         switch style {
-        case .primary: return AnyShapeStyle(LinearGradient(colors: [Palette.apricot, Palette.apricotDeep], startPoint: .top, endPoint: .bottom))
-        case .secondary: return AnyShapeStyle(Color.primary.opacity(hover ? 0.11 : 0.07))
-        case .tinted: return AnyShapeStyle(Palette.apricot.opacity(hover ? 0.24 : 0.16))
+        case .solid: return Color.white.opacity(lit ? 1 : 0.92)
+        case .outline: return lit ? Theme.surface : .clear
+        case .quiet: return lit ? Theme.surfaceHover : Theme.surface
         }
     }
 }
 
-// MARK: Modes (grouped list)
+/// Small custom switch that matches the dark theme. Only the knob animates;
+/// the toggle does not open an animation transaction, so rows that appear or
+/// disappear because of it don't animate the window height.
+struct MiniSwitch: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Switch(configuration: configuration)
+    }
 
-private struct ModesList: View {
+    private struct Switch: View {
+        let configuration: ToggleStyleConfiguration
+        @Environment(\.isEnabled) private var enabled
+
+        var body: some View {
+            let on = configuration.isOn
+            Button {
+                configuration.isOn.toggle()
+            } label: {
+                Capsule()
+                    .fill(on ? Theme.accent : Color.white.opacity(0.14))
+                    .frame(width: 30, height: 18)
+                    .overlay(alignment: on ? .trailing : .leading) {
+                        Circle()
+                            .fill(on ? Color.black.opacity(0.85) : Color.white.opacity(0.75))
+                            .frame(width: 14, height: 14)
+                            .padding(2)
+                    }
+                    .animation(.smooth(duration: 0.2), value: on)
+                    .opacity(enabled ? 1 : 0.4)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(on ? "on" : "off")
+        }
+    }
+}
+
+struct PressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.smooth(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
+// MARK: Modes
+
+private struct Modes: View {
     @ObservedObject var engine: Engine
 
     var body: some View {
         VStack(spacing: 0) {
-            ListRow(symbol: "sparkles", tint: Palette.awake, title: tr("Agent mode"),
-                    detail: agentDetail) {
-                Toggle("", isOn: $engine.agentMode).toggleStyle(.switch).controlSize(.small).labelsHidden().tint(Palette.awake)
+            ModeRow(symbol: "sparkles", title: tr("Agent mode"), detail: agentDetail) {
+                Toggle(tr("Agent mode"), isOn: $engine.agentMode).toggleStyle(MiniSwitch()).labelsHidden()
             }
             if engine.agentMode, !engine.holds.isEmpty {
-                VStack(spacing: 6) {
+                VStack(spacing: 2) {
                     ForEach(engine.holds) { hold in
-                        AgentRow(hold: hold, now: engine.now) { engine.release(hold) }
+                        AgentRow(hold: hold) { engine.release(hold) }
                     }
                 }
-                .padding(.leading, 44).padding(.trailing, 12).padding(.bottom, 10)
+                .padding(.leading, 30).padding(.bottom, 8)
             }
             if engine.agentMode, !engine.claudeConnected {
-                HStack {
+                HStack(spacing: 8) {
                     Text(tr("Connect Claude Code to detect work automatically."))
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .font(.system(size: 11)).foregroundStyle(Theme.sub)
                         .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
+                    Spacer(minLength: 0)
                     PillButton(title: tr("Connect"), style: .soft) { engine.connectClaude() }
                 }
-                .padding(.leading, 44).padding(.trailing, 12).padding(.bottom, 10)
+                .padding(.leading, 30).padding(.bottom, engine.claudeError == nil ? 10 : 4)
+                if let error = engine.claudeError {
+                    ErrorText(error).padding(.leading, 30).padding(.bottom, 10)
+                }
             }
 
-            Divider().padding(.leading, 44)
+            Rectangle().fill(Theme.line).frame(height: 1)
 
-            ListRow(symbol: "laptopcomputer", tint: Palette.apricot, title: tr("Lid-closed mode"),
+            ModeRow(symbol: "laptopcomputer", title: tr("Lid-closed mode"),
                     detail: engine.setupDone ? tr("Screen off, sound off, work keeps running") : tr("Needs a one-time permission")) {
                 if engine.setupDone || !engine.lidMode {
-                    Toggle("", isOn: $engine.lidMode).toggleStyle(.switch).controlSize(.small).labelsHidden().tint(Palette.apricot)
+                    Toggle(tr("Lid-closed mode"), isOn: $engine.lidMode).toggleStyle(MiniSwitch()).labelsHidden()
                 } else {
                     PillButton(title: tr("Set up"), style: .primary) { engine.runSetup() }
+                        .help(tr("Asks for your password once. Only allows turning lid sleep on and off."))
                 }
             }
             if let error = engine.setupError {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11)).foregroundStyle(Palette.warn)
-                    .padding(.leading, 44).padding(.trailing, 12).padding(.bottom, 10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                ErrorText(error).padding(.leading, 30).padding(.bottom, 10)
             }
 
-            Divider().padding(.leading, 44)
+            Rectangle().fill(Theme.line).frame(height: 1)
 
-            ListRow(symbol: engine.musicPlaying ? "music.note" : "music.note.list", tint: Palette.night, title: tr("Keep music playing"),
+            ModeRow(symbol: "music.note", title: tr("Keep music playing"),
                     detail: engine.musicPlaying && engine.keepMusic ? tr("music playing") : tr("YouTube, Spotify, Apple Music keep playing and sound stays on")) {
-                Toggle("", isOn: $engine.keepMusic).toggleStyle(.switch).controlSize(.small).labelsHidden().tint(Palette.night)
+                Toggle(tr("Keep music playing"), isOn: $engine.keepMusic).toggleStyle(MiniSwitch()).labelsHidden()
             }
         }
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.primary.opacity(0.045)))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.primary.opacity(0.06), lineWidth: 1))
     }
 
     private var agentDetail: String {
-        if !engine.agentMode { return tr("Awake only while your AI agents work") }
-        if engine.holds.isEmpty {
-            return engine.graceUntil.map { $0 > engine.now } == true ? tr("All done. Cooling down before sleep") : tr("No agents working right now")
+        if engine.agentMode, engine.holds.isEmpty {
+            return engine.graceActive ? tr("All done. Cooling down before sleep") : tr("No agents working right now")
         }
         return tr("Awake only while your AI agents work")
     }
 }
 
-private struct ListRow<Trailing: View>: View {
+private struct ModeRow<Trailing: View>: View {
     let symbol: String
-    let tint: Color
     let title: String
     let detail: String
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        HStack(spacing: 11) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(LinearGradient(colors: [tint.opacity(0.95), tint.opacity(0.75)], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 28, height: 28)
-                Image(systemName: symbol).font(.system(size: 12.5, weight: .bold)).foregroundStyle(.white)
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(Theme.sub)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
+                Text(detail).font(.system(size: 11)).foregroundStyle(Theme.sub)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 13, weight: .semibold))
-                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 6)
+            Spacer(minLength: 8)
             trailing
         }
-        .padding(.horizontal, 12)
         .padding(.vertical, 11)
+    }
+}
+
+/// Inline warning under the control that failed.
+struct ErrorText: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(Palette.warn)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 private struct AgentRow: View {
     let hold: AgentHold
-    let now: Date
     var release: () -> Void
-    @State private var pulse = false
+    @State private var hover = false
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle().fill(Palette.awake).frame(width: 7, height: 7)
-                .overlay(Circle().stroke(Palette.awake.opacity(0.6), lineWidth: 2).scaleEffect(pulse ? 2.4 : 1).opacity(pulse ? 0 : 1))
-                .onAppear { withAnimation(.easeOut(duration: 1.3).repeatForever(autoreverses: false)) { pulse = true } }
-            Text(hold.displayName).font(.system(size: 12, weight: .semibold))
-            Text(hold.expires.map { tr("until %@", $0.formatted(date: .omitted, time: .shortened)) } ?? tr("working for %@", Fmt.duration(now.timeIntervalSince(hold.started))))
-                .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
-            Spacer()
+            LiveDot(color: Theme.live)
+            Text(hold.displayName).font(.system(size: 11.5, weight: .medium))
+                .lineLimit(1)
+                .layoutPriority(1)
+            // Minute resolution, so a slow timeline is enough (and it only runs while visible).
+            TimelineView(.periodic(from: .now, by: 30)) { _ in
+                Text(hold.expires.map { tr("until %@", $0.formatted(date: .omitted, time: .shortened)) }
+                     ?? tr("working for %@", Fmt.duration(Clock.now().timeIntervalSince(hold.started))))
+                    .font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.sub)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
             Button(action: release) {
-                Image(systemName: "xmark").font(.system(size: 8.5, weight: .bold)).foregroundStyle(.secondary)
-                    .frame(width: 18, height: 18).background(Circle().fill(Color.primary.opacity(0.07)))
+                Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(hover ? Theme.text : Theme.sub)
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(hover ? Theme.surfaceHover : .clear))
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .onHover { hover = $0 }
             .help(tr("Stop keeping awake for this one"))
         }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Palette.awake.opacity(0.08)))
+        .padding(.vertical, 4)
     }
 }
 
@@ -436,55 +546,32 @@ private struct AgentRow: View {
 
 private struct StatusBar: View {
     @ObservedObject var engine: Engine
-
-    var batterySymbol: String {
-        if engine.battery.onAC { return "battery.100percent.bolt" }
-        switch engine.battery.percent {
-        case ..<13: return "battery.0percent"
-        case ..<38: return "battery.25percent"
-        case ..<63: return "battery.50percent"
-        case ..<88: return "battery.75percent"
-        default: return "battery.100percent"
-        }
-    }
-
-    var thermalColor: Color {
-        switch engine.thermal {
-        case .nominal: return Palette.awake
-        case .fair: return Palette.apricot
-        default: return Palette.warn
-        }
-    }
+    @State private var quitHover = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             if engine.battery.hasBattery {
-                Stat(symbol: batterySymbol, text: "\(engine.battery.percent)%",
-                     tint: engine.battery.percent <= engine.batteryFloor && !engine.battery.onAC ? Palette.warn : .secondary)
+                item(engine.battery.onAC ? "bolt.fill" : "battery.50percent", "\(engine.battery.percent)%",
+                     warn: engine.battery.percent <= engine.batteryFloor && !engine.battery.onAC)
             }
-            Stat(symbol: "thermometer.medium", text: engine.thermal.label, tint: thermalColor)
-            Stat(symbol: engine.lidOverrideOn ? "lock.open.fill" : "lock.fill",
-                 text: engine.lidOverrideOn ? tr("Lid armed") : tr("Lid normal"),
-                 tint: engine.lidOverrideOn ? Palette.apricot : .secondary)
-            Spacer()
+            item("thermometer.medium", engine.thermal.label, warn: engine.thermal.rawValue >= ProcessInfo.ThermalState.serious.rawValue)
+            item(engine.lidOverrideOn ? "lock.open" : "lock", engine.lidOverrideOn ? tr("Lid armed") : tr("Lid normal"), warn: false)
+            Spacer(minLength: 8)
             Button(tr("Quit")) { NSApp.terminate(nil) }
                 .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+                .foregroundStyle(quitHover ? Theme.text : Theme.faint)
+                .onHover { quitHover = $0 }
         }
-        .padding(.horizontal, 6)
+        .padding(.top, 2)
     }
 
-    private struct Stat: View {
-        let symbol: String
-        let text: String
-        let tint: Color
-        var body: some View {
-            HStack(spacing: 4) {
-                Image(systemName: symbol).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(tint)
-                Text(text).font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundStyle(.secondary)
-            }
+    private func item(_ symbol: String, _ text: String, warn: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: symbol).font(.system(size: 9.5))
+            Text(text).font(.system(size: 11).monospacedDigit()).lineLimit(1)
         }
+        .foregroundStyle(warn ? Palette.warn : Theme.faint)
     }
 }
 
@@ -497,36 +584,34 @@ private struct SummaryCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label(tr("While you were away"), systemImage: "sun.horizon.fill")
-                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                    .foregroundStyle(Palette.apricotDeep)
+                Text(tr("While you were away")).font(.system(size: 12, weight: .semibold))
                 Spacer()
-                Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                IconButton(symbol: "xmark", size: 22, action: dismiss)
             }
-            HStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 8) {
                 Figure(value: Fmt.duration(summary.duration), label: tr("lid closed"))
                 if summary.hadBattery {
-                    Figure(value: "\(summary.startBattery - summary.endBattery)%", label: tr("battery used"))
+                    Figure(value: "\(max(0, summary.startBattery - summary.endBattery))%", label: tr("battery used"))
                 }
                 Figure(value: "\(summary.agentsFinished)", label: tr("agent turns"))
                 Figure(value: summary.peakThermal.label, label: tr("peak heat"))
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Palette.apricot.opacity(0.1)))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Palette.apricot.opacity(0.3), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
     }
 
     private struct Figure: View {
         let value: String
         let label: String
         var body: some View {
-            VStack(spacing: 1) {
-                Text(value).font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
-                Text(label).font(.system(size: 9.5)).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(value).font(.system(size: 14, weight: .medium, design: .rounded).monospacedDigit())
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                Text(label).font(.system(size: 10)).foregroundStyle(Theme.sub)
+                    .lineLimit(1).minimumScaleFactor(0.8)
             }
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

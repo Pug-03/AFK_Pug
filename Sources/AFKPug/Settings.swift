@@ -5,15 +5,15 @@ struct SettingsView: View {
     var back: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 6) {
                 IconButton(symbol: "chevron.left", action: back)
-                Text(tr("Settings")).font(.system(size: 15, weight: .heavy, design: .rounded))
+                Text(tr("Settings")).font(.system(size: 13, weight: .semibold))
                 Spacer()
             }
 
             ScrollView {
-                VStack(spacing: 12) {
+                VStack(spacing: 18) {
                     Section(title: tr("Language")) {
                         Picker("", selection: $engine.language) {
                             ForEach(AppLanguage.allCases) { lang in Text(lang.label).tag(lang) }
@@ -47,14 +47,13 @@ struct SettingsView: View {
                                 Spacer()
                                 Text("\(engine.batteryFloor)%")
                                     .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
-                                    .foregroundStyle(Palette.apricotDeep)
+                                    .foregroundStyle(Theme.text)
                             }
                             Slider(value: Binding(get: { Double(engine.batteryFloor) },
                                                   set: { engine.batteryFloor = Int($0) }), in: 5...50, step: 5)
-                                .tint(Palette.apricot)
                         }
                         Text(tr("If the Mac gets critically hot, AFK Pug always lets it sleep."))
-                            .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                            .font(.system(size: 10.5)).foregroundStyle(Theme.sub)
                     }
 
                     Section(title: tr("Agents")) {
@@ -77,29 +76,34 @@ struct SettingsView: View {
                                 PillButton(title: tr("Connect"), style: .soft) { engine.connectClaude() }
                             }
                         }
+                        if let error = engine.claudeError { ErrorText(error) }
                         ToggleRow(symbol: "magnifyingglass", tint: Palette.awake, title: tr("Detect other agents"),
                                   detail: tr("Codex, Gemini CLI, Cursor Agent, Aider, OpenCode and more"), isOn: $engine.detectOtherAgents)
                         HStack {
                             VStack(alignment: .leading, spacing: 1) {
                                 Label(tr("Let agents keep the Mac awake"), systemImage: "cpu").font(.system(size: 12, weight: .semibold))
                                 Text(tr("Adds an AFK Pug tool to Claude Code for long builds and deploys"))
-                                    .font(.system(size: 10.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                    .font(.system(size: 10.5)).foregroundStyle(Theme.sub).fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer()
-                            if engine.mcpConnected {
+                            if engine.mcpBusy {
+                                PillButton(title: tr("Working…"), style: .quiet) {}
+                                    .disabled(true)
+                            } else if engine.mcpConnected {
                                 PillButton(title: tr("Disconnect"), style: .quiet) { engine.disconnectMCP() }
                             } else {
                                 PillButton(title: tr("Connect"), style: .soft) { engine.connectMCP() }
                             }
                         }
+                        if let error = engine.mcpError { ErrorText(error) }
                         Text(tr("Any other tool: run  afkpug run -- <command>  or  afkpug hold --for 2h  (in ~/.afkpug/bin)"))
-                            .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
+                            .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.sub)
                             .textSelection(.enabled)
                     }
 
                     Section(title: tr("Phone notifications")) {
                         Text(tr("Install the free ntfy app on your phone, subscribe to a topic name only you know, then enter the same name here."))
-                            .font(.system(size: 10.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            .font(.system(size: 10.5)).foregroundStyle(Theme.sub).fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 6) {
                             TextField(tr("topic name, e.g. afkpug-nathaporn-82"), text: $engine.phoneTopic)
                                 .textFieldStyle(.roundedBorder).font(.system(size: 11.5))
@@ -125,15 +129,16 @@ struct SettingsView: View {
 
                     Section(title: tr("Activity")) {
                         if engine.activity.isEmpty {
-                            Text(tr("Nothing yet")).font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text(tr("Nothing yet")).font(.system(size: 11)).foregroundStyle(Theme.sub)
                         }
                         ForEach(engine.activity.prefix(8)) { item in
                             HStack(spacing: 8) {
-                                Image(systemName: item.icon).font(.system(size: 10)).foregroundStyle(Palette.apricot).frame(width: 14)
-                                Text(item.text).font(.system(size: 11)).lineLimit(1)
+                                Image(systemName: item.icon).font(.system(size: 10)).foregroundStyle(Theme.sub).frame(width: 14)
+                                Text(item.text).font(.system(size: 11)).lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 Spacer()
                                 Text(item.date.formatted(date: .omitted, time: .shortened))
-                                    .font(.system(size: 10).monospacedDigit()).foregroundStyle(.tertiary)
+                                    .font(.system(size: 10).monospacedDigit()).foregroundStyle(Theme.faint)
                             }
                         }
                     }
@@ -143,10 +148,13 @@ struct SettingsView: View {
                             .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.warn)
                     }
                 }
+                .padding(.bottom, 4)
             }
-            .frame(height: 470)
+            .scrollIndicators(.automatic)
+            // Height comes from RootView (matches the home page) so the window never resizes.
+            .frame(maxHeight: .infinity)
         }
-        .padding(14)
+        .padding(18)
     }
 }
 
@@ -155,15 +163,14 @@ private struct Section<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title.uppercased())
-                .font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).tracking(0.8)
-                .padding(.leading, 6)
-            VStack(alignment: .leading, spacing: 12) { content }
-                .padding(12)
+                .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.faint).tracking(1)
+                .padding(.leading, 2)
+            VStack(alignment: .leading, spacing: 14) { content }
+                .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.primary.opacity(0.045)))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.primary.opacity(0.06), lineWidth: 1))
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
         }
     }
 }
@@ -178,19 +185,18 @@ struct ToggleRow: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(LinearGradient(colors: [tint.opacity(0.95), tint.opacity(0.75)], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 26, height: 26)
-                Image(systemName: symbol).font(.system(size: 11.5, weight: .bold)).foregroundStyle(.white)
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.sub)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 12.5, weight: .medium))
+                Text(detail).font(.system(size: 11)).foregroundStyle(Theme.sub)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 12.5, weight: .semibold))
-                Text(detail).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(2)
-            }
-            Spacer(minLength: 4)
-            Toggle("", isOn: $isOn).toggleStyle(.switch).controlSize(.small).labelsHidden().tint(tint)
+            Spacer(minLength: 6)
+            Toggle("", isOn: $isOn).toggleStyle(MiniSwitch()).labelsHidden()
         }
     }
 }
@@ -207,87 +213,51 @@ struct PillButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                if let symbol { Image(systemName: symbol).font(.system(size: 11, weight: .bold)) }
-                Text(title).font(.system(size: 12, weight: .bold, design: .rounded))
+                if let symbol { Image(systemName: symbol).font(.system(size: 10.5, weight: .semibold)) }
+                Text(title).font(.system(size: 11.5, weight: .semibold))
             }
-            .padding(.horizontal, style == .primary ? 14 : 11)
-            .padding(.vertical, 6)
-            .foregroundStyle(style == .primary ? Color.white : (style == .soft ? Palette.apricotDeep : Color.secondary))
-            .background(
-                Capsule().fill(background)
-            )
-            .shadow(color: style == .primary ? Palette.apricotDeep.opacity(hover ? 0.45 : 0.25) : .clear, radius: hover ? 6 : 3, y: 2)
-            .scaleEffect(hover ? 1.03 : 1)
-            .opacity(enabled ? 1 : 0.45)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .foregroundStyle(style == .primary ? Color.black : (style == .soft ? Theme.text : Theme.sub))
+            .background(Capsule().fill(background))
+            .lineLimit(1)
+            .fixedSize()
+            .opacity(enabled ? 1 : 0.35)
+            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hover = h } }
+        .buttonStyle(PressStyle())
+        .onHover { hover = $0 }
+        .animation(Theme.hover, value: hover)
     }
 
-    private var background: AnyShapeStyle {
+    private var lit: Bool { hover && enabled }
+
+    private var background: Color {
         switch style {
-        case .primary: return AnyShapeStyle(LinearGradient(colors: [Palette.apricot, Palette.apricotDeep], startPoint: .top, endPoint: .bottom))
-        case .soft: return AnyShapeStyle(Palette.apricot.opacity(0.16))
-        case .quiet: return AnyShapeStyle(Color.primary.opacity(0.07))
+        case .primary: return Color.white.opacity(lit ? 1 : 0.9)
+        case .soft: return lit ? Theme.surfaceHover : Color.white.opacity(0.06)
+        case .quiet: return lit ? Theme.surface : .clear
         }
-    }
-}
-
-struct Chip: View {
-    let title: String
-    let selected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11.5, weight: .bold, design: .rounded))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 5)
-                .foregroundStyle(selected ? Palette.apricotDeep : Color.secondary)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(selected ? Palette.apricot.opacity(0.18) : Color.primary.opacity(0.05))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(selected ? Palette.apricot.opacity(0.6) : .clear, lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
     }
 }
 
 struct IconButton: View {
     let symbol: String
+    var size: CGFloat = 28
     let action: () -> Void
     @State private var hover = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(Color.primary.opacity(hover ? 0.1 : 0.05)))
+                .font(.system(size: size * 0.45, weight: .medium))
+                .foregroundStyle(hover ? Theme.text : Theme.sub)
+                .frame(width: size, height: size)
+                .background(Circle().fill(hover ? Theme.surfaceHover : .clear))
+                .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressStyle())
         .onHover { hover = $0 }
-    }
-}
-
-extension View {
-    func card(highlight: Bool = false) -> some View {
-        self
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(highlight ? Palette.apricot.opacity(0.09) : Color.primary.opacity(0.04))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(highlight ? Palette.apricot.opacity(0.35) : Color.primary.opacity(0.07), lineWidth: 1)
-            )
+        .animation(Theme.hover, value: hover)
     }
 }
