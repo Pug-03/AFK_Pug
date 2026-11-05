@@ -13,6 +13,9 @@ enum Paths {
     static let lidFlag = state.appendingPathComponent("lid-override")
     static let lowPowerFlag = state.appendingPathComponent("lowpower-restore")
     static let muteFlag = state.appendingPathComponent("mute-restore")
+    /// "<pid>\n<executable path>\n" of the running menu bar app, for the watchdog
+    /// and the CLI (a renamed or moved bundle still counts as running).
+    static let appPid = state.appendingPathComponent("app.pid")
     static let hookScript = bin.appendingPathComponent("afkpug-hook")
     static let cliScript = bin.appendingPathComponent("afkpug")
     static let watchdogScript = bin.appendingPathComponent("watchdog.sh")
@@ -31,6 +34,19 @@ enum Paths {
         ensure()
         FileManager.default.createFile(atPath: url.path, contents: Data())
     }
+
+    static func writeAppPid() {
+        ensure()
+        let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
+        try? "\(getpid())\n\(exe)\n".write(to: appPid, atomically: true, encoding: .utf8)
+    }
+
+    /// Only our own pid file: a second copy quitting must not unregister the first.
+    static func removeAppPid() {
+        guard let text = try? String(contentsOf: appPid, encoding: .utf8),
+              text.split(separator: "\n").first.map(String.init) == String(getpid()) else { return }
+        try? FileManager.default.removeItem(at: appPid)
+    }
 }
 
 /// One "keep me awake" claim from an agent, the CLI, or `afkpug run`.
@@ -41,14 +57,26 @@ struct AgentHold: Identifiable, Equatable {
     let expires: Date?
     let reason: String?
 
+    /// The agent's name only ("Claude Code", "Codex", "Terminal hold"); the UI shows
+    /// `reason` / `expires` separately.
     var displayName: String {
-        switch agent.lowercased() {
-        case "cli": return reason.map { tr("Hold · %@", $0) } ?? tr("Terminal hold")
-        default:
-            let name = AgentIntegrations.displayName(agent)
-            // Written by afkpug-hook on a Claude usage limit (expires at the reset).
-            return reason == "usage limit" ? tr("%@ · waiting for the usage limit to reset", name) : name
-        }
+        agent.lowercased() == "cli" ? tr("Terminal hold") : AgentIntegrations.displayName(agent)
+    }
+
+    /// Name for the activity log: CLI holds are told apart by their reason.
+    var logName: String {
+        if agent.lowercased() == "cli", let reason { return tr("Hold · %@", reason) }
+        return displayName
+    }
+
+    /// Written by afkpug-hook on a Claude usage limit (expires at the reset + 2 min).
+    var isUsageLimitWait: Bool { reason == "usage limit" }
+
+    /// A hold written by an agent's own hooks: id `<agent>-<session>`, agent is one of
+    /// the integrations (not `cli-*`, `mcp-*`, `run-*` or a detected process).
+    var isHookHold: Bool {
+        let a = agent.lowercased()
+        return id.hasPrefix(a + "-") && AgentIntegrations.integration(a) != nil
     }
 }
 
@@ -57,6 +85,10 @@ struct AgentEvent {
     enum Kind: String { case done, waiting, failed }
     let kind: Kind
     let agent: String
+    /// Session id from the file name (`...@<sid>`); nil for old-style names.
+    var session: String? = nil
+    /// The hold this event belongs to (`<agent>-<sid>`), if the session is known.
+    var holdId: String? { session.map { "\(agent)-\($0)" } }
 }
 
 enum HoldStore {
@@ -67,24 +99,41 @@ enum HoldStore {
     static let untouchedAfter: TimeInterval = 15 * 60
     /// Hard cap for holds without an expiry, busy or not.
     static let staleAfter: TimeInterval = 6 * 3600
+    /// No writer sets an expiry further than this ahead (CLI max 24 h, MCP 12 h,
+    /// usage limit 6 h): anything beyond is corrupt and must not hold forever.
+    static let maxExpiry: TimeInterval = 24 * 3600 + 60
 
     static func scan(now: Date = Date()) -> [AgentHold] {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: Paths.holds, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
         var result: [AgentHold] = []
-        for url in files where !url.lastPathComponent.hasPrefix(".") {
+        for url in files {
+            let name = url.lastPathComponent
+            if name.hasPrefix(".") {
+                // Hook scratch files: end markers (60 s), claims and temp files left by a killed hook.
+                if name.hasPrefix(".ended-") || name.hasPrefix(".claim-") || name.hasSuffix(".tmp"),
+                   let m = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                   abs(Date().timeIntervalSince(m)) > 600 {
+                    try? fm.removeItem(at: url)
+                }
+                continue
+            }
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? now
             // An unparseable file (e.g. a reason with control characters from an
             // old CLI) has no expiry and no owner, so it only lives `untouchedAfter`.
             let json = (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
-            let started = (json["started"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? modified
-            let expiresRaw = json["expires"] as? Double ?? 0
-            let expires = expiresRaw > 0 ? Date(timeIntervalSince1970: expiresRaw) : nil
+            let startedRaw = (json["started"] as? Double).flatMap { $0.isFinite ? $0 : nil }
+            let started = startedRaw.map { Date(timeIntervalSince1970: $0) } ?? modified
+            let expiresRaw = (json["expires"] as? Double).flatMap { $0.isFinite ? $0 : nil } ?? 0
+            let expires = expiresRaw > 0 ? Date(timeIntervalSince1970: min(expiresRaw, 4e10)) : nil
             let pid = (json["pid"] as? NSNumber)?.int32Value ?? 0
 
             var stale: Bool
             if let expires {
-                stale = expires < now
+                // Years away or 1e300: corrupt, never a reason to stay awake.
+                let tooFar = expiresRaw > now.timeIntervalSince1970 + maxExpiry
+                    || startedRaw.map { expiresRaw > $0 + maxExpiry } == true
+                stale = expires < now || tooFar
             } else {
                 let untouched = now.timeIntervalSince(modified)
                 stale = untouched > staleAfter || (untouched > untouchedAfter && !(pid > 1 && ProcessWatcher.treeBusy(pid)))
@@ -99,11 +148,20 @@ enum HoldStore {
             result.append(AgentHold(id: url.lastPathComponent, agent: json["agent"] as? String ?? "agent",
                                     started: started, expires: expires, reason: reason))
         }
-        return result.sorted { $0.started < $1.started }
+        // Same second (hooks fired together): by id, so the order is stable.
+        return result.sorted { $0.started != $1.started ? $0.started < $1.started : $0.id < $1.id }
     }
 
     static func release(_ hold: AgentHold) {
         try? FileManager.default.removeItem(at: Paths.holds.appendingPathComponent(hold.id))
+    }
+
+    /// Drops every hook hold of one agent (`holds/<agent>-*`), e.g. on disconnect.
+    static func releaseAll(agent: String) {
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: Paths.holds.path)) ?? [] where name.hasPrefix(agent + "-") {
+            try? fm.removeItem(at: Paths.holds.appendingPathComponent(name))
+        }
     }
 
     /// Reads and deletes pending event files. Events written before `notBefore`
@@ -114,11 +172,15 @@ enum HoldStore {
         var events: [AgentEvent] = []
         for url in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
-            // name: <timestamp>-<agent>-<kind>
-            let parts = url.lastPathComponent.split(separator: "-")
-            if notBefore.map({ modified >= $0 }) ?? true,
+            // name: <timestamp>-<agent>-<kind>[@<session>]  (older hooks: no session)
+            let name = url.lastPathComponent
+            let at = name.firstIndex(of: "@")
+            let base = at.map { String(name[..<$0]) } ?? name
+            let session = at.map { String(name[name.index(after: $0)...]) }.flatMap { $0.isEmpty ? nil : $0 }
+            let parts = base.split(separator: "-")
+            if !name.hasPrefix("."), notBefore.map({ modified >= $0 }) ?? true,
                parts.count >= 3, let kind = AgentEvent.Kind(rawValue: String(parts.last!)) {
-                events.append(AgentEvent(kind: kind, agent: parts[1...(parts.count - 2)].joined(separator: "-")))
+                events.append(AgentEvent(kind: kind, agent: parts[1...(parts.count - 2)].joined(separator: "-"), session: session))
             }
             try? fm.removeItem(at: url)
         }
@@ -175,10 +237,7 @@ struct NestedHooksFile: Sendable {
 
     func command(_ action: String) -> String { ConfigFile.hookCommand(action, agent) }
 
-    func isInstalled() -> Bool {
-        guard let data = try? ConfigFile.read(url), let text = String(data: data, encoding: .utf8) else { return false }
-        return text.contains(ConfigFile.marker)
-    }
+    func isInstalled() -> Bool { ConfigFile.hasOurHooks(url) }
 
     /// Connected, but by an older version (missing events or other commands).
     func needsUpgrade() -> Bool {
@@ -195,7 +254,7 @@ struct NestedHooksFile: Sendable {
 
     func install() throws {
         var settings = try ConfigFile.loadJSON(url)
-        var hooks = stripAll(settings["hooks"] as? [String: Any] ?? [:])
+        var hooks = stripAll(try ConfigFile.hooksObject(settings, url))
         for (event, action) in events {
             var groups = hooks[event] as? [[String: Any]] ?? []
             var entry: [String: Any] = ["type": "command", "command": command(action)]
@@ -210,8 +269,8 @@ struct NestedHooksFile: Sendable {
     func uninstall() throws {
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         var settings = try ConfigFile.loadJSON(url)
-        guard let hooks = settings["hooks"] as? [String: Any] else { return }
-        let stripped = stripAll(hooks)
+        guard settings["hooks"] != nil else { return }
+        let stripped = stripAll(try ConfigFile.hooksObject(settings, url))
         settings["hooks"] = stripped.isEmpty ? nil : stripped
         try ConfigFile.saveJSON(settings, to: url)
     }
@@ -263,6 +322,9 @@ enum ClaudeHooks {
 
     static func isInstalled() -> Bool { file.isInstalled() }
     static func needsUpgrade() -> Bool { file.needsUpgrade() }
+    /// Hooks in settings.json while the plugin also provides them: every event would
+    /// fire twice, so they have to go (boot / refresh calls `install()`, which removes them).
+    static func doubledByPlugin() -> Bool { isInstalled() && pluginInstalled() }
 
     /// With the plugin installed, settings.json hooks would fire every event twice.
     static func install() throws {
@@ -293,9 +355,16 @@ enum Uninstaller {
 
     static func run() -> Report {
         var report = Report()
-        do { try ClaudeHooks.uninstall() } catch { report.errors.append("Claude Code hooks: \(error.localizedDescription)") }
-        for item in AgentIntegrations.all where item.id != "claude" && item.isConnected() {
-            do { try item.disconnect() } catch { report.errors.append("\(item.name) hooks: \(error.localizedDescription)") }
+        // Every config, connected or not (an old or hand-edited entry may not be detected);
+        // a file we can't parse only counts as a problem if it holds our hook.
+        do { try ClaudeHooks.uninstall() } catch {
+            if ConfigFile.mentionsHook(ClaudeHooks.settingsURL) { report.errors.append("Claude Code hooks: \(error.localizedDescription)") }
+        }
+        for (item, url) in [(AgentIntegrations.codex, CodexHooks.file.url), (AgentIntegrations.gemini, GeminiHooks.file.url),
+                            (AgentIntegrations.cursor, CursorHooks.configURL)] {
+            do { try item.disconnect() } catch {
+                if ConfigFile.mentionsHook(url) { report.errors.append("\(item.name) hooks: \(error.localizedDescription)") }
+            }
         }
         if MCPInstaller.isInstalled(), !MCPInstaller.uninstall() { report.errors.append("Claude Code MCP server: run `claude mcp remove --scope user afkpug`") }
         if Sim.enabled {

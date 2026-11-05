@@ -18,8 +18,10 @@ struct AgentIntegration: Identifiable, Sendable {
     /// ProcessWatcher display names this integration replaces while connected
     /// (the native hooks hold the Mac awake, so process detection would double it).
     var processNames: [String] = []
-    /// A step the user still has to take in the agent itself after connecting (nil: none).
-    var setupNote: String? = nil
+    /// English text of a step the user still has to take in the agent itself after
+    /// connecting; translated on every read so it follows the current language.
+    var setupNoteKey: String? = nil
+    var setupNote: String? { setupNoteKey.map { tr($0) } }
 }
 
 enum AgentIntegrations {
@@ -32,24 +34,20 @@ enum AgentIntegrations {
         all.first { $0.id == agent.lowercased() }?.name ?? agent
     }
 
-    /// Process detection names to skip: agents that are connected and whose hooks
-    /// have been seen working (Codex skips new hooks until the user trusts them in
-    /// /hooks; until then, process detection keeps covering it).
-    @MainActor
-    static func hookedProcessNames(connected: [String: Bool]) -> Set<String> {
-        let seen = Set(Engine.store.stringArray(forKey: seenKey) ?? [])
-        return Set(all.filter { connected[$0.id] == true && seen.contains($0.id) }.flatMap(\.processNames))
+    /// Process detection names to skip right now: agents with a live hook hold
+    /// (`<agent>-<session>`). Codex skips new hooks until the user trusts them in
+    /// /hooks; until a hook really runs, process detection keeps covering it. A
+    /// `cursor-*` hold counts even when only Claude Code's hooks are connected
+    /// (Cursor runs those too).
+    static func hookedProcessNames(holds: [AgentHold]) -> Set<String> {
+        let live = Set(holds.filter(\.isHookHold).map { $0.agent.lowercased() })
+        return Set(all.filter { live.contains($0.id) }.flatMap(\.processNames))
     }
 
-    /// Remembers which agents' hooks have written a hold at least once.
-    @MainActor
-    static func noteHookHolds(_ holds: [AgentHold]) {
-        let ids = Set(holds.map { $0.agent.lowercased() }).intersection(all.filter { !$0.processNames.isEmpty }.map(\.id))
-        guard !ids.isEmpty else { return }
-        let seen = Set(Engine.store.stringArray(forKey: seenKey) ?? [])
-        if !ids.isSubset(of: seen) { Engine.store.set(Array(seen.union(ids)).sorted(), forKey: seenKey) }
+    /// Hooks that can report this integration's agent: its own, or for Cursor also Claude Code's.
+    static func hooksActive(_ item: AgentIntegration, connected: [String: Bool]) -> Bool {
+        connected[item.id] == true || (item.id == "cursor" && connected["claude"] == true)
     }
-    private static let seenKey = "hooksSeenAgents"
 
     static let claude = AgentIntegration(
         id: "claude",
@@ -59,7 +57,9 @@ enum AgentIntegrations {
             FileManager.default.fileExists(atPath: ClaudeHooks.settingsURL.deletingLastPathComponent().path)
         },
         isConnected: { ClaudeHooks.isInstalled() || ClaudeHooks.pluginInstalled() },
-        needsUpgrade: { !ClaudeHooks.pluginInstalled() && ClaudeHooks.needsUpgrade() },
+        // With the plugin, settings.json hooks would double every event: "upgrading"
+        // (install()) removes them.
+        needsUpgrade: { ClaudeHooks.pluginInstalled() ? ClaudeHooks.isInstalled() : ClaudeHooks.needsUpgrade() },
         connect: { try ClaudeHooks.install() },
         disconnect: {
             try ClaudeHooks.uninstall()
@@ -79,7 +79,7 @@ enum AgentIntegrations {
         connect: { try CodexHooks.file.install() },
         disconnect: { try CodexHooks.file.uninstall() },
         processNames: ["Codex"],
-        setupNote: tr("Codex runs new hooks only after you trust them: open Codex and type /hooks.")
+        setupNoteKey: "Codex runs new hooks only after you trust them: open Codex and type /hooks."
     )
 
     static let gemini = AgentIntegration(
@@ -113,10 +113,12 @@ enum AgentIntegrations {
 /// symlinks (dotfiles repos), keeps the user's very first version as
 /// `<file>.afkpug-backup`, and refuses read-only files instead of replacing them.
 enum ConfigFile {
-    /// `~/<relative>`, or the simulator sandbox's fake home.
-    static func home(_ relative: String) -> URL {
-        (Sim.enabled ? Paths.root : FileManager.default.homeDirectoryForCurrentUser).appendingPathComponent(relative)
-    }
+    /// The user's home, or the simulator's fake one (separate from the fake ~/.afkpug,
+    /// so uninstall can be checked to keep the user's other config).
+    static var homeDir: URL { Sim.enabled ? Sim.home : FileManager.default.homeDirectoryForCurrentUser }
+
+    /// `~/<relative>`, or in the simulator's fake home.
+    static func home(_ relative: String) -> URL { homeDir.appendingPathComponent(relative) }
 
     static func error(_ message: String) -> NSError {
         NSError(domain: "AFKPug", code: 3, userInfo: [NSLocalizedDescriptionKey: message])
@@ -124,7 +126,7 @@ enum ConfigFile {
 
     /// "~/.codex/config.toml" for messages.
     static func display(_ url: URL) -> String {
-        let home = (Sim.enabled ? Paths.root : FileManager.default.homeDirectoryForCurrentUser).path
+        let home = homeDir.path
         return url.path.hasPrefix(home + "/") ? "~" + url.path.dropFirst(home.count) : url.path
     }
 
@@ -162,6 +164,43 @@ enum ConfigFile {
             throw error(tr("%@ is not a JSON object", display(url)))
         }
         return object
+    }
+
+    /// The `"hooks"` object ([:] when absent). Any other value is refused like
+    /// malformed JSON instead of being silently replaced.
+    static func hooksObject(_ json: [String: Any], _ url: URL) throws -> [String: Any] {
+        guard let value = json["hooks"] else { return [:] }
+        guard let hooks = value as? [String: Any] else {
+            throw error(tr("%@ has a \"hooks\" value that is not an object", display(url)))
+        }
+        return hooks
+    }
+
+    /// Every hook command in a config file, parsed (so `\/` escapes don't matter):
+    /// Claude Code / Codex / Gemini groups (`{"hooks": [{"command"}]}`) and Cursor
+    /// entries (`{"command"}`). nil when the file can't be parsed.
+    static func hookCommands(_ url: URL) -> [String]? {
+        guard let json = try? loadJSON(url) else { return nil }
+        guard let hooks = json["hooks"] as? [String: Any] else { return [] }
+        return hooks.values.flatMap { value -> [String] in
+            ((value as? [[String: Any]]) ?? []).flatMap { entry -> [String] in
+                let inner = (entry["hooks"] as? [[String: Any]] ?? []).compactMap { $0["command"] as? String }
+                return inner + [entry["command"] as? String].compactMap { $0 }
+            }
+        }
+    }
+
+    /// One of our hook commands is configured in `url`.
+    static func hasOurHooks(_ url: URL) -> Bool {
+        guard let commands = hookCommands(url) else { return mentionsHook(url) }
+        return commands.contains { $0.contains(marker) }
+    }
+
+    /// Raw text check for files that don't parse (e.g. JSON with comments), also
+    /// matching JSON-escaped slashes.
+    static func mentionsHook(_ url: URL) -> Bool {
+        guard let data = try? read(url), let text = String(data: data, encoding: .utf8) else { return false }
+        return text.contains(marker) || text.contains(#"\/bin\/afkpug-hook"#)
     }
 
     static func saveJSON(_ object: [String: Any], to url: URL) throws {
@@ -255,10 +294,7 @@ enum CursorHooks {
         return "[ -x \(path) ] && \(path) \(action) cursor >/dev/null 2>&1; printf '%s\\n' '\(reply)'"
     }
 
-    static func isInstalled() -> Bool {
-        guard let data = try? ConfigFile.read(configURL), let text = String(data: data, encoding: .utf8) else { return false }
-        return text.contains(ConfigFile.marker)
-    }
+    static func isInstalled() -> Bool { ConfigFile.hasOurHooks(configURL) }
 
     static func needsUpgrade() -> Bool {
         guard isInstalled(), let json = try? ConfigFile.loadJSON(configURL), let hooks = json["hooks"] as? [String: Any] else { return false }
@@ -269,7 +305,7 @@ enum CursorHooks {
 
     static func install() throws {
         var json = try ConfigFile.loadJSON(configURL)
-        var hooks = strip(json["hooks"] as? [String: Any] ?? [:])
+        var hooks = strip(try ConfigFile.hooksObject(json, configURL))
         for (event, action) in events {
             var list = hooks[event] as? [[String: Any]] ?? []
             list.append(["command": command(event, action), "timeout": 10])
@@ -283,8 +319,8 @@ enum CursorHooks {
     static func uninstall() throws {
         guard FileManager.default.fileExists(atPath: configURL.path) else { return }
         var json = try ConfigFile.loadJSON(configURL)
-        guard let hooks = json["hooks"] as? [String: Any] else { return }
-        json["hooks"] = strip(hooks)   // keep "hooks": {} and "version": a valid file
+        guard json["hooks"] != nil else { return }
+        json["hooks"] = strip(try ConfigFile.hooksObject(json, configURL))   // keep "hooks": {} and "version": a valid file
         try ConfigFile.saveJSON(json, to: configURL)
     }
 

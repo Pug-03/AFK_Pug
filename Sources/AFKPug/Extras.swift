@@ -446,7 +446,11 @@ enum AppPresence {
 /// call it off the main thread.
 enum MCPInstaller {
     static var executable: String { Bundle.main.executablePath ?? CommandLine.arguments[0] }
-    static var configURL: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json") }
+    static var configURL: URL { ConfigFile.home(".claude.json") }
+
+    /// The AFK Pug Claude Code plugin is installed and brings its own MCP server
+    /// (plugin/.mcp.json): a user-scope registration would list the tools twice.
+    static var providedByPlugin: Bool { ClaudeHooks.pluginInstalled() }
 
     /// The user-scope "afkpug" server in ~/.claude.json, and the command it runs.
     static func registeredCommand() -> String? {

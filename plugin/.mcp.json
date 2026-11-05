@@ -1,9 +1,10 @@
 {
   "mcpServers": {
     "afkpug": {
-      "command": "/Applications/AFK Pug.app/Contents/MacOS/AFKPug",
+      "command": "/bin/sh",
       "args": [
-        "--mcp"
+        "-c",
+        "e=$(sed -n 2p \"$HOME/.afkpug/state/app.pid\" 2>/dev/null); for a in \"$e\" \"/Applications/AFK Pug.app/Contents/MacOS/AFKPug\" \"$HOME/Applications/AFK Pug.app/Contents/MacOS/AFKPug\"; do [ -n \"$a\" ] && [ -x \"$a\" ] && exec \"$a\" --mcp; done; echo \"AFK Pug is not installed in /Applications or ~/Applications\" >&2; exit 0"
       ]
     }
   }
