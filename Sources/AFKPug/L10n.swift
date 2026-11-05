@@ -338,4 +338,8 @@ private let thaiV3: [String: String] = [
     "Your agent is done. AFK Pug will let the Mac sleep soon.": "agent ทำเสร็จแล้ว อีกสักพัก Mac จะพักเครื่อง",
     "Welcome back": "กลับมาแล้ว",
     " %d agent turn(s) finished.": " agent ทำงานเสร็จ %d งาน",
+    "Connected to %@": "เชื่อมต่อ %@ แล้ว",
+    "Disconnected from %@": "ตัดการเชื่อมต่อ %@ แล้ว",
+    "Could not disconnect: %@": "ตัดการเชื่อมต่อไม่สำเร็จ: %@",
+    "Updated the %@ connection": "อัปเดตการเชื่อมต่อ %@ แล้ว",
 ]

@@ -72,6 +72,11 @@ final class Engine: ObservableObject {
     @Published private(set) var lidClosed = false
     @Published private(set) var setupDone = false
     @Published private(set) var claudeConnected = ClaudeHooks.isInstalled()
+    /// Connected state and last error per integration id (see AgentIntegrations).
+    @Published private(set) var connected: [String: Bool] = [:]
+    @Published private(set) var integrationErrors: [String: String] = [:]
+    /// First-run walkthrough (permission, Claude Code / other agents, open at login).
+    @Published var showOnboarding = !Engine.store.bool(forKey: "onboardingDone")
     @Published private(set) var trip: GuardTrip?
     @Published private(set) var isActive = false
     @Published private(set) var lidOverrideOn = false
@@ -171,7 +176,10 @@ final class Engine: ObservableObject {
         setupDone = PowerControl.isSetupDone
         if setupDone { Installer.installWatchdog() }
         // Older connections lack the PreToolUse / PostToolUse hooks.
-        if ClaudeHooks.needsUpgrade(), (try? ClaudeHooks.install()) != nil { log("link", tr("Updated the Claude Code connection")) }
+        for item in AgentIntegrations.all where item.needsUpgrade() {
+            if (try? item.connect()) != nil { log("link", tr("Updated the %@ connection", item.name)) }
+        }
+        refreshIntegrations()
         recoverFromCrash()
         if !Engine.store.bool(forKey: "didFirstRun") {
             Engine.store.set(true, forKey: "didFirstRun")
@@ -446,6 +454,45 @@ final class Engine: ObservableObject {
 
     func testPhone() {
         PhoneNotifier.send(topic: phoneTopic, title: "AFK Pug", body: tr("Test notification. Your phone is connected."))
+    }
+
+    // MARK: Agent integrations
+
+    func refreshIntegrations() {
+        var state: [String: Bool] = [:]
+        for item in AgentIntegrations.all { state[item.id] = item.isConnected() }
+        if state != connected { connected = state }
+        let claude = state["claude"] ?? false
+        if claude != claudeConnected { claudeConnected = claude }
+    }
+
+    func connect(_ id: String) {
+        guard let item = AgentIntegrations.integration(id) else { return }
+        integrationErrors[id] = nil
+        do {
+            try item.connect()
+            log("link", tr("Connected to %@", item.name))
+        } catch {
+            integrationErrors[id] = tr("Could not connect: %@", error.localizedDescription)
+        }
+        refreshIntegrations()
+    }
+
+    func disconnect(_ id: String) {
+        guard let item = AgentIntegrations.integration(id) else { return }
+        integrationErrors[id] = nil
+        do {
+            try item.disconnect()
+            log("link.badge.plus", tr("Disconnected from %@", item.name))
+        } catch {
+            integrationErrors[id] = tr("Could not disconnect: %@", error.localizedDescription)
+        }
+        refreshIntegrations()
+    }
+
+    func finishOnboarding() {
+        Engine.store.set(true, forKey: "onboardingDone")
+        showOnboarding = false
     }
 
     func disconnectClaude() {
