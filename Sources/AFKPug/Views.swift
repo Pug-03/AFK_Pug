@@ -8,9 +8,12 @@ enum Theme {
     static let line = Color.white.opacity(0.07)
     static let text = Color.white.opacity(0.94)
     static let sub = Color.white.opacity(0.50)
-    static let faint = Color.white.opacity(0.42)
+    /// ~4.8:1 on `bg`; small text (10–11 pt) uses `sub` instead.
+    static let faint = Color.white.opacity(0.47)
     static let accent = Color(red: 0.98, green: 0.63, blue: 0.35)
     static let live = Color(red: 0.40, green: 0.85, blue: 0.56)
+    /// An agent paused on its usage limit: still held, not working.
+    static let wait = Color(red: 0.96, green: 0.76, blue: 0.30)
 
     /// Page slide and segmented selection.
     static let smooth = Animation.smooth(duration: 0.3)
@@ -123,8 +126,14 @@ private struct Header: View {
         }
     }
 
+    /// Every hold is an agent paused on its usage limit: nothing is working right now.
+    private var allWaiting: Bool {
+        engine.trip == nil && !engine.manualOn && !engine.holds.isEmpty && engine.waitingAgents == engine.holds.count
+    }
+
     private var dotColor: Color {
         if engine.trip != nil { return Palette.warn }
+        if allWaiting { return Theme.wait }
         return engine.isActive ? Theme.live : Theme.faint
     }
 }
@@ -226,7 +235,20 @@ private struct TimerBlock: View {
     private func subline(_ mode: Mode, at date: Date) -> String {
         switch mode {
         case .manual:
-            if let end = engine.manualEnd { return tr("until %@", end.formatted(date: .omitted, time: .shortened)) }
+            if let end = engine.manualEnd { return tr("until %@", Fmt.time(end)) }
+        case .trip:
+            switch engine.trip {
+            case .thermal:
+                if let left = engine.thermalCooldownRemaining {
+                    return tr("Cooling down. You can start again in about %@", Fmt.aboutMinutes(left))
+                }
+            case .battery:
+                // The engine's line says where it stopped and to plug in; once the
+                // charger is in, the trip still waits for steady power.
+                if !engine.batteryTripNeedsCharger { return tr("Charging. You can start again in a moment") }
+            case nil:
+                break
+            }
         case .grace:
             // A duration with units: "14:38" here once read as a clock time.
             return tr("Sleeping in %@", Fmt.countdown((engine.graceUntil ?? date).timeIntervalSince(date)))
@@ -266,7 +288,8 @@ private struct Durations: View {
     var body: some View {
         HStack(spacing: 0) {
             ForEach(choices, id: \.self) { m in
-                Segment(title: Fmt.minutes(m), selected: engine.selectedMinutes == m, ns: ns) {
+                Segment(title: Fmt.minutes(m), spoken: m == 0 ? tr("Until you stop") : Fmt.minutes(m),
+                        selected: engine.selectedMinutes == m, ns: ns) {
                     guard engine.selectedMinutes != m else { return }
                     if reduceMotion { engine.choose(minutes: m) } else { withAnimation(Theme.smooth) { engine.choose(minutes: m) } }
                 }
@@ -277,11 +300,13 @@ private struct Durations: View {
         // Agents, grace or a trigger are in charge: picking a time would do nothing visible.
         .opacity(!engine.manualOn && engine.isActive ? 0.45 : 1)
         .help(engine.manualOn ? tr("Picking a time restarts the countdown") : "")
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(tr("Duration"))
     }
 
     private struct Segment: View {
         let title: String
+        let spoken: String
         let selected: Bool
         let ns: Namespace.ID
         let action: () -> Void
@@ -308,6 +333,8 @@ private struct Durations: View {
             .buttonStyle(.plain)
             .onHover { hover = $0 }
             .animation(Theme.hover, value: hover)
+            .accessibilityLabel(spoken)
+            .accessibilityAddTraits(selected ? .isSelected : [])
         }
     }
 }
@@ -326,11 +353,11 @@ private struct MainAction: View {
                         .frame(width: 104)
                 }
             } else {
-                ActionButton(title: tr("Go AFK"), style: .solid) { engine.start() }
+                // During a guard trip the button says why it's off, not just a tooltip.
+                ActionButton(title: engine.trip == nil ? tr("Go AFK") : tripHelp, style: .solid) { engine.start() }
                     .disabled(engine.trip != nil)
                     .keyboardShortcut(.defaultAction)
-                    .help(tripHelp)
-                if engine.canSleepNow {
+                if engine.canSleepNow, engine.trip == nil {
                     ActionButton(title: tr("Sleep now"), style: .outline) { engine.sleepNow() }
                         .frame(width: 118)
                         .help(tr("Let the Mac sleep now; music or the charger won't keep it awake until they stop and start again"))
@@ -343,7 +370,7 @@ private struct MainAction: View {
 
     private var tripHelp: String {
         switch engine.trip {
-        case .battery: return tr("Plug in the charger to keep going")
+        case .battery: return engine.batteryTripNeedsCharger ? tr("Plug in the charger to keep going") : tr("Charging…")
         case .thermal: return tr("Waiting for the Mac to cool down")
         case nil: return ""
         }
@@ -443,6 +470,7 @@ struct PressStyle: ButtonStyle {
 
 private struct Modes: View {
     @ObservedObject var engine: Engine
+    @State private var showAllAgents = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -450,14 +478,16 @@ private struct Modes: View {
                 Toggle(tr("Agent mode"), isOn: $engine.agentMode).toggleStyle(MiniSwitch()).labelsHidden()
             }
             if engine.agentMode, !engine.holds.isEmpty {
-                // At most 3 rows so the window doesn't keep growing.
+                // 3 rows by default so the window doesn't keep growing; "+N more" shows the rest.
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(engine.holds.prefix(3)) { hold in
+                    ForEach(showAllAgents ? engine.holds : Array(engine.holds.prefix(3))) { hold in
                         AgentRow(hold: hold) { engine.release(hold) }
                     }
                     if engine.holds.count > 3 {
-                        Text(tr("+%d more", engine.holds.count - 3)).font(.system(size: 11)).foregroundStyle(Theme.sub)
-                            .padding(.leading, 14)
+                        MoreButton(title: showAllAgents ? tr("Show less") : tr("+%d more", engine.holds.count - 3)) {
+                            showAllAgents.toggle()
+                        }
+                        .padding(.leading, 14)
                     }
                 }
                 .padding(.leading, 30).padding(.bottom, 8)
@@ -485,15 +515,19 @@ private struct Modes: View {
                         .font(.system(size: 11)).foregroundStyle(Theme.sub)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
+                    let titles = [tr("Set up"), tr("Try again"), tr("Working…")]
                     if engine.setupWorking {
-                        PillButton(title: tr("Working…"), style: .soft) {}.disabled(true)
+                        PillButton(title: tr("Working…"), style: .soft, reserve: titles) {}.disabled(true)
                     } else {
-                        PillButton(title: tr("Set up"), style: .primary) { engine.runSetup() }
+                        PillButton(title: engine.setupError == nil ? tr("Set up") : tr("Try again"), style: .primary, reserve: titles) {
+                            engine.runSetup()
+                        }
                     }
                 }
                 .padding(.leading, 30).padding(.bottom, 10)
             }
-            if let error = engine.setupError {
+            // Only relevant while lid-closed mode is on.
+            if engine.lidMode, let error = engine.setupError {
                 ErrorText(error).padding(.leading, 30).padding(.bottom, 10)
             }
 
@@ -538,6 +572,7 @@ private struct ModeRow<Trailing: View>: View {
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(Theme.sub)
                 .frame(width: 18)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
                 // One line, so a changing detail never resizes the window.
@@ -571,15 +606,15 @@ private struct AgentRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            LiveDot(color: Theme.live)
+            // Amber: paused on its usage limit, held until the reset.
+            LiveDot(color: hold.isUsageLimitWait ? Theme.wait : Theme.live)
             Text(hold.displayName).font(.system(size: 11.5, weight: .medium))
                 .lineLimit(1)
                 .truncationMode(.middle)
             // Minute resolution, so a slow timeline is enough (and it only runs while visible).
-            // The time keeps its width; a long name truncates instead.
+            // The status keeps its width; a long name truncates instead.
             TimelineView(.periodic(from: .now, by: 30)) { _ in
-                Text(hold.expires.map { tr("until %@", $0.formatted(date: .omitted, time: .shortened)) }
-                     ?? tr("working for %@", Fmt.duration(Clock.now().timeIntervalSince(hold.started))))
+                Text(status)
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.sub)
                     .lineLimit(1)
                     .fixedSize()
@@ -600,6 +635,34 @@ private struct AgentRow: View {
         }
         .padding(.vertical, 4)
     }
+
+    private var status: String {
+        if hold.isUsageLimitWait {
+            return hold.expires.map { tr("waiting for limit · until %@", Fmt.time($0)) } ?? tr("waiting for limit")
+        }
+        if let end = hold.expires { return tr("until %@", Fmt.time(end)) }
+        let elapsed = Clock.now().timeIntervalSince(hold.started)
+        return elapsed < 60 ? tr("just started") : tr("working for %@", Fmt.compact(elapsed))
+    }
+}
+
+/// "+2 more" under the agent list: shows the hidden rows so they can be seen and released.
+private struct MoreButton: View {
+    let title: String
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 11, weight: .medium))
+                .foregroundStyle(hover ? Theme.text : Theme.sub)
+                .underline(hover)
+                .padding(.vertical, 3)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+    }
 }
 
 // MARK: Status bar
@@ -609,18 +672,32 @@ private struct StatusBar: View {
     @State private var quitHover = false
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             if engine.battery.hasBattery {
                 item(batterySymbol, "\(engine.battery.percent)%",
                      warn: engine.battery.percent <= engine.batteryFloor && !engine.battery.onAC)
+                    .fixedSize()
             }
-            item("thermometer.medium", engine.thermal.label, warn: engine.thermal.rawValue >= ProcessInfo.ThermalState.serious.rawValue)
+            if case .thermal = engine.trip {
+                // Never "Cool" next to a big "Too hot": show how long the cooldown has left.
+                item("thermometer.high", engine.thermalCooldownRemaining.map { tr("Cooling · %@", Fmt.aboutMinutes($0, short: true)) } ?? tr("Too hot"),
+                     warn: true)
+                    .fixedSize()
+            } else {
+                item("thermometer.medium", engine.thermal.label, warn: engine.thermal.rawValue >= ProcessInfo.ThermalState.serious.rawValue)
+                    .fixedSize()
+            }
+            // Every label fits at full length in both languages (checked with the
+            // longest heat label); a flexible one was cut short with room to spare.
             item("laptopcomputer", engine.lidOverrideOn ? tr("Lid: keeps running") : tr("Lid: sleeps"), warn: false)
-            Spacer(minLength: 8)
-            Button(tr("Quit")) { NSApp.terminate(nil) }
+                .fixedSize()
+            Spacer(minLength: 4)
+            Button { NSApp.terminate(nil) } label: {
+                Text(tr("Quit")).lineLimit(1).fixedSize()
+            }
                 .buttonStyle(.plain)
                 .font(.system(size: 11))
-                .foregroundStyle(quitHover ? Theme.text : Theme.faint)
+                .foregroundStyle(quitHover ? Theme.text : Theme.sub)
                 .onHover { quitHover = $0 }
         }
         .padding(.top, 2)
@@ -642,7 +719,7 @@ private struct StatusBar: View {
             Image(systemName: symbol).font(.system(size: 9.5))
             Text(text).font(.system(size: 11).monospacedDigit()).lineLimit(1)
         }
-        .foregroundStyle(warn ? Palette.warn : Theme.faint)
+        .foregroundStyle(warn ? Palette.warn : Theme.sub)
     }
 }
 
@@ -660,7 +737,7 @@ private struct SummaryCard: View {
                 IconButton(symbol: "xmark", size: 22, label: tr("Close"), action: dismiss)
             }
             HStack(alignment: .top, spacing: 8) {
-                Figure(value: Fmt.duration(summary.duration), label: tr("lid closed"))
+                Figure(value: Fmt.compact(summary.duration), label: tr("lid closed"))
                 if summary.hadBattery {
                     Figure(value: "\(max(0, summary.startBattery - summary.endBattery))%", label: tr("battery used"))
                 }
@@ -684,5 +761,34 @@ private struct SummaryCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+extension Fmt {
+    private static let thaiTime: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "th_TH")
+        f.calendar = Calendar(identifier: .gregorian)
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    /// A time of day for "until %@": 24-hour in Thai (never "5:48 PM น."), the system style otherwise.
+    static func time(_ date: Date) -> String {
+        L10n.isThai ? thaiTime.string(from: date) : date.formatted(date: .omitted, time: .shortened)
+    }
+
+    /// Compact elapsed time: "1h 25m" / "1 ชม. 25 น.", "2h" rather than "2h 0m".
+    static func compact(_ t: TimeInterval) -> String {
+        let m = Int(max(0, t) / 60)
+        if m < 1 { return tr("under a minute") }
+        if m < 60 { return tr("%dm", m) }
+        return m % 60 == 0 ? tr("%dh", m / 60) : tr("%dh %dm", m / 60, m % 60)
+    }
+
+    /// A rough wait, rounded up to whole minutes: "4 min".
+    static func aboutMinutes(_ t: TimeInterval, short: Bool = false) -> String {
+        let m = max(1, Int((t / 60).rounded(.up)))
+        return short && L10n.isThai ? tr("%d min·short", m) : tr("%d min", m)
     }
 }

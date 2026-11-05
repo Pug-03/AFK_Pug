@@ -36,7 +36,7 @@ struct SettingsView: View {
 
                     Section(title: tr("Safety")) {
                         Row(symbol: "battery.25percent", title: tr("Stop at battery"),
-                            detail: tr("If the Mac gets critically hot, AFK Pug always lets it sleep.")) {
+                            detail: tr("AFK Pug lets the Mac sleep at this level")) {
                             Text("\(engine.batteryFloor)%")
                                 .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
                         }
@@ -44,6 +44,8 @@ struct SettingsView: View {
                                               set: { engine.batteryFloor = Int($0) }), in: 5...50, step: 5)
                             .padding(.leading, 30)
                             .accessibilityLabel(tr("Stop at battery"))
+                            .accessibilityValue("\(engine.batteryFloor)%")
+                        Footnote(tr("If the Mac gets critically hot, AFK Pug always lets it sleep."))
                     }
 
                     Section(title: tr("Agents")) {
@@ -61,17 +63,27 @@ struct SettingsView: View {
                         }
                         ToggleRow(symbol: "magnifyingglass", title: tr("Detect other agents"),
                                   detail: tr("Codex, Gemini CLI, Cursor Agent, Aider, OpenCode and more"), isOn: $engine.detectOtherAgents)
-                        Row(symbol: "cpu", title: tr("Let agents keep the Mac awake"),
-                            detail: tr("Adds an AFK Pug tool to Claude Code for long builds and deploys")) {
-                            if engine.mcpBusy {
-                                PillButton(title: tr("Working…"), style: .soft) {}.disabled(true)
-                            } else if engine.mcpConnected {
-                                PillButton(title: tr("Disconnect"), style: .soft) { engine.disconnectMCP() }
-                            } else {
-                                PillButton(title: tr("Connect"), style: .primary) { engine.connectMCP() }
+                        // The plugin ships its own MCP server, so there's nothing to connect here.
+                        if MCPInstaller.providedByPlugin {
+                            Row(symbol: "cpu", title: tr("Let agents keep the Mac awake"),
+                                detail: tr("Provided by the AFK Pug plugin")) { EmptyView() }
+                        } else {
+                            // Text gets the full width; the button sits on its own line (long Thai titles).
+                            Row(symbol: "cpu", title: tr("Let agents keep the Mac awake"),
+                                detail: tr("Adds an AFK Pug tool to Claude Code for long builds and deploys")) { EmptyView() }
+                            HStack {
+                                let titles = [tr("Connect"), tr("Disconnect"), tr("Working…")]
+                                if engine.mcpBusy {
+                                    PillButton(title: tr("Working…"), style: .soft, reserve: titles) {}.disabled(true)
+                                } else if engine.mcpConnected {
+                                    PillButton(title: tr("Disconnect"), style: .soft, reserve: titles) { engine.disconnectMCP() }
+                                } else {
+                                    PillButton(title: tr("Connect"), style: .primary, reserve: titles) { engine.connectMCP() }
+                                }
                             }
+                            .padding(.leading, 30)
+                            if let error = engine.mcpError { ErrorText(error).padding(.leading, 30) }
                         }
-                        if let error = engine.mcpError { ErrorText(error).padding(.leading, 30) }
                     }
 
                     Section(title: tr("Phone notifications")) {
@@ -129,8 +141,8 @@ struct SettingsView: View {
                                 Text(item.text).font(.system(size: 11)).lineLimit(2)
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 4)
-                                Text(item.date.formatted(date: .omitted, time: .shortened))
-                                    .font(.system(size: 10).monospacedDigit()).foregroundStyle(Theme.faint)
+                                Text(Fmt.time(item.date))
+                                    .font(.system(size: 10.5).monospacedDigit()).foregroundStyle(Theme.sub)
                             }
                         }
                     }
@@ -148,6 +160,8 @@ struct SettingsView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityValue(showDev ? tr("Expanded") : tr("Collapsed"))
+                        .accessibilityHint(showDev ? tr("Hides the commands") : tr("Shows the commands"))
                         if showDev {
                             Text("~/.afkpug/bin/afkpug run -- <command>\n~/.afkpug/bin/afkpug hold --for 2h\n~/.afkpug/bin/afkpug status\nafkpug://start?minutes=90  ·  afkpug://stop\nafkpug://toggle  ·  afkpug://sleep-now")
                                 .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.sub)
@@ -220,8 +234,9 @@ private struct Section<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Only Latin titles are uppercased; Thai has no case.
+            // Thai needs the larger size to stay legible (stacked vowels and tone marks).
             Text(L10n.isThai ? title : title.uppercased())
-                .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.faint).tracking(L10n.isThai ? 0 : 1)
+                .font(.system(size: L10n.isThai ? 11.5 : 10, weight: .semibold)).foregroundStyle(Theme.sub).tracking(L10n.isThai ? 0 : 1)
                 .padding(.leading, 2)
                 .accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 14) { content }
@@ -260,7 +275,7 @@ struct AgentConnectionRow: View {
             .opacity(available ? 1 : 0.6)
             if let error = engine.integrationErrors[item.id] { ErrorText(error).padding(.leading, 30) }
             // e.g. Codex only runs new hooks after the user trusts them in /hooks.
-            if connected, let note = item.setupNote {
+            if connected, let note = setupNote {
                 Text(note).font(.system(size: 11)).foregroundStyle(Theme.sub)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, 30)
@@ -268,10 +283,24 @@ struct AgentConnectionRow: View {
         }
     }
 
+    private var setupNote: String? { item.setupNote }
+
     private func detail(connected: Bool, available: Bool) -> String {
         if !available { return tr("Not installed") }
         if connected { return allowDisconnect ? tr("Connected") : item.configPath }
         return item.configPath
+    }
+}
+
+/// Small secondary note under a control, aligned with the row text.
+struct Footnote: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(Theme.sub)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, 30)
     }
 }
 
@@ -320,6 +349,9 @@ struct PillButton: View {
     let title: String
     var symbol: String?
     var style: Style = .primary
+    /// Titles this button can switch between ("Connect" / "Working…"): it keeps the
+    /// width of the widest, so the row next to it never re-wraps.
+    var reserve: [String] = []
     let action: () -> Void
     @State private var hover = false
     @Environment(\.isEnabled) private var enabled
@@ -328,7 +360,11 @@ struct PillButton: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 if let symbol { Image(systemName: symbol).font(.system(size: 10.5, weight: .semibold)) }
-                Text(title).font(.system(size: 11.5, weight: .semibold))
+                ZStack {
+                    ForEach(Array(reserve.enumerated()), id: \.offset) { Text($0.element).hidden() }
+                    Text(title)
+                }
+                .font(.system(size: 11.5, weight: .semibold))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 5)

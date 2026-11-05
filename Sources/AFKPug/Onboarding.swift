@@ -11,9 +11,15 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
 
     enum Step: Int, CaseIterable { case welcome, lid, agents, finish }
 
+    /// Opens the welcome at `step`. If it's already open, it only comes to the
+    /// front: the step the user is on is kept.
     func show(step: Step = .welcome) {
         let engine = Engine.shared
         engine.refreshIntegrations()
+        if let window, window.isVisible {
+            present(window)
+            return
+        }
         let root = OnboardingView(engine: engine, start: step, close: { [weak self] in self?.close() })
             .id(UUID()) // fresh step state each time it opens
         if let window {
@@ -34,15 +40,26 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
         window.isReleasedWhenClosed = false
+        // Opens on the Space the user is on, not the one where it was first shown.
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         window.delegate = self
         window.center()
         self.window = window
         present(window)
     }
 
+    /// An LSUIElement app isn't active on its own, and `activate()` is only a
+    /// request: order the window front regardless, and once more on the next
+    /// run loop pass in case activation landed late (e.g. right after launch).
     private func present(_ window: NSWindow) {
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        DispatchQueue.main.async {
+            guard window.isVisible else { return }
+            if !NSApp.isActive { NSApp.activate() }
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 
     func close() { window?.close() }
@@ -61,6 +78,8 @@ struct OnboardingView: View {
     @State private var step: Step
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Width is fixed; the height is at least this and grows with the content
+    /// (four agents with a note and an error in English don't fit in 500).
     static let size = CGSize(width: 460, height: 500)
 
     init(engine: Engine, start: Step = .welcome, close: @escaping () -> Void = {}) {
@@ -75,7 +94,7 @@ struct OnboardingView: View {
                 Spacer()
                 // Esc skips the whole welcome; kept in place (invisible) on the last step.
                 Button(tr("Skip"), action: finish)
-                    .buttonStyle(.plain).font(.system(size: 11.5)).foregroundStyle(Theme.faint)
+                    .buttonStyle(.plain).font(.system(size: 11.5)).foregroundStyle(Theme.sub)
                     .keyboardShortcut(.cancelAction)
                     .opacity(step == .finish ? 0 : 1)
                     .accessibilityHidden(step == .finish)
@@ -92,14 +111,17 @@ struct OnboardingView: View {
                     .id(step)
                     .transition(.opacity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
 
+            Spacer(minLength: 0)
             footer.padding(.top, 16)
         }
         .padding(.horizontal, 32)
         .padding(.top, 14)
         .padding(.bottom, 24)
-        .frame(width: Self.size.width, height: Self.size.height)
+        .frame(width: Self.size.width)
+        .frame(minHeight: Self.size.height, alignment: .top)
+        .fixedSize(horizontal: false, vertical: true)
         .background(Theme.bg.ignoresSafeArea())
         .foregroundStyle(Theme.text)
         .preferredColorScheme(.dark)
@@ -140,18 +162,22 @@ struct OnboardingView: View {
                     if engine.setupDone {
                         DoneMark()
                     } else if engine.setupWorking {
-                        PillButton(title: tr("Working…"), style: .soft) {}.disabled(true)
+                        PillButton(title: tr("Working…"), style: .soft,
+                                   reserve: [tr("Allow"), tr("Try again"), tr("Working…")]) {}.disabled(true)
                     } else {
-                        PillButton(title: engine.setupError == nil ? tr("Allow") : tr("Try again"), style: .primary) {
+                        // Return allows (the footer's Continue takes it once this is done).
+                        PillButton(title: engine.setupError == nil ? tr("Allow") : tr("Try again"), style: .primary,
+                                   reserve: [tr("Allow"), tr("Try again"), tr("Working…")]) {
                             engine.runSetup()
                         }
+                        .keyboardShortcut(.defaultAction)
                     }
                 }
                 if let error = engine.setupError { ErrorText(error).padding(.leading, 30) }
             }
             .padding(.top, 22)
             Text(tr("Only allows turning lid sleep on and off. You can remove it in Settings."))
-                .font(.system(size: 11)).foregroundStyle(Theme.faint)
+                .font(.system(size: 11)).foregroundStyle(Theme.sub)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 10)
         }
@@ -174,7 +200,7 @@ struct OnboardingView: View {
             }
             .padding(.top, 22)
             Text(tr("Other agents are detected while they run. Change this any time in Settings."))
-                .font(.system(size: 11)).foregroundStyle(Theme.faint)
+                .font(.system(size: 11)).foregroundStyle(Theme.sub)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 10)
         }
@@ -200,7 +226,8 @@ struct OnboardingView: View {
 
     private var loginDetail: String {
         switch engine.launchAtLogin {
-        case .on, .off: return tr("Agent mode keeps working after a restart")
+        case .on: return tr("Agent mode keeps working after a restart")
+        case .off: return tr("Off: after a restart, open AFK Pug yourself")
         case .needsApproval: return tr("Allow it in System Settings → General → Login Items")
         }
     }
@@ -225,9 +252,12 @@ struct OnboardingView: View {
             PillButton(title: step == .finish ? tr("Done") : tr("Continue"), style: stepDone ? .primary : .soft) {
                 step == .finish ? finish() : go(step.rawValue + 1)
             }
-            .keyboardShortcut(.defaultAction)
+            // On the lid step Return belongs to Allow until the permission is set up.
+            .keyboardShortcut(returnAllows ? nil : .defaultAction)
         }
     }
+
+    private var returnAllows: Bool { step == .lid && !engine.setupDone && !engine.setupWorking }
 
     /// The step's own action is done (or there is none), so Continue is the main button.
     private var stepDone: Bool {
