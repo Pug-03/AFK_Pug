@@ -45,7 +45,7 @@ struct AgentHold: Identifiable, Equatable {
         switch agent.lowercased() {
         case "claude": return "Claude Code"
         case "codex": return "Codex"
-        case "cli": return reason.map { tr("Hold · %@", $0) } ?? tr("Manual hold")
+        case "cli": return reason.map { tr("Hold · %@", $0) } ?? tr("Terminal hold")
         default: return agent
         }
     }
@@ -53,7 +53,7 @@ struct AgentHold: Identifiable, Equatable {
 
 /// Something an agent reported: finished a turn, or waiting for you.
 struct AgentEvent {
-    enum Kind: String { case done, waiting }
+    enum Kind: String { case done, waiting, failed }
     let kind: Kind
     let agent: String
 }
@@ -166,13 +166,15 @@ enum Installer {
 enum ClaudeHooks {
     static let settingsURL = (Sim.enabled ? Paths.root : FileManager.default.homeDirectoryForCurrentUser)
         .appendingPathComponent(".claude/settings.json")
-    static let marker = "afkpug-hook"
+    /// Only our own commands carry this path tail.
+    static let marker = "/bin/afkpug-hook"
     static let events: [(event: String, action: String)] = [
         ("UserPromptSubmit", "start"),
         ("PreToolUse", "touch"),
         ("PostToolUse", "touch"),
         ("Stop", "stop"),
-        ("Notification", "wait"),
+        ("Notification", "notify"),
+        ("StopFailure", "fail"),
         ("SessionEnd", "end"),
     ]
 
@@ -191,7 +193,12 @@ enum ClaudeHooks {
         }
     }
 
-    private static func command(_ action: String) -> String { "\"\(Paths.hookScript.path)\" \(action) claude" }
+    /// Fail-safe: if the app (and its script) is gone, the hook does nothing instead of
+    /// showing a hook error on every prompt. Single quotes so `$` in a path can't expand.
+    private static func command(_ action: String) -> String {
+        let path = "'" + Paths.hookScript.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        return "[ -x \(path) ] && \(path) \(action) claude; true"
+    }
 
     static func install() throws {
         var settings = try load()
@@ -240,14 +247,48 @@ enum ClaudeHooks {
         let fm = FileManager.default
         // settings.json is often a symlink into a dotfiles repo: write through it
         // (an atomic write to the link path would replace the link with a file).
-        let target = settingsURL.resolvingSymlinksInPath()
+        var target = settingsURL.resolvingSymlinksInPath()
+        // A dangling link: write to where it points, keeping the link.
+        if let dest = try? fm.destinationOfSymbolicLink(atPath: settingsURL.path), !fm.fileExists(atPath: target.path) {
+            target = URL(fileURLWithPath: dest, relativeTo: settingsURL.deletingLastPathComponent()).standardizedFileURL
+        }
         try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         if fm.fileExists(atPath: target.path) {
+            guard fm.isWritableFile(atPath: target.path) else {
+                throw NSError(domain: "AFKPug", code: 3, userInfo: [NSLocalizedDescriptionKey: "~/.claude/settings.json is read-only"])
+            }
+            // Keep the very first backup: it is the user's original file.
             let backup = settingsURL.appendingPathExtension("afkpug-backup")
-            try? fm.removeItem(at: backup)
-            try? fm.copyItem(at: target, to: backup)
+            if !fm.fileExists(atPath: backup.path) { try? fm.copyItem(at: target, to: backup) }
         }
         let data = try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         try data.write(to: target, options: .atomic)
+    }
+}
+
+/// Removes everything AFK Pug added to this Mac, with one admin prompt for the
+/// root-owned part. Blocking: call it off the main thread.
+enum Uninstaller {
+    struct Report { var errors: [String] = [] }
+
+    static func run() -> Report {
+        var report = Report()
+        do { try ClaudeHooks.uninstall() } catch { report.errors.append("Claude Code hooks: \(error.localizedDescription)") }
+        if MCPInstaller.isInstalled(), !MCPInstaller.uninstall() { report.errors.append("Claude Code MCP server: run `claude mcp remove --scope user afkpug`") }
+        if Sim.enabled {
+            Sim.record("uninstall: launchctl bootout watchdog, remove plist, sudoers, ~/.afkpug")
+        } else {
+            PowerControl.run("/bin/launchctl", ["bootout", "gui/\(getuid())", Paths.watchdogPlist.path])
+            try? FileManager.default.removeItem(at: Paths.watchdogPlist)
+            if FileManager.default.fileExists(atPath: PowerControl.sudoersPath) || PowerControl.sleepDisabled() {
+                let shell = "/usr/bin/pmset -a disablesleep 0; /bin/rm -f \(PowerControl.sudoersPath) /etc/sudoers.d/.afkpug.new"
+                if case .failure(let error) = PowerControl.runAsAdmin(shell, prompt: "AFK Pug will remove its permission and restore normal sleep.") {
+                    report.errors.append(error == .cancelled ? "Permission not removed (cancelled)" : "Permission: \(error.message)")
+                }
+            }
+            try? LoginItem.set(false)
+        }
+        try? FileManager.default.removeItem(at: Paths.root)
+        return report
     }
 }

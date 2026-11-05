@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import Carbon.HIToolbox
 import CoreAudio
+import ServiceManagement
 
 // MARK: - Agents without hooks (Codex, Gemini CLI, Cursor Agent, ...)
 
@@ -38,7 +39,8 @@ enum ProcessWatcher {
     /// `ps` output (or the simulator's fake process list).
     private static func sample() -> String {
         if Sim.enabled { return Sim.value("procs") ?? "" }
-        return PowerControl.run("/bin/ps", ["-Ao", "pid=,ppid=,pcpu=,args="]).output
+        // LC_ALL=C: with a comma-decimal locale ps prints "0,0" and nothing parses.
+        return PowerControl.run("/usr/bin/env", ["LC_ALL=C", "/bin/ps", "-Ao", "pid=,ppid=,pcpu=,args="]).output
     }
 
     /// Per-pid CPU % and children, from one `ps` sample.
@@ -112,17 +114,35 @@ enum ProcessWatcher {
     static func match(_ args: Substring) -> String? {
         let tokens = args.split(separator: " ", omittingEmptySubsequences: true)
         guard let first = tokens.first else { return nil }
+        // Desktop apps (Codex.app, Goose.app ...) are not the CLI agents.
+        if first.contains(".app/Contents/") { return nil }
         let exe = baseName(first)
         if let display = known[exe] { return display }
         guard runtimes.contains(exe) || exe.hasPrefix("python3.") else { return nil }
         guard let script = tokens.dropFirst().prefix(3).first(where: { !$0.hasPrefix("-") }) else { return nil }
-        return known[baseName(script)]
+        // Installed packages: the package directory names the agent, whatever the entry file is called.
+        for (marker, display) in packages where script.contains(marker) { return display }
+        // A bin shim named after the agent (…/bin/codex, …/bin/gemini). A random
+        // project file like ./amp.js or scripts/aider.py does not count.
+        guard script.contains("/bin/") else { return nil }
+        return known[baseName(script, stripExtension: false)]
     }
 
-    private static func baseName(_ token: Substring) -> String {
-        var name = (token.split(separator: "/").last.map(String.init) ?? "").lowercased()
-        for ext in [".js", ".mjs", ".cjs", ".py"] where name.hasSuffix(ext) { name.removeLast(ext.count) }
-        return name
+    /// Package directories of npm / pip installs.
+    static let packages: [(String, String)] = [
+        ("/@openai/codex/", "Codex"),
+        ("/@google/gemini-cli/", "Gemini CLI"),
+        ("/cursor-agent/", "Cursor Agent"),
+        ("/@qwen-code/", "Qwen Code"),
+        ("/opencode-ai/", "OpenCode"),
+        ("/@sourcegraph/amp/", "Amp"),
+        ("/aider-chat/", "Aider"),
+        ("/site-packages/aider/", "Aider"),
+    ]
+
+    private static func baseName(_ token: Substring, stripExtension: Bool = false) -> String {
+        // Case-sensitive: the CLIs are lowercase; "Codex" or "Goose" are app binaries.
+        token.split(separator: "/").last.map(String.init) ?? ""
     }
 }
 
@@ -256,22 +276,38 @@ enum Triggers {
 
 /// `AFKPug --mcp` speaks MCP over stdio. Tools write hold files that the app picks up.
 enum MCPServer {
+    static let supportedVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
+    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.0" }
+    /// Holds made by this server process only, so one session's release can't drop another's.
+    static var holdPrefix: String { "mcp-\(getpid())-" }
+
     static func run() {
         Paths.ensure()
         while let line = readLine(strippingNewline: true) {
-            guard let data = line.data(using: .utf8),
-                  let msg = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let method = msg["method"] as? String else { continue }
+            if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+            guard let data = line.data(using: .utf8), let parsed = try? JSONSerialization.jsonObject(with: data) else {
+                error(nil, -32700, "Parse error"); continue
+            }
+            guard let msg = parsed as? [String: Any] else {
+                error(nil, -32600, "Invalid Request (batches are not supported)"); continue
+            }
+            let hasId = msg.keys.contains("id")
             let id = msg["id"]
+            guard let method = msg["method"] as? String else {
+                if hasId { error(validId(id) ? id : nil, -32600, "Invalid Request") }
+                continue
+            }
+            guard hasId else { continue } // notifications need no reply
+            guard validId(id) else { error(nil, -32600, "Invalid Request: id must be a string or number"); continue }
             let params = msg["params"] as? [String: Any] ?? [:]
-            guard id != nil else { continue } // notifications need no reply
 
             switch method {
             case "initialize":
+                let asked = params["protocolVersion"] as? String ?? ""
                 reply(id, result: [
-                    "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
+                    "protocolVersion": supportedVersions.contains(asked) ? asked : "2025-06-18",
                     "capabilities": ["tools": [:]],
-                    "serverInfo": ["name": "afkpug", "version": "0.2.0"],
+                    "serverInfo": ["name": "afkpug", "version": version],
                 ])
             case "ping":
                 reply(id, result: [:])
@@ -279,12 +315,28 @@ enum MCPServer {
                 reply(id, result: ["tools": tools])
             case "tools/call":
                 let name = params["name"] as? String ?? ""
+                guard tools.contains(where: { $0["name"] as? String == name }) else {
+                    error(id, -32602, "Unknown tool: \(name)"); continue
+                }
+                guard params["arguments"] == nil || params["arguments"] is [String: Any] else {
+                    error(id, -32602, "arguments must be an object"); continue
+                }
                 let args = params["arguments"] as? [String: Any] ?? [:]
-                reply(id, result: ["content": [["type": "text", "text": call(name, args)]]])
+                let (text, failed) = call(name, args)
+                var result: [String: Any] = ["content": [["type": "text", "text": text]]]
+                if failed { result["isError"] = true }
+                reply(id, result: result)
             default:
-                send(["jsonrpc": "2.0", "id": id!, "error": ["code": -32601, "message": "Method not found"]])
+                error(id, -32601, "Method not found")
             }
         }
+    }
+
+    private static func validId(_ id: Any?) -> Bool {
+        guard let id else { return false }
+        if id is String { return true }
+        if let n = id as? NSNumber { return CFGetTypeID(n) != CFBooleanGetTypeID() }
+        return false
     }
 
     private static let tools: [[String: Any]] = [
@@ -295,55 +347,75 @@ enum MCPServer {
                 "type": "object",
                 "properties": [
                     "minutes": ["type": "integer", "description": "How long to stay awake, 1-720", "minimum": 1, "maximum": 720],
-                    "reason": ["type": "string", "description": "Short reason shown to the user"],
+                    "reason": ["type": "string", "description": "Short reason shown to the user (max 200 characters)"],
                 ],
                 "required": ["minutes"],
             ],
         ],
         [
             "name": "release_mac_awake",
-            "description": "Stop keeping the Mac awake for holds created by this tool.",
+            "description": "Stop keeping the Mac awake for holds this session created with keep_mac_awake.",
             "inputSchema": ["type": "object", "properties": [:]],
         ],
         [
             "name": "afk_status",
             "description": "Show what is currently keeping the Mac awake.",
             "inputSchema": ["type": "object", "properties": [:]],
+            "annotations": ["readOnlyHint": true],
         ],
     ]
 
-    private static func call(_ name: String, _ args: [String: Any]) -> String {
+    /// Returns the text and whether it is a tool error (so the model can correct itself).
+    private static func call(_ name: String, _ args: [String: Any]) -> (String, Bool) {
         switch name {
         case "keep_mac_awake":
-            // Clamp as a Double first: Int(1e300) or Int(.nan) would trap.
-            let raw = (args["minutes"] as? NSNumber)?.doubleValue ?? Double(args["minutes"] as? String ?? "") ?? 30
-            let minutes = raw.isNaN ? 30 : Int(min(720, max(1, raw)).rounded())
-            let reason = (args["reason"] as? String ?? "agent").replacingOccurrences(of: "\"", with: "")
+            guard let number = args["minutes"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
+                return ("minutes is required and must be a number from 1 to 720.", true)
+            }
+            let raw = number.doubleValue
+            guard raw.isFinite, raw >= 1, raw <= 720 else { return ("minutes must be from 1 to 720.", true) }
+            let minutes = Int(raw.rounded())
+            var reason = "agent"
+            if let value = args["reason"] {
+                guard let text = value as? String else { return ("reason must be a string.", true) }
+                let clean = String(text.unicodeScalars.filter { $0.value >= 0x20 && $0 != "\"" && $0 != "\\" }.prefix(200).map(Character.init))
+                if !clean.trimmingCharacters(in: .whitespaces).isEmpty { reason = clean }
+            }
             let now = Date().timeIntervalSince1970
-            let id = "mcp-\(Int(now))-\(Int.random(in: 1000...9999))"
+            let id = holdPrefix + "\(Int(now))-\(Int.random(in: 1000...9999))"
             let json: [String: Any] = ["agent": "cli", "started": now, "expires": now + Double(minutes * 60), "reason": reason]
-            if let data = try? JSONSerialization.data(withJSONObject: json) {
-                try? data.write(to: Paths.holds.appendingPathComponent(id))
+            guard let data = try? JSONSerialization.data(withJSONObject: json),
+                  (try? data.write(to: Paths.holds.appendingPathComponent(id))) != nil else {
+                return ("Could not write the hold file in ~/.afkpug/holds.", true)
             }
             let running = AppPresence.appRunning()
-            return "Keeping the Mac awake for \(minutes) minutes (\(reason))." + (running ? "" : " Note: the AFK Pug app is not running, so this has no effect until it starts.")
+            return ("Keeping the Mac awake for \(minutes) minutes (\(reason))." + (running ? "" : " Note: the AFK Pug app is not running, so this has no effect until it starts."), false)
         case "release_mac_awake":
             let files = (try? FileManager.default.contentsOfDirectory(atPath: Paths.holds.path)) ?? []
-            let mine = files.filter { $0.hasPrefix("mcp-") }
+            let mine = files.filter { $0.hasPrefix(holdPrefix) }
             for f in mine { try? FileManager.default.removeItem(at: Paths.holds.appendingPathComponent(f)) }
-            return "Released \(mine.count) hold(s)."
+            return ("Released \(mine.count) hold(s).", false)
         case "afk_status":
             let holds = HoldStore.scan()
-            if holds.isEmpty { return "Nothing is holding the Mac awake right now." }
-            return holds.map { "- \($0.displayName)" + ($0.expires.map { " until \($0.formatted(date: .omitted, time: .shortened))" } ?? "") }
-                .joined(separator: "\n")
+            let app = AppPresence.appRunning() ? "AFK Pug is running." : "AFK Pug is not running."
+            if holds.isEmpty { return (app + " Nothing is holding the Mac awake right now.", false) }
+            let lines = holds.map { hold -> String in
+                guard let until = hold.expires else { return "- \(hold.displayName)" }
+                let sameDay = Calendar.current.isDateInToday(until)
+                return "- \(hold.displayName) until \(until.formatted(date: sameDay ? .omitted : .abbreviated, time: .shortened))"
+            }
+            return (([app] + lines).joined(separator: "\n"), false)
         default:
-            return "Unknown tool \(name)"
+            return ("Unknown tool \(name)", true)
         }
     }
 
     private static func reply(_ id: Any?, result: [String: Any]) {
         send(["jsonrpc": "2.0", "id": id ?? NSNull(), "result": result])
+    }
+
+    private static func error(_ id: Any?, _ code: Int, _ message: String) {
+        send(["jsonrpc": "2.0", "id": id ?? NSNull(), "error": ["code": code, "message": message]])
     }
 
     private static func send(_ object: [String: Any]) {
@@ -374,14 +446,26 @@ enum AppPresence {
 /// call it off the main thread.
 enum MCPInstaller {
     static var executable: String { Bundle.main.executablePath ?? CommandLine.arguments[0] }
+    static var configURL: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json") }
 
-    static func isInstalled() -> Bool {
-        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
-        return text.contains("\"afkpug\"")
+    /// The user-scope "afkpug" server in ~/.claude.json, and the command it runs.
+    static func registeredCommand() -> String? {
+        guard let data = try? Data(contentsOf: configURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let servers = json["mcpServers"] as? [String: Any],
+              let server = servers["afkpug"] as? [String: Any] else { return nil }
+        return server["command"] as? String ?? ""
     }
 
-    enum Failure: Error { case noClaude, failed(String) }
+    static func isInstalled() -> Bool { registeredCommand() != nil }
+
+    /// Registered, but for a different copy of the app (moved, rebuilt elsewhere).
+    static func needsRefresh() -> Bool {
+        guard let command = registeredCommand(), !Sim.enabled else { return false }
+        return command != executable && !executable.contains("/AppTranslocation/")
+    }
+
+    enum Failure: Error { case noClaude, translocated, failed(String) }
 
     static func install() -> Result<Void, Failure> {
         if Sim.enabled {
@@ -389,6 +473,8 @@ enum MCPInstaller {
             Sim.record("claude mcp add --scope user afkpug (skipped)")
             return .success(())
         }
+        // A quarantined app runs from a random read-only copy that disappears later.
+        if executable.contains("/AppTranslocation/") { return .failure(.translocated) }
         guard let claude = findClaude() else { return .failure(.noClaude) }
         _ = runClaude(claude, ["mcp", "remove", "--scope", "user", "afkpug"])
         let result = runClaude(claude, ["mcp", "add", "--scope", "user", "afkpug", "--", executable, "--mcp"])
@@ -407,17 +493,25 @@ enum MCPInstaller {
     static func findClaude() -> String? {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser.path
-        let fromShell = run("/bin/zsh", ["-ilc", "command -v claude"], timeout: 10).output
+        // Known install locations first (fast, no shell rc files involved).
+        var candidates = ["\(home)/.local/bin/claude", "\(home)/.claude/local/claude",
+                          "/opt/homebrew/bin/claude", "/usr/local/bin/claude",
+                          "\(home)/.volta/bin/claude", "\(home)/.bun/bin/claude",
+                          "\(home)/.npm-global/bin/claude", "\(home)/.asdf/shims/claude",
+                          "\(home)/.local/share/mise/shims/claude"]
+        func versioned(_ dir: String, _ tail: String) -> [String] {
+            ((try? fm.contentsOfDirectory(atPath: dir)) ?? [])
+                .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+                .map { "\(dir)/\($0)/\(tail)" }
+        }
+        candidates += versioned("\(home)/.nvm/versions/node", "bin/claude")
+        candidates += versioned("\(home)/.local/share/mise/installs/node", "bin/claude")
+        candidates += versioned("\(home)/Library/Application Support/fnm/node-versions", "installation/bin/claude")
+        if let found = candidates.first(where: { fm.isExecutableFile(atPath: $0) }) { return found }
+        // Last resort: ask an interactive login shell (may read slow rc files; capped at 10 s).
+        return run("/bin/zsh", ["-ilc", "command -v claude"], timeout: 10).output
             .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
             .last { $0.hasPrefix("/") && fm.isExecutableFile(atPath: $0) }
-        if let fromShell { return fromShell }
-        var candidates = ["\(home)/.local/bin/claude", "\(home)/.claude/local/claude",
-                          "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
-        let nvm = "\(home)/.nvm/versions/node"
-        let versions = ((try? fm.contentsOfDirectory(atPath: nvm)) ?? [])
-            .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
-        candidates += versions.map { "\(nvm)/\($0)/bin/claude" }
-        return candidates.first { fm.isExecutableFile(atPath: $0) }
     }
 
     /// `claude` is usually a node script: put its own folder (where nvm keeps
@@ -471,6 +565,29 @@ enum AudioWatcher {
         return deviceRunning()
     }
 
+    /// Names of the apps producing sound right now (for the UI), best effort.
+    static func playingApps() -> [String] {
+        if let fake = Sim.value("audio") { return fake == "silent" ? [] : (fake == "chat" ? ["Slack"] : ["Music"]) }
+        var ignored = ChatPauser.pausedPids()
+        ignored.insert(getpid())
+        guard let pids = outputPids()?.subtracting(ignored) else { return [] }
+        var names: [String] = []
+        for pid in pids.sorted() {
+            if let app = NSRunningApplication(processIdentifier: pid), let name = app.localizedName {
+                if !names.contains(name) { names.append(name) }
+                continue
+            }
+            // Helper processes: "Google Chrome Helper (Renderer)" -> "Google Chrome".
+            var buffer = [CChar](repeating: 0, count: 256)
+            guard proc_name(pid, &buffer, UInt32(buffer.count)) > 0 else { continue }
+            var name = String(cString: buffer)
+            if let r = name.range(of: " Helper") { name = String(name[..<r.lowerBound]) }
+            if name.hasPrefix("com.apple.WebKit") { name = "Safari" }
+            if !name.isEmpty, !names.contains(name) { names.append(name) }
+        }
+        return names
+    }
+
     /// PIDs with running audio output, nil before macOS 14.2.
     static func outputPids() -> Set<pid_t>? {
         guard #available(macOS 14.2, *) else { return nil }
@@ -513,5 +630,25 @@ enum AudioWatcher {
         address.mSelector = kAudioDevicePropertyDeviceIsRunningSomewhere
         guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &running) == noErr else { return false }
         return running != 0
+    }
+}
+
+// MARK: - Launch at login
+
+enum LoginItem {
+    enum State { case on, off, needsApproval }
+
+    static var state: State {
+        if Sim.enabled { return Sim.value("login") == "on" ? .on : .off }
+        switch SMAppService.mainApp.status {
+        case .enabled: return .on
+        case .requiresApproval: return .needsApproval
+        default: return .off
+        }
+    }
+
+    static func set(_ on: Bool) throws {
+        if Sim.enabled { Sim.record("login item \(on ? "on" : "off")"); Sim.set("login", on ? "on" : "off"); return }
+        if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
     }
 }
