@@ -20,7 +20,7 @@ struct LidSummary: Identifiable {
     var agentsFinished: Int
     var hadBattery: Bool
 
-    var duration: TimeInterval { (openedAt ?? Date()).timeIntervalSince(closedAt) }
+    var duration: TimeInterval { (openedAt ?? Clock.now()).timeIntervalSince(closedAt) }
 }
 
 struct ActivityItem: Identifiable {
@@ -33,7 +33,9 @@ struct ActivityItem: Identifiable {
 @MainActor
 final class Engine: ObservableObject {
     static let shared = Engine()
-    private let defaults = UserDefaults.standard
+    /// Simulation keeps its settings in a separate domain.
+    static let store: UserDefaults = Sim.enabled ? (UserDefaults(suiteName: "com.pug03.afkpug.sim") ?? .standard) : .standard
+    private let defaults = Engine.store
 
     // MARK: Settings (persisted)
 
@@ -66,7 +68,8 @@ final class Engine: ObservableObject {
     @Published private(set) var graceUntil: Date?
     @Published private(set) var battery = Sensors.battery()
     @Published private(set) var thermal = Sensors.thermal()
-    @Published private(set) var lidClosed = Sensors.lidClosed()
+    /// Lid closed with no external display (docked clamshell use counts as open).
+    @Published private(set) var lidClosed = false
     @Published private(set) var setupDone = false
     @Published private(set) var claudeConnected = ClaudeHooks.isInstalled()
     @Published private(set) var trip: GuardTrip?
@@ -74,8 +77,14 @@ final class Engine: ObservableObject {
     @Published private(set) var lidOverrideOn = false
     @Published var summary: LidSummary?
     @Published private(set) var activity: [ActivityItem] = []
-    @Published private(set) var now = Date()
+    /// Time of the last tick. Not published: views that show durations use their
+    /// own TimelineView, so the whole popover isn't re-rendered every 2 s.
+    private(set) var now = Clock.now()
     @Published var setupError: String?
+    /// Connect failures, shown in Settings next to the button. Cleared on retry.
+    @Published private(set) var claudeError: String?
+    @Published private(set) var mcpError: String?
+    @Published private(set) var mcpBusy = false
     @Published private(set) var triggerReason: String?
     @Published private(set) var musicPlaying = false
     @Published private(set) var mcpConnected = MCPInstaller.isInstalled()
@@ -83,16 +92,24 @@ final class Engine: ObservableObject {
     private var timer: Timer?
     private var tickCount = 0
     private var wasMuted: Bool?
-    private var lowPowerChangedByUs = false
+    /// The power source whose Low Power Mode we turned on (restored exactly).
+    private var lowPowerChangedSource: PowerControl.PowerSource?
     private var openSummary: LidSummary?
     private var lastDisplayOff = Date.distantPast
     private var procLastBusy: [Int32: Date] = [:]
     private var procFirstSeen: [Int32: Date] = [:]
     private var procNames: [Int32: String] = [:]
     private var ignoredProcs = Set<Int32>()
+    private var lastProcScan = Date.distantPast
+    /// Lid-closed actions (lock, display off, mute, ...) are currently in effect.
+    private(set) var lidEngaged = false
+    private var lastOverrideCheck = Date.distantPast
+    private var lastOverrideFailure = Date.distantPast
+    private var lastReleaseFailure = Date.distantPast
+    private var firstTick = true
 
     private init() {
-        let ud = UserDefaults.standard
+        let ud = Engine.store
         let bool = { (key: String, fallback: Bool) -> Bool in ud.object(forKey: key) as? Bool ?? fallback }
         let int = { (key: String, fallback: Int) -> Int in ud.object(forKey: key) as? Int ?? fallback }
         agentMode = bool("agentMode", true)
@@ -125,16 +142,19 @@ final class Engine: ObservableObject {
         Installer.installScripts()
         setupDone = PowerControl.isSetupDone
         if setupDone { Installer.installWatchdog() }
+        // Older connections lack the PreToolUse / PostToolUse hooks.
+        if ClaudeHooks.needsUpgrade(), (try? ClaudeHooks.install()) != nil { log("link", tr("Updated the Claude Code connection")) }
         recoverFromCrash()
-        if Bundle.main.bundleIdentifier != nil {
+        if Bundle.main.bundleIdentifier != nil, !Sim.enabled {
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         }
         HotKey.action = { [weak self] in
             guard let self else { return }
             self.manualOn ? self.stop() : self.start()
         }
-        HotKey.setEnabled(hotkeyEnabled)
+        if !Sim.enabled { HotKey.setEnabled(hotkeyEnabled) }
         log("pawprint.fill", tr("AFK Pug is ready"))
+        if Sim.headless { tick(); return }
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -145,10 +165,14 @@ final class Engine: ObservableObject {
     /// Put everything back the way we found it.
     func shutdown() {
         restoreLidChanges()
+        lidEngaged = false
+        openSummary = nil
         if lidOverrideOn || FileManager.default.fileExists(atPath: Paths.lidFlag.path) {
             PowerControl.setSleepDisabled(false)
         }
         PowerControl.setIdleAssertion(false)
+        lidOverrideOn = false
+        isActive = false
     }
 
     private func recoverFromCrash() {
@@ -157,20 +181,27 @@ final class Engine: ObservableObject {
             log("arrow.uturn.backward", tr("Restored normal lid sleep after an unexpected quit"))
         }
         ChatPauser.resume()
-        let lpFlag = Paths.state.appendingPathComponent("lowpower-restore")
-        if FileManager.default.fileExists(atPath: lpFlag.path) {
-            PowerControl.setLowPower(false)
-            try? FileManager.default.removeItem(at: lpFlag)
+        if FileManager.default.fileExists(atPath: Paths.lowPowerFlag.path) {
+            let text = (try? String(contentsOf: Paths.lowPowerFlag, encoding: .utf8)) ?? ""
+            if let source = PowerControl.PowerSource(rawValue: text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                PowerControl.setLowPower(false, source: source)
+            }
+            try? FileManager.default.removeItem(at: Paths.lowPowerFlag)
+        }
+        if FileManager.default.fileExists(atPath: Paths.muteFlag.path) {
+            PowerControl.setMuted(false)
+            try? FileManager.default.removeItem(at: Paths.muteFlag)
         }
     }
 
     // MARK: User actions
 
     func start() {
-        trip = nil
+        // A guard trip disables Go AFK; the hotkey must not get around it.
+        guard trip == nil else { return }
         manualOn = true
-        manualStart = Date()
-        manualEnd = selectedMinutes > 0 ? Date().addingTimeInterval(TimeInterval(selectedMinutes * 60)) : nil
+        manualStart = Clock.now()
+        manualEnd = selectedMinutes > 0 ? Clock.now().addingTimeInterval(TimeInterval(selectedMinutes * 60)) : nil
         log("sun.max.fill", selectedMinutes > 0 ? tr("Awake for %@", Fmt.minutes(selectedMinutes)) : tr("Awake until you stop"))
         tick()
     }
@@ -186,7 +217,7 @@ final class Engine: ObservableObject {
 
     func addTime(minutes: Int) {
         guard manualOn else { return }
-        let base = max(manualEnd ?? Date(), Date())
+        let base = max(manualEnd ?? Clock.now(), Clock.now())
         manualEnd = base.addingTimeInterval(TimeInterval(minutes * 60))
         log("plus.circle.fill", tr("Added %@", Fmt.minutes(minutes)))
     }
@@ -194,13 +225,19 @@ final class Engine: ObservableObject {
     func choose(minutes: Int) {
         selectedMinutes = minutes
         if manualOn {
-            manualStart = Date()
-            manualEnd = minutes > 0 ? Date().addingTimeInterval(TimeInterval(minutes * 60)) : nil
+            manualStart = Clock.now()
+            manualEnd = minutes > 0 ? Clock.now().addingTimeInterval(TimeInterval(minutes * 60)) : nil
         }
     }
 
     func release(_ hold: AgentHold) {
-        if hold.id.hasPrefix("proc-"), let pid = Int32(hold.id.dropFirst(5)) { ignoredProcs.insert(pid) }
+        if hold.id.hasPrefix("proc-"), let pid = Int32(hold.id.dropFirst(5)) {
+            // Ignored until that process exits; drop it from the list right away.
+            ignoredProcs.insert(pid)
+            procLastBusy[pid] = nil
+            procFirstSeen[pid] = nil
+            procNames[pid] = nil
+        }
         HoldStore.release(hold)
         tick()
     }
@@ -225,31 +262,59 @@ final class Engine: ObservableObject {
     func removeSetup() {
         _ = PowerControl.uninstallSudoers()
         setupDone = PowerControl.isSetupDone
-        lidOverrideOn = false
+        if !PowerControl.sleepDisabled() { lidOverrideOn = false }
     }
 
     func connectClaude() {
+        claudeError = nil
         do {
             try ClaudeHooks.install()
             claudeConnected = true
             log("link", tr("Connected to Claude Code"))
         } catch {
-            setupError = error.localizedDescription
+            claudeError = tr("Could not connect: %@", error.localizedDescription)
         }
     }
 
+    /// Runs `claude` (twice) off the main thread.
     func connectMCP() {
-        if MCPInstaller.install() {
-            log("cpu", tr("Agents can now ask AFK Pug to stay awake"))
-        } else {
-            setupError = tr("Could not run the claude command. Is Claude Code installed?")
+        guard !mcpBusy else { return }
+        mcpError = nil
+        mcpBusy = true
+        background({ MCPInstaller.install() }) { [weak self] result in
+            guard let self else { return }
+            self.mcpBusy = false
+            switch result {
+            case .success:
+                self.log("cpu", tr("Agents can now ask AFK Pug to stay awake"))
+            case .failure(.noClaude):
+                self.mcpError = tr("Could not find the claude command. Is Claude Code installed?")
+            case .failure(.failed(let output)):
+                self.mcpError = output.isEmpty ? tr("claude mcp add failed. Please try again.") : output
+            }
+            self.mcpConnected = Sim.enabled ? (try? result.get()) != nil : MCPInstaller.isInstalled()
         }
-        mcpConnected = MCPInstaller.isInstalled()
     }
 
     func disconnectMCP() {
-        MCPInstaller.uninstall()
-        mcpConnected = MCPInstaller.isInstalled()
+        guard !mcpBusy else { return }
+        mcpError = nil
+        mcpBusy = true
+        background({ MCPInstaller.uninstall() }) { [weak self] ok in
+            guard let self else { return }
+            self.mcpBusy = false
+            self.mcpConnected = Sim.enabled ? !ok : MCPInstaller.isInstalled()
+            if self.mcpConnected { self.mcpError = tr("Could not find the claude command. Is Claude Code installed?") }
+        }
+    }
+
+    /// Work off the main thread, result back on it (inline in the headless simulator).
+    private func background<T: Sendable>(_ work: @escaping @Sendable () -> T, then: @escaping @MainActor (T) -> Void) {
+        if Sim.headless { then(work()); return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let value = work()
+            DispatchQueue.main.async { MainActor.assumeIsolated { then(value) } }
+        }
     }
 
     func testPhone() {
@@ -264,13 +329,16 @@ final class Engine: ObservableObject {
 
     // MARK: Derived
 
-    var remaining: TimeInterval? { manualEnd.map { max(0, $0.timeIntervalSince(now)) } }
+    var remaining: TimeInterval? { manualEnd.map { max(0, $0.timeIntervalSince(Clock.now())) } }
 
     var progress: Double {
         guard let start = manualStart, let end = manualEnd else { return 1 }
         let total = end.timeIntervalSince(start)
-        return total > 0 ? max(0, min(1, end.timeIntervalSince(now) / total)) : 0
+        return total > 0 ? max(0, min(1, end.timeIntervalSince(Clock.now()) / total)) : 0
     }
+
+    /// Agents only count (headline, grace, guards) with Agent mode on.
+    var graceActive: Bool { agentMode && (graceUntil.map { $0 > Clock.now() } ?? false) }
 
     var mood: PugMood {
         if trip != nil { return .worried }
@@ -286,7 +354,7 @@ final class Engine: ObservableObject {
         if manualOn { return manualEnd == nil ? tr("Awake until you stop") : tr("Staying awake") }
         if let reason = triggerReason, holds.isEmpty { return tr("Awake: %@", reason) }
         if !holds.isEmpty { return holds.count == 1 ? tr("Watching 1 agent") : tr("Watching %d agents", holds.count) }
-        if let grace = graceUntil, grace > now { return tr("Agents done") }
+        if graceActive { return tr("Agents done") }
         return tr("Napping")
     }
 
@@ -301,7 +369,8 @@ final class Engine: ObservableObject {
             return tr("Close the lid. Your work keeps running")
         }
         if !holds.isEmpty { return tr("Awake while they work, then sleeps") }
-        if let grace = graceUntil, grace > now { return tr("Sleeping in %@", Fmt.clock(grace.timeIntervalSince(now))) }
+        if triggerReason != nil { return tr("Sleeps normally once that stops") }
+        if graceActive, let grace = graceUntil { return tr("Sleeping in %@", Fmt.countdown(grace.timeIntervalSince(Clock.now()))) }
         return agentMode ? tr("Wakes when your agents start") : tr("Your Mac sleeps normally")
     }
 
@@ -310,19 +379,30 @@ final class Engine: ObservableObject {
     // MARK: Loop
 
     func tick() {
-        now = Date()
+        now = Clock.now()
         tickCount += 1
-        battery = Sensors.battery()
-        thermal = Sensors.thermal()
+        // Only publish real changes, so SwiftUI isn't invalidated every 2 s.
+        let newBattery = Sensors.battery()
+        if newBattery != battery { battery = newBattery }
+        let newThermal = Sensors.thermal()
+        if newThermal != thermal { thermal = newThermal }
+        // Read the lid first so this tick's decisions (e.g. sleepnow) never use a stale value.
+        let closed = LidSensor.update(now: now)
+        if closed != lidClosed { lidClosed = closed }
 
-        // Agents
+        // Agents. Hold files are still scanned (and cleaned) with Agent mode off,
+        // but then nothing counts: no headline, grace or guard.
         let previous = holds
-        holds = HoldStore.scan(now: now) + scanProcesses()
-        handleEvents(HoldStore.consumeEvents())
-        if !previous.isEmpty, holds.isEmpty {
-            graceUntil = now.addingTimeInterval(TimeInterval(graceMinutes * 60))
+        let scanned = HoldStore.scan(now: now)
+        let newHolds = agentMode ? scanned + scanProcesses() : []
+        if newHolds != holds { holds = newHolds }
+        // Events left from while the app wasn't running would all fire at once.
+        handleEvents(HoldStore.consumeEvents(notBefore: firstTick ? Date().addingTimeInterval(-120) : nil))
+        firstTick = false
+        if agentMode, !previous.isEmpty, holds.isEmpty {
+            graceUntil = now.addingTimeInterval(TimeInterval(max(0, graceMinutes) * 60))
         }
-        if !holds.isEmpty { graceUntil = nil }
+        if (!holds.isEmpty || !agentMode), graceUntil != nil { graceUntil = nil }
         for hold in holds where !previous.contains(where: { $0.id == hold.id }) {
             log("bolt.fill", tr("%@ started working", hold.displayName))
         }
@@ -336,50 +416,63 @@ final class Engine: ObservableObject {
             notify(tr("Time's up"), tr("AFK Pug let your Mac go back to sleep."))
         }
 
+        // Triggers (before the guards, so they see this tick's reasons)
+        var reason: String?
+        let music = AudioWatcher.isPlaying()
+        if music != musicPlaying { musicPlaying = music }
+        if keepMusic, music { reason = tr("music playing") }
+        if autoOnPower, battery.hasBattery, battery.onAC { reason = tr("charger connected") }
+        if let app = Triggers.runningApp(from: autoApps) { reason = app }
+        if reason != triggerReason { triggerReason = reason }
+
         // Guards
         updateGuards()
 
         let agentsWant = agentMode && (!holds.isEmpty || (graceUntil.map { $0 > now } ?? false))
-        triggerReason = nil
-        musicPlaying = AudioWatcher.isPlaying()
-        if keepMusic, musicPlaying { triggerReason = tr("music playing") }
-        if autoOnPower, battery.hasBattery, battery.onAC { triggerReason = tr("charger connected") }
-        if let app = Triggers.runningApp(from: autoApps) { triggerReason = app }
         let want = trip == nil && (manualOn || agentsWant || triggerReason != nil)
-        apply(active: want)
-
-        // Lid
-        let closed = Sensors.lidClosed()
-        if closed != lidClosed {
-            lidClosed = closed
-            closed ? lidDidClose() : lidDidOpen()
+        let wantLid = want && lidReady && (!lidOnlyOnPower || battery.onAC)
+        if want, !isActive {
+            // A session starting: re-check a clamshell flag that read Yes without an edge.
+            let closed = LidSensor.sessionStarted(now: now)
+            if closed != lidClosed { lidClosed = closed }
         }
-        if lidClosed, isActive {
-            openSummary?.endBattery = battery.percent
-            if thermal.rawValue > (openSummary?.peakThermal.rawValue ?? 0) { openSummary?.peakThermal = thermal }
-            // Apple Silicon can leave the panel lit under the lid; keep pushing it dark.
-            if displayOffOnClose, now.timeIntervalSince(lastDisplayOff) > 30 {
-                PowerControl.displaySleepNow()
-                lastDisplayOff = now
-            }
-            if thermal == .serious, lowPowerOnClose, !lowPowerChangedByUs, setupDone { enableLowPower() }
+        // Restore first, while the Mac is surely still awake, then drop the override.
+        var sleepAfter = false
+        if lidEngaged, !(lidClosed && wantLid) {
+            disengageLid()
+            sleepAfter = lidClosed
         }
+        apply(active: want, wantLid: wantLid)
+        if lidEngaged, !lidOverrideOn {
+            // The override could not be re-applied; macOS will sleep on its own.
+            disengageLid()
+            sleepAfter = lidClosed
+        }
+        // Still shut: work is done (or a guard tripped), so sleep now.
+        if sleepAfter { PowerControl.sleepNow() }
+        updateLidSession()
     }
 
     /// Agents without hooks, found by process and CPU use.
     private func scanProcesses() -> [AgentHold] {
         guard agentMode, detectOtherAgents else { return [] }
-        for busy in ProcessWatcher.scan() where !ignoredProcs.contains(busy.pid) {
-            procLastBusy[busy.pid] = now
-            procNames[busy.pid] = busy.display
-            if procFirstSeen[busy.pid] == nil { procFirstSeen[busy.pid] = now }
+        // `ps` costs ~25 ms of CPU; every ~5 s is plenty given the 30 s linger below.
+        if now.timeIntervalSince(lastProcScan) >= 5 || now < lastProcScan {
+            lastProcScan = now
+            let found = ProcessWatcher.scan()
+            // A released process stays ignored until it exits (not just until it idles).
+            ignoredProcs.formIntersection(found.map(\.pid))
+            for agent in found where agent.busy && !ignoredProcs.contains(agent.pid) {
+                procLastBusy[agent.pid] = now
+                procNames[agent.pid] = agent.display
+                if procFirstSeen[agent.pid] == nil { procFirstSeen[agent.pid] = now }
+            }
         }
         // Count as working for 30 s after the last busy sample, so short pauses don't flap.
         for (pid, last) in procLastBusy where now.timeIntervalSince(last) > 30 {
             procLastBusy[pid] = nil
             procFirstSeen[pid] = nil
             procNames[pid] = nil
-            ignoredProcs.remove(pid)
         }
         return procLastBusy.keys.sorted().map { pid in
             AgentHold(id: "proc-\(pid)", agent: procNames[pid] ?? "agent", started: procFirstSeen[pid] ?? now, expires: nil, reason: nil)
@@ -410,30 +503,64 @@ final class Engine: ObservableObject {
         }
     }
 
-    private func apply(active: Bool) {
-        let wasActive = isActive
-        isActive = active
+    private func apply(active: Bool, wantLid: Bool) {
+        if active != isActive { isActive = active }
         PowerControl.setIdleAssertion(active)
 
-        let wantLid = active && lidReady && (!lidOnlyOnPower || battery.onAC)
         if wantLid {
-            // Re-check every ~6 s: some macOS builds quietly flip the override back.
-            if !lidOverrideOn || tickCount % 3 == 0 {
-                if !lidOverrideOn || !PowerControl.sleepDisabled() {
-                    lidOverrideOn = PowerControl.setSleepDisabled(true)
-                }
+            if !lidOverrideOn {
+                // Back off after a failure instead of running sudo every 2 s.
+                if now.timeIntervalSince(lastOverrideFailure) >= 30 || now < lastOverrideFailure { enableOverride() }
+            } else if now.timeIntervalSince(lastOverrideCheck) >= 6 || now < lastOverrideCheck {
+                // Some macOS builds quietly flip the override back.
+                lastOverrideCheck = now
+                if !PowerControl.sleepDisabled() { enableOverride() }
             }
-        } else if lidOverrideOn {
-            PowerControl.setSleepDisabled(false)
-            lidOverrideOn = false
+        } else if lidOverrideOn || FileManager.default.fileExists(atPath: Paths.lidFlag.path) {
+            // Keep trying (with the same backoff) until it really is released;
+            // the override stays shown as on until then.
+            guard now.timeIntervalSince(lastReleaseFailure) >= 30 || now < lastReleaseFailure else { return }
+            if PowerControl.setSleepDisabled(false) {
+                lidOverrideOn = false
+                lastReleaseFailure = .distantPast
+            } else {
+                lidOverrideOn = true
+                lastReleaseFailure = now
+                setupDone = PowerControl.isSetupDone
+            }
         }
+    }
 
-        if wasActive, !active, lidClosed {
-            // Work is done while the lid is shut: finish up and sleep now.
-            finishSummary()
-            restoreLidChanges()
-            PowerControl.sleepNow()
+    private func enableOverride() {
+        lidOverrideOn = PowerControl.setSleepDisabled(true)
+        lastOverrideCheck = now
+        if !lidOverrideOn {
+            lastOverrideFailure = now
+            setupDone = PowerControl.isSetupDone
         }
+    }
+
+    /// One rule for every path: lid-closed actions are on exactly while the lid is
+    /// shut, we are active and the override really holds the Mac awake. That covers
+    /// a session that starts with the lid already closed (or music that starts later),
+    /// guard trips, the override dropping (charger unplugged with "only on power"),
+    /// and work ending under the lid. Disengaging happens in tick(), before the
+    /// override is dropped.
+    private func updateLidSession() {
+        // LidSensor already requires an edge, or a minute without input for a
+        // flag that read closed without one, so a stale flag can't lock anyone out.
+        if !lidEngaged, lidClosed, isActive, lidOverrideOn { engageLid() }
+        guard lidEngaged else { return }
+        openSummary?.endBattery = battery.percent
+        if thermal.rawValue > (openSummary?.peakThermal.rawValue ?? 0) { openSummary?.peakThermal = thermal }
+        // Apple Silicon can leave the panel lit under the lid; keep pushing it dark.
+        if displayOffOnClose, now.timeIntervalSince(lastDisplayOff) > 30 {
+            PowerControl.displaySleepNow()
+            lastDisplayOff = now
+        }
+        // Music started after we muted: give the sound back.
+        if keepMusic, musicPlaying, wasMuted == false { unmuteIfWeMuted() }
+        if thermal == .serious, lowPowerOnClose, lowPowerChangedSource == nil, setupDone { enableLowPower() }
     }
 
     private func handleEvents(_ events: [AgentEvent]) {
@@ -453,8 +580,8 @@ final class Engine: ObservableObject {
 
     // MARK: Lid transitions
 
-    private func lidDidClose() {
-        guard isActive else { return }
+    private func engageLid() {
+        lidEngaged = true
         log("laptopcomputer", tr("Lid closed. Still working"))
         openSummary = LidSummary(closedAt: now, startBattery: battery.percent, endBattery: battery.percent,
                                  peakThermal: thermal, agentsFinished: 0, hadBattery: battery.hasBattery)
@@ -464,44 +591,64 @@ final class Engine: ObservableObject {
             lastDisplayOff = now
         }
         if pauseChatApps { ChatPauser.pause() }
-        if muteOnClose, !(keepMusic && musicPlaying) {
+        let music = keepMusic && musicPlaying
+        // Chime before muting, otherwise it is never heard.
+        if !music { playChime() }
+        if muteOnClose, !music {
             wasMuted = PowerControl.isMuted()
-            if wasMuted == false { PowerControl.setMuted(true) }
+            if wasMuted == false {
+                Paths.touch(Paths.muteFlag)
+                PowerControl.setMuted(true)
+            }
         }
         if lowPowerOnClose, setupDone, battery.hasBattery, !battery.onAC { enableLowPower() }
-        if !musicPlaying { NSSound(named: "Tink")?.play() }
     }
 
-    private func lidDidOpen() {
+    private func disengageLid() {
+        lidEngaged = false
         restoreLidChanges()
         if openSummary != nil {
             finishSummary()
-            log("sun.horizon.fill", tr("Welcome back"))
+            if !lidClosed { log("sun.horizon.fill", tr("Welcome back")) }
         }
     }
 
+    private func playChime() {
+        if Sim.enabled { Sim.record("play sound Tink"); return }
+        NSSound(named: "Tink")?.play()
+    }
+
+    private func unmuteIfWeMuted() {
+        if wasMuted == false { PowerControl.setMuted(false) }
+        wasMuted = nil
+        try? FileManager.default.removeItem(at: Paths.muteFlag)
+    }
+
+    /// Only the power source in use (`pmset -b` / `-c`), so the other source's
+    /// setting is never touched. The flag file records which one for crash recovery.
     private func enableLowPower() {
         guard !PowerControl.lowPowerOn() else { return }
-        if PowerControl.setLowPower(true) {
-            lowPowerChangedByUs = true
-            Paths.touch(Paths.state.appendingPathComponent("lowpower-restore"))
+        let source = PowerControl.PowerSource.current
+        if PowerControl.setLowPower(true, source: source) {
+            lowPowerChangedSource = source
+            Paths.ensure()
+            try? source.rawValue.write(to: Paths.lowPowerFlag, atomically: true, encoding: .utf8)
         }
     }
 
     private func restoreLidChanges() {
         ChatPauser.resume()
-        if let muted = wasMuted, muted == false { PowerControl.setMuted(false) }
-        wasMuted = nil
-        if lowPowerChangedByUs {
-            PowerControl.setLowPower(false)
-            lowPowerChangedByUs = false
-            try? FileManager.default.removeItem(at: Paths.state.appendingPathComponent("lowpower-restore"))
+        unmuteIfWeMuted()
+        if let source = lowPowerChangedSource {
+            PowerControl.setLowPower(false, source: source)
+            lowPowerChangedSource = nil
+            try? FileManager.default.removeItem(at: Paths.lowPowerFlag)
         }
     }
 
     private func finishSummary() {
         guard var s = openSummary else { return }
-        s.openedAt = Date()
+        s.openedAt = Clock.now()
         s.endBattery = battery.percent
         openSummary = nil
         guard s.duration > 20 else { return }
@@ -515,11 +662,17 @@ final class Engine: ObservableObject {
     // MARK: Output
 
     private func log(_ icon: String, _ text: String) {
-        activity.insert(ActivityItem(date: Date(), icon: icon, text: text), at: 0)
+        if Sim.enabled { Sim.record("log: \(text)") }
+        activity.insert(ActivityItem(date: Clock.now(), icon: icon, text: text), at: 0)
         if activity.count > 40 { activity.removeLast(activity.count - 40) }
     }
 
     private func notify(_ title: String, _ body: String) {
+        if Sim.enabled {
+            Sim.record("notify: \(title) | \(body)")
+            PhoneNotifier.send(topic: phoneTopic, title: title, body: body)
+            return
+        }
         guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
         content.title = title
@@ -542,6 +695,13 @@ enum Fmt {
         if m % 60 == 0 { return tr("%dh", m / 60) }
         if m > 60 { return tr("%dh %dm", m / 60, m % 60) }
         return L10n.isThai ? tr("%dm·short", m) : "\(m)m"
+    }
+
+    /// Countdown with units ("1m 52s"), so it never reads as a time of day.
+    static func countdown(_ t: TimeInterval) -> String {
+        let s = max(0, Int(t.rounded(.up)))
+        if s >= 3600 { return tr("%dh %dm", s / 3600, (s % 3600) / 60) }
+        return s >= 60 ? tr("%dm %ds", s / 60, s % 60) : tr("%ds", s)
     }
 
     static func duration(_ t: TimeInterval) -> String {
