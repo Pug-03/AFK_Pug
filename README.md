@@ -45,11 +45,12 @@ You ask Claude Code to refactor a module, close your MacBook, and walk to lunch.
 - **No monitor, no dongle.** Works with the lid closed on battery or on power.
 - **Shortcut.** <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>A</kbd> starts or stops AFK from any app.
 - **Sleep now.** When music, the charger or the grace period is keeping the Mac awake, one click lets it sleep; those triggers stay quiet until they stop and start again.
-- **Opens at login**, so agent mode keeps working after a restart (toggle in Settings → General).
+- **Opens at login** (on by default), so agent mode keeps working after a restart. Turn it off in Settings → General.
 
 ### Knows when your agents work
-- **Agent mode.** Awake only while Claude Code (or another agent) is working. An idle session at the prompt doesn't count, so the Mac sleeps normally.
-- **Grace period.** Waits 2, 5 or 15 minutes after the last agent finishes, in case you send another prompt.
+- **Agent mode.** Awake only while Claude Code, Codex, Gemini CLI, Cursor (or another agent) is working. An idle session at the prompt doesn't count, so the Mac sleeps normally.
+- **Grace period.** Off, 2, 5 or 15 minutes after the last agent finishes, in case you send another prompt.
+- **Waits out a usage limit.** If Claude Code stops on a claude.ai usage limit that resets within 6 hours, AFK Pug stays awake until the reset, so Claude can continue the task on its own (see [Usage limits](#usage-limits)).
 - **Smart about Claude Code.** Background tasks still running after Claude's reply keep the Mac awake. An interrupted turn (Esc) or an API error lets it sleep. A "finished" notification only fires once the agent has really stopped.
 - **Notifications.** Tells you when an agent finishes, needs a permission or hits an error. Optional push to your phone through [ntfy](https://ntfy.sh).
 
@@ -87,12 +88,26 @@ Requirements: an Apple Silicon MacBook, macOS 14 or later, and Xcode or the Swif
 
 The app is ad-hoc signed. If macOS blocks it the first time, open **System Settings → Privacy & Security** and choose **Open Anyway**.
 
+On first launch a 4-step welcome window opens: what AFK Pug does, the one-time lid-closed permission, connecting your agents, and Agent mode with **Open at login** (on by default). Skip it any time; it's in **Settings → General → Show welcome again**.
+
+**Upgrading from 0.1?** The permission rule changed, so lid-closed mode asks you to press **Set up** (and enter your password) once more.
+
+### Claude Code plugin (optional)
+
+Instead of letting the app edit `~/.claude/settings.json`, you can add the hooks and the MCP server as a Claude Code plugin. Install the app first, in `/Applications` (the plugin calls `/Applications/AFK Pug.app` and the scripts the app installs in `~/.afkpug/bin`), then in Claude Code:
+
+```
+/plugin marketplace add Pug-03/AKF_Pug
+/plugin install afk-pug@afk-pug
+```
+
+Remove it with `/plugin uninstall afk-pug`. With the plugin installed, Settings shows Claude Code as connected and the MCP row as provided by the plugin.
+
 ## Quick start
 
-1. Click the pug in the menu bar.
-2. Next to **Lid-closed mode**, press **Set up** and enter your password once.
-3. Press **Connect** to link Claude Code.
-4. Start a task in Claude Code and close the lid.
+1. Follow the welcome window: press **Allow** for lid-closed mode (your password, once) and **Connect** next to your agents. Later, the same buttons are in the popover (click the paw in the menu bar) and in Settings → Agents.
+2. Keep **Agent mode** on.
+3. Start a task in your agent and close the lid.
 
 If you use Amphetamine or a similar app, quit it so the two don't fight over sleep.
 
@@ -100,9 +115,18 @@ If you use Amphetamine or a similar app, quit it so the two don't fight over sle
 
 | Agent | How AFK Pug knows it's working |
 |---|---|
-| Claude Code | Lifecycle hooks (`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `Notification`, `SessionEnd`), installed in one click. A hold with no activity for 15 minutes is dropped, unless Claude's process is still busy |
-| Codex, Gemini CLI, Cursor Agent, Aider, OpenCode, Amp, Goose, Qwen Code | Process detection: counts as working while the process tree uses CPU |
+| Claude Code | Lifecycle hooks in `~/.claude/settings.json` (`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `StopFailure`, `Notification`, `SessionEnd`), or the [plugin](#claude-code-plugin-optional). A hold with no activity for 15 minutes is dropped, unless Claude's process is still busy |
+| Codex | Native hooks in `~/.codex/hooks.json`. Codex runs new hooks only after you trust them: open Codex and type `/hooks`. Until then, process detection covers it |
+| Gemini CLI | Native hooks in `~/.gemini/settings.json` |
+| Cursor (app agent and `cursor-agent`) | Native hooks in `~/.cursor/hooks.json` (observational events only, so nothing you approve changes) |
+| Aider, OpenCode, Amp, Goose, Qwen Code | Process detection (**Settings → Agents → Detect other agents**): counts as working while the process tree uses CPU. Also covers Codex, Gemini CLI and Cursor Agent while their hooks aren't connected |
 | Anything else | The `afkpug` command line tool |
+
+Connect each agent with one click in the welcome window or **Settings → Agents**. AFK Pug edits only its own entries, writes through symlinks, keeps your very first version of each file as `<file>.afkpug-backup`, and refuses read-only files.
+
+### Usage limits
+
+When Claude Code stops on a claude.ai usage limit, the `StopFailure` hook reads the reset time from the error. If it's within 6 hours, the agent stays listed as *waiting for limit · until 17:53* (amber dot) and the Mac stays awake until shortly after the reset, so Claude Code can continue the task by itself. With no reset time given, it waits 30 minutes. A limit further away (such as a weekly one), a plain rate limit or any other API error lets the Mac sleep. You can release the wait with the × next to it.
 
 ### Command line
 
@@ -140,7 +164,7 @@ Under **Settings → Agents → Let agents keep the Mac awake**, AFK Pug registe
 | `release_mac_awake` | Drop the holds this session created |
 | `afk_status` | List what's keeping the Mac awake |
 
-Useful when a build or deploy keeps running after the agent's reply.
+Useful when a build or deploy keeps running after the agent's reply. The [plugin](#claude-code-plugin-optional) includes this server, so there's nothing to connect when you use it.
 
 ## Safety
 
@@ -193,23 +217,25 @@ No. Everything stays on your Mac. The only network request is the optional phone
 
 ## Uninstall
 
-**Settings → Uninstall AFK Pug…** removes the Claude Code hooks, the MCP registration, the watchdog, the lid-closed permission and `~/.afkpug`, restores normal sleep, and quits. Then delete the app. Your original `~/.claude/settings.json` is kept as `settings.json.afkpug-backup`.
+**Settings → Uninstall AFK Pug…** removes the hooks from all four agents (Claude Code, Codex, Gemini CLI, Cursor), the MCP registration, the watchdog, the login item, the lid-closed permission and `~/.afkpug`, restores normal sleep, and quits. Then delete the app.
+
+Your original config files are kept next to them as backups: `~/.claude/settings.json.afkpug-backup`, `~/.codex/hooks.json.afkpug-backup`, `~/.gemini/settings.json.afkpug-backup` and `~/.cursor/hooks.json.afkpug-backup` (only for files that existed before). The Claude Code plugin is removed separately, in Claude Code: `/plugin uninstall afk-pug`.
 
 ## Testing
 
 A headless simulator drives the engine with fake lid, battery, heat, audio and process input. Nothing real runs: every power command is logged instead.
 
 ```sh
-AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate all      # 37 scenarios
-AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate stress   # 49 adversarial scenarios
+swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate all      # 48 scenarios
+swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate stress   # 69 adversarial scenarios
 ```
+
+Run `swift build` first: `--show-bin-path` only prints the folder, it doesn't build.
 
 ## Roadmap
 
 - [ ] Signed and notarized release download, Homebrew cask, auto-update (needs an Apple Developer ID)
 - [ ] Privileged helper (SMAppService) instead of a sudoers rule (needs signing)
-- [ ] Native hooks for Codex, Cursor and Gemini CLI (today: process detection)
-- [ ] Stay awake until a Claude usage limit resets
 - [ ] PushPug integration
 
 ## Project layout
@@ -220,11 +246,13 @@ Sources/AFKPug/
 ├── Engine.swift        session logic: timers, agents, guards, lid actions
 ├── PowerControl.swift  pmset, IOKit assertions, one-time setup
 ├── Sensors.swift       lid, battery and thermal state
-├── Agents.swift        holds, events, Claude Code hooks, watchdog
+├── Agents.swift        holds, events, Claude Code hooks, watchdog, uninstaller
+├── Integrations.swift  Codex, Gemini CLI and Cursor hooks, careful config file editing
 ├── Extras.swift        process detection, chat pause, lock, hotkey, ntfy, MCP, audio
 ├── Scripts.swift       hook, CLI and watchdog shell scripts
 ├── Views.swift         home screen
 ├── Settings.swift      settings screen and shared controls
+├── Onboarding.swift    first-run welcome window
 ├── PugArt.swift        the pug, app icon and menu bar icon
 ├── L10n.swift          Thai and English strings
 └── Simulation.swift    headless test scenarios
