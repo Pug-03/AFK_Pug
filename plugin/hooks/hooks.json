@@ -1,0 +1,82 @@
+{
+  "description": "AFK Pug: keep the Mac awake while Claude Code works. Calls ~/.afkpug/bin/afkpug-hook, which the AFK Pug app installs; does nothing if the app is not installed.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.afkpug/bin/afkpug-hook\" ] && \"$HOME/.afkpug/bin/afkpug-hook\" start claude; true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.afkpug/bin/afkpug-hook\" ] && \"$HOME/.afkpug/bin/afkpug-hook\" touch claude; true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.afkpug/bin/afkpug-hook\" ] && \"$HOME/.afkpug/bin/afkpug-hook\" touch claude; true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.afkpug/bin/afkpug-hook\" ] && \"$HOME/.afkpug/bin/afkpug-hook\" stop claude; true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.afkpug/bin/afkpug-hook\" ] && \"$HOME/.afkpug/bin/afkpug-hook\" notify claude; true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.afkpug/bin/afkpug-hook\" ] && \"$HOME/.afkpug/bin/afkpug-hook\" fail claude; true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.afkpug/bin/afkpug-hook\" ] && \"$HOME/.afkpug/bin/afkpug-hook\" end claude; true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

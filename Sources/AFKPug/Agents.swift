@@ -43,10 +43,11 @@ struct AgentHold: Identifiable, Equatable {
 
     var displayName: String {
         switch agent.lowercased() {
-        case "claude": return "Claude Code"
-        case "codex": return "Codex"
         case "cli": return reason.map { tr("Hold · %@", $0) } ?? tr("Terminal hold")
-        default: return agent
+        default:
+            let name = AgentIntegrations.displayName(agent)
+            // Written by afkpug-hook on a Claude usage limit (expires at the reset).
+            return reason == "usage limit" ? tr("%@ · waiting for the usage limit to reset", name) : name
         }
     }
 }
@@ -162,12 +163,93 @@ enum Installer {
     }
 }
 
-/// Adds / removes AFK Pug hooks in ~/.claude/settings.json.
+/// A settings file whose hooks look like Claude Code's:
+/// `{"hooks": {"<Event>": [{"matcher": ..., "hooks": [{"type": "command", "command": ...}]}]}}`.
+/// Claude Code and Gemini CLI both use this shape.
+struct NestedHooksFile: Sendable {
+    let url: URL
+    let agent: String
+    let events: [(event: String, action: String)]
+    /// Extra keys for each hook entry (Gemini: name, timeout in ms).
+    var extra: @Sendable (_ event: String) -> [String: Any] = { _ in [:] }
+
+    func command(_ action: String) -> String { ConfigFile.hookCommand(action, agent) }
+
+    func isInstalled() -> Bool {
+        guard let data = try? ConfigFile.read(url), let text = String(data: data, encoding: .utf8) else { return false }
+        return text.contains(ConfigFile.marker)
+    }
+
+    /// Connected, but by an older version (missing events or other commands).
+    func needsUpgrade() -> Bool {
+        guard isInstalled(), let settings = try? ConfigFile.loadJSON(url), let hooks = settings["hooks"] as? [String: Any] else { return false }
+        let wanted = Set(events.map(\.event))
+        let stray = hooks.contains { key, value in
+            !wanted.contains(key) && ((value as? [[String: Any]]) ?? []).contains { !ours($0).isEmpty }
+        }
+        return stray || events.contains { event, action in
+            let mine = (hooks[event] as? [[String: Any]] ?? []).flatMap(ours)
+            return mine.count != 1 || mine[0] != command(action)
+        }
+    }
+
+    func install() throws {
+        var settings = try ConfigFile.loadJSON(url)
+        var hooks = stripAll(settings["hooks"] as? [String: Any] ?? [:])
+        for (event, action) in events {
+            var groups = hooks[event] as? [[String: Any]] ?? []
+            var entry: [String: Any] = ["type": "command", "command": command(action)]
+            entry.merge(extra(event)) { $1 }
+            groups.append(["hooks": [entry]])
+            hooks[event] = groups
+        }
+        settings["hooks"] = hooks
+        try ConfigFile.saveJSON(settings, to: url)
+    }
+
+    func uninstall() throws {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        var settings = try ConfigFile.loadJSON(url)
+        guard let hooks = settings["hooks"] as? [String: Any] else { return }
+        let stripped = stripAll(hooks)
+        settings["hooks"] = stripped.isEmpty ? nil : stripped
+        try ConfigFile.saveJSON(settings, to: url)
+    }
+
+    /// Our commands in one matcher group.
+    private func ours(_ group: [String: Any]) -> [String] {
+        (group["hooks"] as? [[String: Any]] ?? []).compactMap { $0["command"] as? String }.filter { $0.contains(ConfigFile.marker) }
+    }
+
+    /// Removes our entries from every event (also ones an older version used),
+    /// dropping groups and events left empty. Non-array values are kept as is.
+    private func stripAll(_ hooks: [String: Any]) -> [String: Any] {
+        var result = hooks
+        for (event, value) in hooks {
+            guard let groups = value as? [[String: Any]] else { continue }
+            let kept: [[String: Any]] = groups.compactMap { group in
+                guard let inner = group["hooks"] as? [[String: Any]] else { return group }
+                let left = inner.filter { !(($0["command"] as? String) ?? "").contains(ConfigFile.marker) }
+                if left.count == inner.count { return group }
+                if left.isEmpty { return nil }
+                var group = group
+                group["hooks"] = left
+                return group
+            }
+            result[event] = kept.isEmpty ? nil : kept
+        }
+        return result
+    }
+}
+
+/// Adds / removes AFK Pug hooks in ~/.claude/settings.json, unless the AFK Pug
+/// Claude Code plugin (plugin/ in the repo) already provides them.
 enum ClaudeHooks {
-    static let settingsURL = (Sim.enabled ? Paths.root : FileManager.default.homeDirectoryForCurrentUser)
-        .appendingPathComponent(".claude/settings.json")
-    /// Only our own commands carry this path tail.
-    static let marker = "/bin/afkpug-hook"
+    static let settingsURL = ConfigFile.home(".claude/settings.json")
+    static let pluginsURL = ConfigFile.home(".claude/plugins/installed_plugins.json")
+    /// The plugin's name in plugin/.claude-plugin/plugin.json and marketplace.json.
+    static let pluginName = "afk-pug"
+    static let marker = ConfigFile.marker
     static let events: [(event: String, action: String)] = [
         ("UserPromptSubmit", "start"),
         ("PreToolUse", "touch"),
@@ -177,92 +259,30 @@ enum ClaudeHooks {
         ("StopFailure", "fail"),
         ("SessionEnd", "end"),
     ]
+    static let file = NestedHooksFile(url: settingsURL, agent: "claude", events: events)
 
-    static func isInstalled() -> Bool {
-        guard let data = try? Data(contentsOf: settingsURL), let text = String(data: data, encoding: .utf8) else { return false }
-        return text.contains(marker)
-    }
+    static func isInstalled() -> Bool { file.isInstalled() }
+    static func needsUpgrade() -> Bool { file.needsUpgrade() }
 
-    /// Connected, but by an older version (missing events or other commands).
-    static func needsUpgrade() -> Bool {
-        guard isInstalled(), let settings = try? load(), let hooks = settings["hooks"] as? [String: Any] else { return false }
-        return events.contains { event, action in
-            let commands = (hooks[event] as? [[String: Any]] ?? []).flatMap { $0["hooks"] as? [[String: Any]] ?? [] }
-                .compactMap { $0["command"] as? String }
-            return !commands.contains(command(action))
-        }
-    }
-
-    /// Fail-safe: if the app (and its script) is gone, the hook does nothing instead of
-    /// showing a hook error on every prompt. Single quotes so `$` in a path can't expand.
-    private static func command(_ action: String) -> String {
-        let path = "'" + Paths.hookScript.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
-        return "[ -x \(path) ] && \(path) \(action) claude; true"
-    }
-
+    /// With the plugin installed, settings.json hooks would fire every event twice.
     static func install() throws {
-        var settings = try load()
-        var hooks = settings["hooks"] as? [String: Any] ?? [:]
-        for (event, action) in events {
-            var groups = stripOurs(hooks[event] as? [[String: Any]] ?? [])
-            groups.append(["hooks": [["type": "command", "command": command(action)]]])
-            hooks[event] = groups
-        }
-        settings["hooks"] = hooks
-        try save(settings)
+        if pluginInstalled() { try file.uninstall() } else { try file.install() }
     }
 
-    static func uninstall() throws {
-        var settings = try load()
-        guard var hooks = settings["hooks"] as? [String: Any] else { return }
-        for (event, _) in events {
-            let groups = stripOurs(hooks[event] as? [[String: Any]] ?? [])
-            hooks[event] = groups.isEmpty ? nil : groups
-        }
-        settings["hooks"] = hooks.isEmpty ? nil : hooks
-        try save(settings)
-    }
+    static func uninstall() throws { try file.uninstall() }
 
-    private static func stripOurs(_ groups: [[String: Any]]) -> [[String: Any]] {
-        groups.compactMap { group in
-            var group = group
-            let inner = (group["hooks"] as? [[String: Any]] ?? []).filter { !(($0["command"] as? String) ?? "").contains(marker) }
-            if inner.isEmpty { return nil }
-            group["hooks"] = inner
-            return group
+    /// The AFK Pug plugin is installed at user scope (from any marketplace) and
+    /// not turned off in ~/.claude/settings.json `enabledPlugins`.
+    static func pluginInstalled() -> Bool {
+        guard let data = try? ConfigFile.read(pluginsURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let plugins = json["plugins"] as? [String: Any] else { return false }
+        let enabled = ((try? ConfigFile.loadJSON(settingsURL))?["enabledPlugins"] as? [String: Any]) ?? [:]
+        return plugins.contains { id, installs in
+            guard id.split(separator: "@").first.map(String.init) == pluginName,
+                  ((installs as? [[String: Any]]) ?? []).contains(where: { ($0["scope"] as? String) == "user" }) else { return false }
+            return (enabled[id] as? Bool) != false
         }
-    }
-
-    private static func load() throws -> [String: Any] {
-        guard FileManager.default.fileExists(atPath: settingsURL.path) else { return [:] }
-        let data = try Data(contentsOf: settingsURL)
-        if data.isEmpty { return [:] }
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw NSError(domain: "AFKPug", code: 2, userInfo: [NSLocalizedDescriptionKey: "~/.claude/settings.json is not a JSON object"])
-        }
-        return object
-    }
-
-    private static func save(_ settings: [String: Any]) throws {
-        let fm = FileManager.default
-        // settings.json is often a symlink into a dotfiles repo: write through it
-        // (an atomic write to the link path would replace the link with a file).
-        var target = settingsURL.resolvingSymlinksInPath()
-        // A dangling link: write to where it points, keeping the link.
-        if let dest = try? fm.destinationOfSymbolicLink(atPath: settingsURL.path), !fm.fileExists(atPath: target.path) {
-            target = URL(fileURLWithPath: dest, relativeTo: settingsURL.deletingLastPathComponent()).standardizedFileURL
-        }
-        try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if fm.fileExists(atPath: target.path) {
-            guard fm.isWritableFile(atPath: target.path) else {
-                throw NSError(domain: "AFKPug", code: 3, userInfo: [NSLocalizedDescriptionKey: "~/.claude/settings.json is read-only"])
-            }
-            // Keep the very first backup: it is the user's original file.
-            let backup = settingsURL.appendingPathExtension("afkpug-backup")
-            if !fm.fileExists(atPath: backup.path) { try? fm.copyItem(at: target, to: backup) }
-        }
-        let data = try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        try data.write(to: target, options: .atomic)
     }
 }
 
@@ -274,6 +294,9 @@ enum Uninstaller {
     static func run() -> Report {
         var report = Report()
         do { try ClaudeHooks.uninstall() } catch { report.errors.append("Claude Code hooks: \(error.localizedDescription)") }
+        for item in AgentIntegrations.all where item.id != "claude" && item.isConnected() {
+            do { try item.disconnect() } catch { report.errors.append("\(item.name) hooks: \(error.localizedDescription)") }
+        }
         if MCPInstaller.isInstalled(), !MCPInstaller.uninstall() { report.errors.append("Claude Code MCP server: run `claude mcp remove --scope user afkpug`") }
         if Sim.enabled {
             Sim.record("uninstall: launchctl bootout watchdog, remove plist, sudoers, ~/.afkpug")

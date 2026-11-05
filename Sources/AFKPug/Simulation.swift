@@ -48,6 +48,11 @@ enum Simulation {
         ("sleep-now", "Sleep now ends grace / manual and snoozes music and charger until they go away"),
         ("url-scheme", "afkpug:// commands"),
         ("preview-th", "[13] Thai preview after 85 min closed renders, busy Claude hold survives"),
+        ("codex-hooks", "Codex ~/.codex/hooks.json: install/upgrade/uninstall, real hook commands, no double hold"),
+        ("gemini-hooks", "Gemini CLI settings.json hooks: install/upgrade/uninstall, JSONC refused, real hook commands"),
+        ("cursor-hooks", "Cursor hooks.json: JSON replies, stop status, Claude hooks run by Cursor, script missing"),
+        ("claude-plugin", "Claude Code plugin installed: no settings.json hooks; repo plugin/ commands work"),
+        ("usage-limit", "Claude usage limit: hold until the reset (formats, cap, default), auto-resume, errors release"),
     ]
     /// Old names of the review proofs, kept as aliases.
     static let reviewScenarios = ["review-chat-call", "review-hotkey-trip", "review-agentmode-off", "review-preview", "review-release-fail",
@@ -211,6 +216,16 @@ private final class Runner {
     /// Runs one of the generated shell scripts with HOME pointing at the sandbox.
     @discardableResult
     func script(_ url: URL, _ args: [String], stdin: String = "") -> (status: Int32, output: String, seconds: Double) {
+        sh([url.path] + args, stdin: stdin)
+    }
+
+    /// Runs a hook command line exactly as an agent would (`sh -c`), HOME in the sandbox.
+    @discardableResult
+    func shell(_ command: String, stdin: String = "") -> (status: Int32, output: String, seconds: Double) {
+        sh(["-c", command], stdin: stdin)
+    }
+
+    private func sh(_ arguments: [String], stdin: String) -> (status: Int32, output: String, seconds: Double) {
         let home = Sim.dir.appendingPathComponent("home")
         let link = home.appendingPathComponent(".afkpug")
         if (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == nil {
@@ -219,7 +234,7 @@ private final class Runner {
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = [url.path] + args
+        process.arguments = arguments
         var env = ProcessInfo.processInfo.environment
         env["HOME"] = home.path
         process.environment = env
@@ -228,7 +243,7 @@ private final class Runner {
         process.standardOutput = output
         process.standardError = output
         let started = Date()
-        do { try process.run() } catch { fail("could not run \(url.lastPathComponent)"); return (-1, "", 0) }
+        do { try process.run() } catch { fail("could not run \(arguments)"); return (-1, "", 0) }
         input.fileHandleForWriting.write(Data(stdin.utf8))
         try? input.fileHandleForWriting.close()
         // Reads until every writer (including background children) closes stdout.
@@ -302,6 +317,11 @@ private final class Runner {
         case "url-scheme": urlScheme()
         case "preview-th", "review-preview": previewTh()
         case "preview-grace": previewGrace()
+        case "codex-hooks": codexHooks()
+        case "gemini-hooks": geminiHooks()
+        case "cursor-hooks": cursorHooks()
+        case "claude-plugin": claudePlugin()
+        case "usage-limit": usageLimit()
         case "preview-states": previewStates()
         default:
             if name.hasPrefix("stress-") { runStress() } else { fail("no scenario") }
@@ -816,9 +836,13 @@ private final class Runner {
     func uninstallAll() {
         configure(); boot()
         do { try ClaudeHooks.install() } catch { fail("install hooks: \(error)") }
+        for item in [AgentIntegrations.codex, AgentIntegrations.gemini, AgentIntegrations.cursor] {
+            do { try item.connect() } catch { fail("connect \(item.name): \(error)") }
+        }
         step("Go AFK, close the lid", expect: ["disablesleep 1", "lock screen"]) { engine.start(); Sim.set("lid", "closed") }
         step("uninstall", expect: ["SIGCONT chat apps", "unmute", "disablesleep 0", "uninstall: launchctl bootout", "uninstall finished (0 problem(s))"]) { engine.uninstallEverything() }
         check(!ClaudeHooks.isInstalled(), "Claude Code hooks removed")
+        check(!AgentIntegrations.codex.isConnected() && !AgentIntegrations.gemini.isConnected() && !AgentIntegrations.cursor.isConnected(), "Codex, Gemini CLI and Cursor hooks removed")
         check(!FileManager.default.fileExists(atPath: Paths.root.appendingPathComponent("holds").path), "~/.afkpug removed")
         check(!engine.lidOverrideOn && !engine.isActive, "nothing left running")
     }
@@ -1825,5 +1849,387 @@ extension Runner {
         check((counts["pmset displaysleepnow"] ?? 0) <= 8 * 3600 / 30 + 1, "display push at most every 30 s (got \(counts["pmset displaysleepnow"] ?? 0))")
         printLines = true
         endAll()
+    }
+}
+
+// MARK: - Native agent integrations (Codex, Gemini CLI, Cursor, Claude plugin, usage limit)
+
+extension Runner {
+    /// Hook commands per event, for both shapes: nested groups (Claude, Gemini,
+    /// Codex) and Cursor's flat list.
+    func hookCommands(_ url: URL) -> [String: [String]] {
+        let json = (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let hooks = json["hooks"] as? [String: Any] ?? [:]
+        return hooks.compactMapValues { value -> [String]? in
+            guard let list = value as? [[String: Any]] else { return nil }
+            return list.flatMap { entry -> [String] in
+                if let inner = entry["hooks"] as? [[String: Any]] { return inner.compactMap { $0["command"] as? String } }
+                return [entry["command"] as? String].compactMap { $0 }
+            }
+        }
+    }
+
+    func ours(_ commands: [String]?) -> [String] { (commands ?? []).filter { $0.contains(ConfigFile.marker) } }
+
+    /// The parts every integration shares: install twice through a symlink, one
+    /// entry per event, the user's config kept, first backup kept, upgrade of an
+    /// older install, uninstall twice, read-only file refused.
+    func integrationBasics(_ item: AgentIntegration, url: URL, seed: String, events: [(event: String, action: String)],
+                           old: String, keep: (String) -> Bool) {
+        let fm = FileManager.default
+        let target = Paths.root.appendingPathComponent("dotfiles/\(item.id)-\(url.lastPathComponent)")
+        try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? seed.write(to: target, atomically: true, encoding: .utf8)
+        try? fm.removeItem(at: url)
+        try? fm.createSymbolicLink(at: url, withDestinationURL: target)
+        check(item.isAvailable() && !item.isConnected(), "\(item.name): available, not connected yet")
+
+        do { try item.connect(); try item.connect() } catch { fail("\(item.name) connect threw \(error)") }
+        let installed = hookCommands(url)
+        check((try? fm.destinationOfSymbolicLink(atPath: url.path)) != nil, "config is still a symlink")
+        for (event, action) in events {
+            let mine = ours(installed[event])
+            check(mine.count == 1 && mine[0].contains(" \(action) \(item.id)"), "\(event) -> \(action), exactly once (got \(mine))")
+        }
+        let total = installed.values.reduce(0) { $0 + ours($1).count }
+        check(total == events.count, "no stray entries (\(total) of ours, want \(events.count))")
+        let text = (try? String(contentsOf: target, encoding: .utf8)) ?? ""
+        check(keep(text), "user's other config kept after install")
+        check(item.isConnected() && !item.needsUpgrade(), "connected, no upgrade needed")
+        let backup = url.appendingPathExtension("afkpug-backup")
+        check((try? String(contentsOf: backup, encoding: .utf8)) == seed, "first backup is the user's original file")
+
+        // An older AFK Pug: an event that's gone, one missing, a different command.
+        try? old.write(to: target, atomically: true, encoding: .utf8)
+        check(item.isConnected() && item.needsUpgrade(), "older install needs an upgrade")
+        do { try item.connect() } catch { fail("upgrade threw \(error)") }
+        let upgraded = hookCommands(url)
+        check(!item.needsUpgrade() && upgraded.values.reduce(0) { $0 + ours($1).count } == events.count, "upgrade leaves exactly one entry per event")
+        check((try? String(contentsOf: backup, encoding: .utf8)) == seed, "backup still the original after more writes")
+
+        do { try item.disconnect(); try item.disconnect() } catch { fail("\(item.name) disconnect threw \(error)") }
+        let removed = (try? String(contentsOf: target, encoding: .utf8)) ?? ""
+        check(!removed.contains(ConfigFile.marker) && !item.isConnected(), "disconnect removes every entry")
+        check(keep(removed), "disconnect keeps the user's other config")
+
+        // Read-only: reported, never replaced.
+        try? fm.setAttributes([.posixPermissions: 0o444], ofItemAtPath: target.path)
+        var threw = false
+        do { try item.connect() } catch { threw = true; print("  read-only error: \(error.localizedDescription)") }
+        check(threw && (try? String(contentsOf: target, encoding: .utf8)) == removed, "read-only config: error, file untouched")
+        try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: target.path)
+        do { try item.connect() } catch { fail("reconnect threw \(error)") }
+    }
+
+    /// Runs the installed command for `event` with `stdin`, like the agent would.
+    @discardableResult
+    func fire(_ url: URL, _ event: String, _ stdin: String) -> String {
+        guard let command = ours(hookCommands(url)[event]).first else { fail("no hook for \(event)"); return "" }
+        let result = shell(command, stdin: stdin)
+        if result.status != 0 { fail("\(event) hook exited \(result.status)") }
+        if result.seconds > 2 { fail("\(event) hook took \(result.seconds) s") }
+        return result.output
+    }
+
+    func holdJSON(_ id: String) -> [String: Any]? {
+        (try? Data(contentsOf: Paths.holds.appendingPathComponent(id))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    }
+
+    func exists(_ id: String) -> Bool { FileManager.default.fileExists(atPath: Paths.holds.appendingPathComponent(id).path) }
+
+    /// A connected agent with working hooks isn't also found by process.
+    func noDoubleHold(_ display: String, procs: String, holdId: String) {
+        step("\(display) process busy while its hook hold exists", ticks: 3) { Sim.set("procs", procs) }
+        let names = engine.holds.map(\.id)
+        check(names.contains(holdId) && !names.contains { $0.hasPrefix("proc-") }, "only the hook hold counts, no process hold (got \(names))")
+        Sim.set("procs", nil)
+    }
+
+    func codexHooks() {
+        configure(); boot()
+        let url = CodexHooks.file.url
+        let seed = #"{"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"my-linter"}]}],"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}"#
+        let cmd = ConfigFile.hookCommand
+        let old = #"{"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"my-linter"}]}],"Stop":[{"hooks":[{"type":"command","command":"say done"}]},{"hooks":[{"type":"command","command":"\#(cmd("stop", "codex"))"}]}],"Notification":[{"hooks":[{"type":"command","command":"\#(cmd("wait", "codex"))"}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"/old/path/bin/afkpug-hook start codex"}]}]}}"#
+        integrationBasics(AgentIntegrations.codex, url: url, seed: seed, events: CodexHooks.events, old: old) {
+            $0.contains("my-linter") && $0.contains("say done") && $0.contains("\"matcher\" : \"Bash\"") || ($0.contains("my-linter") && $0.contains("say done") && $0.contains("Bash"))
+        }
+        let json = (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let end = ((json?["hooks"] as? [String: Any])?["SessionEnd"] as? [[String: Any]])?.first?["hooks"] as? [[String: Any]]
+        check((end?.first?["timeout"] as? Int) == 3, "SessionEnd timeout within Codex's 3 s cap")
+
+        // Realistic Codex stdin (snake_case, session_id is the thread id).
+        let base = #""session_id":"thr_7f3a","transcript_path":"/Users/u/.codex/sessions/2026/11/05/rollout.jsonl","cwd":"/Users/u/app","model":"gpt-5.5-codex","permission_mode":"default""#
+        engine.refreshIntegrations()
+        step("UserPromptSubmit", expect: ["log: Codex started working", "disablesleep 1"]) {
+            let out = fire(url, "UserPromptSubmit", #"{\#(base),"hook_event_name":"UserPromptSubmit","turn_id":"t1","prompt":"fix the session_id bug"}"#)
+            check(out.isEmpty, "no stdout (it would become developer context)")
+        }
+        check(exists("codex-thr_7f3a"), "hold named after session_id")
+        step("PreToolUse / PostToolUse touch", forbid: ["finished"]) {
+            fire(url, "PreToolUse", #"{\#(base),"hook_event_name":"PreToolUse","turn_id":"t1","tool_name":"Bash","tool_use_id":"c1","tool_input":{"command":"echo {\"session_id\":\"evil\"}"}}"#)
+            fire(url, "PostToolUse", #"{\#(base),"hook_event_name":"PostToolUse","turn_id":"t1","tool_name":"Bash","tool_use_id":"c1","tool_input":{"command":"ls"},"tool_response":"ok"}"#)
+        }
+        check(exists("codex-thr_7f3a") && !exists("codex-evil"), "first session_id wins over tool_input")
+        noDoubleHold("Codex", procs: "  \(getpid())     1   0.4 /bin/zsh\n  9100 \(getpid())  60.0 node /opt/homebrew/bin/codex\n", holdId: "codex-thr_7f3a")
+        step("PermissionRequest: waiting, hold kept", expect: ["notify: Codex needs you"]) {
+            fire(url, "PermissionRequest", #"{\#(base),"hook_event_name":"PermissionRequest","turn_id":"t1","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}"#)
+        }
+        check(exists("codex-thr_7f3a"), "hold survives PermissionRequest")
+        step("Stop (finished after 10 s)", ticks: 6, expect: ["log: Codex finished"]) {
+            fire(url, "Stop", #"{\#(base),"hook_event_name":"Stop","turn_id":"t1","stop_hook_active":false,"last_assistant_message":"Done."}"#)
+        }
+        check(!exists("codex-thr_7f3a"), "Stop drops the hold")
+        step("Esc: Interrupt releases silently", ticks: 6, forbid: ["finished"]) {
+            fire(url, "UserPromptSubmit", #"{\#(base),"hook_event_name":"UserPromptSubmit","turn_id":"t2","prompt":"again"}"#)
+            fire(url, "Interrupt", #"{\#(base),"hook_event_name":"Interrupt","turn_id":"t2"}"#)
+        }
+        check(!exists("codex-thr_7f3a"), "Interrupt drops the hold")
+        step("disconnected: process detection is back", ticks: 3, expect: ["log: Codex started working"]) {
+            try? AgentIntegrations.codex.disconnect(); engine.refreshIntegrations()
+            Sim.set("procs", "  9100 1  60.0 node /opt/homebrew/bin/codex\n")
+        }
+    }
+
+    func geminiHooks() {
+        configure(); boot()
+        let url = GeminiHooks.file.url
+        let seed = #"{"general":{"vimMode":true},"hooksConfig":{"enabled":true},"hooks":{"BeforeTool":[{"matcher":"write_file|replace","hooks":[{"name":"security-check","type":"command","command":"$GEMINI_PROJECT_DIR/.gemini/hooks/security.sh","timeout":5000}]}]}}"#
+        let old = #"{"general":{"vimMode":true},"hooksConfig":{"enabled":true},"hooks":{"BeforeTool":[{"matcher":"write_file|replace","hooks":[{"name":"security-check","type":"command","command":"$GEMINI_PROJECT_DIR/.gemini/hooks/security.sh","timeout":5000}]}],"AfterAgent":[{"hooks":[{"type":"command","command":"\#(ConfigFile.hookCommand("done", "gemini"))"}]}]}}"#
+        integrationBasics(AgentIntegrations.gemini, url: url, seed: seed, events: GeminiHooks.events, old: old) {
+            $0.contains("security-check") && $0.contains("vimMode") && $0.contains("hooksConfig")
+        }
+        let json = (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let entry = (((json?["hooks"] as? [String: Any])?["BeforeAgent"] as? [[String: Any]])?.first?["hooks"] as? [[String: Any]])?.first
+        check((entry?["timeout"] as? Int) == 5000 && (entry?["name"] as? String) == "afkpug-beforeagent", "Gemini entries carry a name and a ms timeout")
+
+        // settings.json with comments (JSONC): refuse rather than drop the comments.
+        let target = url.resolvingSymlinksInPath()
+        let jsonc = "{\n  // my settings\n  \"general\": {\"vimMode\": true}\n}\n"
+        let saved = (try? String(contentsOf: target, encoding: .utf8)) ?? ""
+        try? jsonc.write(to: target, atomically: true, encoding: .utf8)
+        var threw = false
+        do { try AgentIntegrations.gemini.connect() } catch { threw = true; print("  JSONC error: \(error.localizedDescription)") }
+        check(threw && (try? String(contentsOf: target, encoding: .utf8)) == jsonc, "settings.json with comments: error, file untouched")
+        try? saved.write(to: target, atomically: true, encoding: .utf8)
+
+        let base = #""session_id":"8d1c-gem","transcript_path":"/Users/u/.gemini/tmp/chats/session.json","cwd":"/Users/u/app","timestamp":"2026-11-05T09:30:00.000Z""#
+        engine.refreshIntegrations()
+        step("BeforeAgent", expect: ["log: Gemini CLI started working", "disablesleep 1"]) {
+            check(fire(url, "BeforeAgent", #"{\#(base),"hook_event_name":"BeforeAgent","prompt":"add tests"}"#).isEmpty, "no stdout (empty = allow, unchanged)")
+        }
+        check(exists("gemini-8d1c-gem"), "hold named after session_id")
+        step("BeforeTool / AfterTool touch", forbid: ["finished"]) {
+            check(fire(url, "BeforeTool", #"{\#(base),"hook_event_name":"BeforeTool","tool_name":"run_shell_command","tool_input":{"command":"npm test"},"mcp_context":null,"original_request_name":"run_shell_command"}"#).isEmpty, "BeforeTool prints nothing")
+            fire(url, "AfterTool", #"{\#(base),"hook_event_name":"AfterTool","tool_name":"run_shell_command","tool_input":{"command":"npm test"},"tool_response":{"llmContent":"ok","returnDisplay":"ok"}}"#)
+        }
+        noDoubleHold("Gemini CLI", procs: "  9200 1  40.0 node /opt/homebrew/lib/node_modules/@google/gemini-cli/dist/index.js\n", holdId: "gemini-8d1c-gem")
+        step("Notification ToolPermission", expect: ["notify: Gemini CLI needs you"]) {
+            fire(url, "Notification", #"{\#(base),"hook_event_name":"Notification","notification_type":"ToolPermission","message":"Allow run_shell_command?","details":{}}"#)
+        }
+        step("AfterAgent (finished after 10 s)", ticks: 6, expect: ["log: Gemini CLI finished"]) {
+            check(fire(url, "AfterAgent", #"{\#(base),"hook_event_name":"AfterAgent","prompt":"add tests","prompt_response":"Added 3 tests.","stop_hook_active":false}"#).isEmpty, "AfterAgent prints nothing (exit 2 would force a retry)")
+        }
+        check(!exists("gemini-8d1c-gem"), "AfterAgent drops the hold")
+        step("SessionEnd drops a leftover hold", forbid: ["finished"]) {
+            fire(url, "BeforeAgent", #"{\#(base),"hook_event_name":"BeforeAgent","prompt":"x"}"#)
+            fire(url, "SessionEnd", #"{\#(base),"hook_event_name":"SessionEnd","reason":"exit"}"#)
+        }
+        check(!exists("gemini-8d1c-gem"), "SessionEnd drops the hold")
+    }
+
+    func cursorHooks() {
+        configure(); boot()
+        let url = CursorHooks.configURL
+        let seed = #"{"version":1,"hooks":{"beforeShellExecution":[{"command":"./hooks/block-git.sh"}],"stop":[{"command":"./hooks/audit.sh","timeout":5}]}}"#
+        let oldCmd = CursorHooks.command("afterFileEdit", "touch")
+        let old = #"{"version":1,"hooks":{"beforeShellExecution":[{"command":"./hooks/block-git.sh"}],"stop":[{"command":"./hooks/audit.sh","timeout":5}],"afterFileEdit":[{"command":"\#(oldCmd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))"}],"beforeShellExecution2":[{"command":"/x/bin/afkpug-hook touch cursor"}]}}"#
+        integrationBasics(AgentIntegrations.cursor, url: url, seed: seed, events: CursorHooks.events, old: old) {
+            $0.contains("block-git.sh") && $0.contains("audit.sh") && $0.contains("\"version\"")
+        }
+        check(ours(hookCommands(url)["beforeShellExecution"]).isEmpty && ours(hookCommands(url)["preToolUse"]).isEmpty, "no permission hooks of ours (they'd have to answer allow)")
+
+        let base = #""conversation_id":"conv-42","generation_id":"gen-1","model":"claude-4.5-sonnet","model_id":"claude-4.5-sonnet","cursor_version":"2.9.1","workspace_roots":["/Users/u/app"],"user_email":null,"transcript_path":null"#
+        engine.refreshIntegrations()
+        step("beforeSubmitPrompt", expect: ["log: Cursor started working", "disablesleep 1"]) {
+            let out = fire(url, "beforeSubmitPrompt", #"{\#(base),"hook_event_name":"beforeSubmitPrompt","prompt":"refactor","attachments":[]}"#)
+            check(out == "{\"continue\":true}\n", "beforeSubmitPrompt answers {\"continue\":true} (got \(out.debugDescription))")
+        }
+        check(exists("cursor-conv-42"), "hold named after conversation_id")
+        step("afterShellExecution / afterFileEdit / postToolUse touch", forbid: ["finished"]) {
+            for (event, extra) in [("afterShellExecution", #""command":"npm test","output":"ok","duration":1200,"sandbox":false"#),
+                                   ("afterFileEdit", #""file_path":"/Users/u/app/a.ts","edits":[{"old_string":"a","new_string":"b"}]"#),
+                                   ("postToolUse", #""tool_name":"Shell","tool_input":{},"tool_use_id":"t1","cwd":"/Users/u/app","tool_output":"ok","duration":5"#)] {
+                let out = fire(url, event, #"{\#(base),"hook_event_name":"\#(event)",\#(extra)}"#)
+                check(out == "{}\n", "\(event) answers {} (got \(out.debugDescription))")
+            }
+        }
+        noDoubleHold("Cursor Agent", procs: "  9300 1  30.0 cursor-agent\n", holdId: "cursor-conv-42")
+        step("stop completed (finished after 10 s)", ticks: 6, expect: ["log: Cursor finished"]) {
+            check(fire(url, "stop", #"{\#(base),"hook_event_name":"stop","status":"completed","loop_count":0}"#) == "{}\n", "stop answers {} (no followup_message)")
+        }
+        step("stop aborted: released silently", ticks: 6, forbid: ["finished", "error"]) {
+            fire(url, "beforeSubmitPrompt", #"{\#(base),"hook_event_name":"beforeSubmitPrompt","prompt":"x"}"#)
+            fire(url, "stop", #"{\#(base),"hook_event_name":"stop","status":"aborted","loop_count":0}"#)
+        }
+        check(!exists("cursor-conv-42"), "aborted drops the hold")
+        step("stop error: failed event", ticks: 6, expect: ["notify: Cursor stopped with an error"], forbid: ["finished"]) {
+            fire(url, "beforeSubmitPrompt", #"{\#(base),"hook_event_name":"beforeSubmitPrompt","prompt":"x"}"#)
+            fire(url, "stop", #"{\#(base),"hook_event_name":"stop","status":"error","loop_count":0}"#)
+        }
+        // Cursor also runs ~/.claude/settings.json hooks: those count as Cursor, same hold.
+        step("Claude hook run by Cursor counts as Cursor", expect: ["log: Cursor started working"], forbid: ["Claude Code"]) {
+            script(Paths.hookScript, ["start", "claude"], stdin: #"{\#(base),"hook_event_name":"beforeSubmitPrompt","prompt":"x"}"#)
+        }
+        check(exists("cursor-conv-42") && !exists("claude-conv-42"), "same hold as Cursor's own hooks")
+        fire(url, "sessionEnd", #"{\#(base),"hook_event_name":"sessionEnd","session_id":"s-9","reason":"user_close","duration_ms":1000,"final_status":"completed"}"#)
+        check(!exists("cursor-conv-42"), "sessionEnd drops the hold")
+
+        // The app (and its script) gone: the hook still answers valid JSON and exits 0.
+        let moved = Paths.hookScript.appendingPathExtension("moved")
+        try? FileManager.default.moveItem(at: Paths.hookScript, to: moved)
+        let out = fire(url, "beforeSubmitPrompt", #"{\#(base),"hook_event_name":"beforeSubmitPrompt","prompt":"x"}"#)
+        check(out == "{\"continue\":true}\n", "without the script: still {\"continue\":true}, exit 0")
+        try? FileManager.default.moveItem(at: moved, to: Paths.hookScript)
+    }
+
+    func claudePlugin() {
+        configure(); boot()
+        let fm = FileManager.default
+        try? fm.createDirectory(at: ClaudeHooks.pluginsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? #"{"model":"opus"}"#.write(to: ClaudeHooks.settingsURL, atomically: true, encoding: .utf8)
+        do { try ClaudeHooks.install() } catch { fail("install threw \(error)") }
+        check(ClaudeHooks.isInstalled() && !ClaudeHooks.pluginInstalled(), "no plugin: settings.json hooks written")
+        let plugins = #"{"version":2,"plugins":{"afk-pug@afk-pug":[{"scope":"user","installPath":"/Users/u/.claude/plugins/cache/afk-pug/afk-pug/0.3.0","version":"0.3.0"}]}}"#
+        try? plugins.write(to: ClaudeHooks.pluginsURL, atomically: true, encoding: .utf8)
+        check(ClaudeHooks.pluginInstalled(), "plugin detected")
+        check(!AgentIntegrations.claude.needsUpgrade(), "no upgrade offered with the plugin")
+        do { try AgentIntegrations.claude.connect() } catch { fail("connect threw \(error)") }
+        check(!ClaudeHooks.isInstalled() && AgentIntegrations.claude.isConnected(), "plugin installed: settings.json hooks removed, still connected")
+        check((try? String(contentsOf: ClaudeHooks.settingsURL, encoding: .utf8))?.contains("opus") == true, "rest of settings.json kept")
+        var message = ""
+        do { try AgentIntegrations.claude.disconnect() } catch { message = error.localizedDescription }
+        check(message.contains("/plugin"), "disconnect explains how to remove the plugin (\(message))")
+        try? #"{"model":"opus","enabledPlugins":{"afk-pug@afk-pug":false}}"#.write(to: ClaudeHooks.settingsURL, atomically: true, encoding: .utf8)
+        check(!ClaudeHooks.pluginInstalled(), "plugin turned off in enabledPlugins: not counted")
+        try? #"{"version":2,"plugins":{"afk-pug@afk-pug":[{"scope":"project","projectPath":"/x"}]}}"#.write(to: ClaudeHooks.pluginsURL, atomically: true, encoding: .utf8)
+        try? #"{}"#.write(to: ClaudeHooks.settingsURL, atomically: true, encoding: .utf8)
+        check(!ClaudeHooks.pluginInstalled(), "project-scope install only: not counted")
+
+        // The repo's plugin: same events and actions as the settings.json hooks, and its
+        // commands work (fail-safe, silent) against the installed script.
+        let repo = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let hooksURL = repo.appendingPathComponent("plugin/hooks/hooks.json")
+        guard fm.fileExists(atPath: hooksURL.path) else { print("  (plugin/ not found from \(repo.path); run from the repo root to check it)"); return }
+        let commands = hookCommands(hooksURL)
+        for (event, action) in ClaudeHooks.events {
+            let list = commands[event] ?? []
+            check(list.count == 1 && list[0].contains("afkpug-hook\" \(action) claude; true"), "plugin \(event) -> \(action) (got \(list))")
+        }
+        check(Set(commands.keys) == Set(ClaudeHooks.events.map(\.event)), "plugin has no other events")
+        let mcp = (try? Data(contentsOf: repo.appendingPathComponent("plugin/.mcp.json"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let server = (mcp?["mcpServers"] as? [String: Any])?["afkpug"] as? [String: Any]
+        check((server?["command"] as? String) == "/Applications/AFK Pug.app/Contents/MacOS/AFKPug" && (server?["args"] as? [String]) == ["--mcp"], "plugin MCP server runs the app with --mcp")
+        let input = #"{"session_id":"plug-1","hook_event_name":"UserPromptSubmit","prompt":"x"}"#
+        step("plugin UserPromptSubmit command", expect: ["log: Claude Code started working"]) {
+            let r = shell(commands["UserPromptSubmit"]![0], stdin: input)
+            check(r.status == 0 && r.output.isEmpty, "silent, exit 0")
+        }
+        step("plugin Stop command (finished after 10 s)", ticks: 6, expect: ["log: Claude Code finished"]) { shell(commands["Stop"]![0], stdin: input) }
+        let moved = Paths.hookScript.appendingPathExtension("moved")
+        try? fm.moveItem(at: Paths.hookScript, to: moved)
+        let r = shell(commands["UserPromptSubmit"]![0], stdin: input)
+        check(r.status == 0 && r.output.isEmpty, "app not installed: plugin hook does nothing, exit 0")
+        try? fm.moveItem(at: moved, to: Paths.hookScript)
+    }
+
+    /// Claude Code usage limits (StopFailure, error rate_limit): stay awake until the
+    /// reset shown in the message, so Claude can continue on its own.
+    func usageLimit() {
+        configure(["graceMinutes": 2]); boot()
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        func clock(_ date: Date) -> String { df.dateFormat = "h:mma"; return df.string(from: date).lowercased() }
+        let base = #""session_id":"lim-1","transcript_path":"/Users/u/.claude/projects/p/lim-1.jsonl","cwd":"/Users/u/app","hook_event_name":"StopFailure""#
+        func failure(_ error: String, _ message: String, details: String? = nil) -> String {
+            #"{\#(base),"error":"\#(error)",\#(details.map { #""error_details":"\#($0)","# } ?? "")"last_assistant_message":"\#(message)"}"#
+        }
+        let start = #"{"session_id":"lim-1","hook_event_name":"UserPromptSubmit","prompt":"big refactor"}"#
+        func expires() -> TimeInterval? { (holdJSON("claude-lim-1")?["expires"] as? Double).flatMap { $0 > 0 ? $0 : nil } }
+
+        // 1. Session limit, resets in ~2 h.
+        let reset = Date().addingTimeInterval(2 * 3600)
+        let floor = (reset.timeIntervalSince1970 / 60).rounded(.down) * 60
+        step("prompt", expect: ["log: Claude Code started working"]) { script(Paths.hookScript, ["start", "claude"], stdin: start) }
+        step("StopFailure: session limit, resets \(clock(reset))", expect: ["notify: Claude Code stopped with an error"], forbid: ["finished"]) {
+            script(Paths.hookScript, ["fail", "claude"], stdin: failure("rate_limit", "You've hit your session limit · resets \(clock(reset))", details: "429 Too Many Requests"))
+        }
+        let json = holdJSON("claude-lim-1")
+        print("  hold: \(json ?? [:])")
+        check(abs((expires() ?? 0) - (floor + 120)) <= 61, "hold expires at the reset + 2 min (got \(expires() ?? 0), want ~\(floor + 120))")
+        check((json?["reason"] as? String) == "usage limit", "reason usage limit")
+        check(engine.holds.first?.displayName == tr("%@ · waiting for the usage limit to reset", "Claude Code"), "shown as waiting for the reset (\(engine.holds.first?.displayName ?? "-"))")
+        step("close the lid: stays awake through the wait", ticks: 30, every: 60, expect: Self.closeActions, forbid: ["pmset sleepnow", "unmute"]) { Sim.set("lid", "closed") }
+        check(engine.isActive && exists("claude-lim-1"), "still awake 30 min into the wait")
+        step("battery guard still applies during the wait", expect: ["pmset sleepnow"]) { Sim.set("battery", "10 battery") }
+        check(engine.trip != nil, "battery floor trips even with a usage-limit hold")
+        Sim.set("battery", "80 battery"); Sim.set("lid", "open")
+        step("reset passes with no continuation: hold expires, grace, then sleep", ticks: 3, every: 3600) {}
+        check(!exists("claude-lim-1"), "usage-limit hold expired after the reset")
+
+        // 2. Claude continues after the reset: quota_auto_resume_fired re-creates a normal hold.
+        script(Paths.hookScript, ["start", "claude"], stdin: start)
+        script(Paths.hookScript, ["fail", "claude"], stdin: failure("rate_limit", "You've hit your Opus limit · resets \(clock(reset))"))
+        check(expires() != nil, "Opus limit holds too")
+        script(Paths.hookScript, ["notify", "claude"], stdin: #"{"session_id":"lim-1","hook_event_name":"Notification","notification_type":"quota_auto_resume_fired","message":"Usage limit reset · Continuing automatically"}"#)
+        check(exists("claude-lim-1") && expires() == nil, "auto-resume: normal hold again")
+        script(Paths.hookScript, ["fail", "claude"], stdin: failure("rate_limit", "You've hit your session limit · resets \(clock(reset))"))
+        script(Paths.hookScript, ["touch", "claude"], stdin: #"{"session_id":"lim-1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{}}"#)
+        check(exists("claude-lim-1") && expires() == nil, "a tool call after the wait turns it back into a normal hold")
+        script(Paths.hookScript, ["fail", "claude"], stdin: failure("rate_limit", "You've hit your session limit · resets \(clock(reset))"))
+        script(Paths.hookScript, ["notify", "claude"], stdin: #"{"session_id":"lim-1","hook_event_name":"Notification","notification_type":"quota_auto_resume_disabled","message":"x"}"#)
+        check(!exists("claude-lim-1"), "auto-continue off / cancelled: hold dropped")
+
+        // 3. Formats and the other cases.
+        func outcome(_ payload: String) -> TimeInterval? {
+            script(Paths.hookScript, ["start", "claude"], stdin: start)
+            script(Paths.hookScript, ["fail", "claude"], stdin: payload)
+            let left = exists("claude-lim-1") ? (expires().map { $0 - Date().timeIntervalSince1970 } ?? -1) : nil
+            try? FileManager.default.removeItem(at: Paths.holds.appendingPathComponent("claude-lim-1"))
+            return left
+        }
+        let wd = Calendar(identifier: .gregorian).component(.weekday, from: Date())   // 1 = Sunday
+        let days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        let cases: [(String, String, ClosedRange<TimeInterval>?)] = [
+            ("weekly limit 3 days away: released", failure("rate_limit", "You've hit your weekly limit · resets \(days[(wd - 1 + 3) % 7]) 12:00am"), nil),
+            ("weekly limit later today", failure("rate_limit", "You've hit your weekly limit · resets \(days[wd - 1]) \(clock(Date().addingTimeInterval(3 * 3600)))"), (3 * 3600 - 60)...(3 * 3600 + 180)),
+            ("time already passed today = tomorrow (>6 h): released", failure("rate_limit", "You've hit your session limit · resets \(clock(Date().addingTimeInterval(-3600)))"), nil),
+            ("throttle, not a usage limit: released", failure("rate_limit", "API Error: Server is temporarily limiting requests (not your usage limit)"), nil),
+            ("rate limit without a reset time: 30 min", failure("rate_limit", "API Error: Rate limit reached", details: "429 Too Many Requests"), (1790)...(1810)),
+            ("server error: released", failure("server_error", "API Error: 500 Internal server error"), nil),
+            ("authentication failed: released", failure("authentication_failed", "Please run /login"), nil),
+            ("gateway spend cap in UTC", failure("rate_limit", "spend limit reached (daily; resets \(utc(Date().addingTimeInterval(4 * 3600))) UTC)"), (4 * 3600 - 60)...(4 * 3600 + 180)),
+            ("hour only, 'at'", failure("rate_limit", "Usage limit reached · limit resets at \(hourOnly(Date().addingTimeInterval(5400)))"), 1...(5400 + 180)),
+        ]
+        for (label, payload, range) in cases {
+            let got = outcome(payload)
+            if let range { check(got.map { range.contains($0) } == true, "\(label) (expires in \(got.map { Int($0) } ?? -1) s)") }
+            else { check(got == nil, "\(label) (got \(got.map { "hold \(Int($0)) s" } ?? "no hold"))") }
+        }
+        step("events from the failures fire", ticks: 1) {}
+    }
+
+    private func utc(_ date: Date) -> String {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX"); df.timeZone = TimeZone(identifier: "UTC"); df.dateFormat = "yyyy-MM-dd HH:mm"
+        return df.string(from: date)
+    }
+
+    /// "4pm": the next full hour after `date`'s hour.
+    private func hourOnly(_ date: Date) -> String {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX"); df.dateFormat = "ha"
+        return df.string(from: date).lowercased()
     }
 }

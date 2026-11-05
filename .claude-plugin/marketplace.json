@@ -1,0 +1,15 @@
+{
+  "name": "afk-pug",
+  "description": "AFK Pug for Claude Code: keep your Mac awake while agents work",
+  "owner": {
+    "name": "Pug-03",
+    "url": "https://github.com/Pug-03"
+  },
+  "plugins": [
+    {
+      "name": "afk-pug",
+      "source": "./plugin",
+      "description": "Lifecycle hooks and MCP server for the AFK Pug menu bar app (install the app first)"
+    }
+  ]
+}

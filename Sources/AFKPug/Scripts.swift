@@ -1,41 +1,89 @@
 /// Shell scripts AFK Pug writes to ~/.afkpug/bin.
 enum Scripts {
-    /// Called by agent hooks: afkpug-hook start|touch|stop|wait|end <agent>  (hook JSON on stdin)
-    ///   start  UserPromptSubmit: create the hold
-    ///   touch  PreToolUse / PostToolUse: re-arm the hold (recreate it if missing)
-    ///   stop   Stop: drop the hold, "done" event
-    ///   wait   Notification: "waiting" event; the hold stays (work resumes after approval)
-    ///   end    SessionEnd: drop the hold
+    /// Called by agent hooks: afkpug-hook <action> <agent>  (hook JSON on stdin)
+    ///   start  prompt submitted (UserPromptSubmit, BeforeAgent, beforeSubmitPrompt): create the hold
+    ///   touch  tool calls: re-arm the hold (recreate it if missing or if it is a usage-limit hold)
+    ///   stop   turn end (Stop, AfterAgent, Cursor stop): drop the hold, "done" event
+    ///          (Cursor: status "aborted" = end, "error" = fail)
+    ///   notify Claude Notification: by notification_type
+    ///   wait   permission prompt (Gemini Notification, Codex PermissionRequest): "waiting" event, hold kept
+    ///   fail   Claude StopFailure: drop the hold, "failed" event; a usage limit with a reset
+    ///          time keeps an expiring hold until then (so Claude can continue on its own)
+    ///   end    session end / interrupt: drop the hold
+    /// Session id: session_id (Claude, Gemini, Codex) or conversation_id (Cursor).
     static let hook = #"""
     #!/bin/sh
-    # AFK Pug agent hook. Usage: afkpug-hook start|touch|stop|wait|end|notify|fail <agent>
+    # AFK Pug agent hook. Usage: afkpug-hook start|touch|stop|notify|wait|fail|end <agent>
     # Always exits 0 and prints nothing (stdout of UserPromptSubmit becomes context).
     action="$1"; agent="${2:-agent}"
     input=$(head -c 65536 2>/dev/null)
-    # First "session_id" key only (tool_input can contain another one), made file-name safe.
-    sid=$(printf '%s' "$input" | LC_ALL=C grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | LC_ALL=C sed 's/.*"\([^"]*\)"$/\1/')
+    # First match of a string key (tool_input can contain another one).
+    field() { printf '%s' "$input" | LC_ALL=C grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -n 1 | LC_ALL=C sed 's/.*"\([^"]*\)"$/\1/'; }
+    # Cursor also runs Claude Code's hooks from ~/.claude/settings.json: count those as Cursor.
+    [ "$agent" = claude ] && case "$input" in *'"cursor_version"'*) agent=cursor ;; esac
+    case "$agent" in cursor) sid=$(field conversation_id); [ -z "$sid" ] && sid=$(field session_id) ;;
+      *) sid=$(field session_id); [ -z "$sid" ] && sid=$(field conversation_id) ;; esac
     sid=$(printf '%s' "$sid" | LC_ALL=C tr -c 'A-Za-z0-9._-' '_' | cut -c 1-80)
     [ -z "$sid" ] && sid="$PPID"
+    agent=$(printf '%s' "$agent" | LC_ALL=C tr -c 'A-Za-z0-9_' '_' | cut -c 1-40)
     root="$HOME/.afkpug"; mkdir -p "$root/holds" "$root/events" 2>/dev/null
     hold="$root/holds/$agent-$sid"
-    event() { : > "$root/events/$(date +%s)$$-$agent-$1"; }
-    field() { printf '%s' "$input" | LC_ALL=C grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -n 1 | LC_ALL=C sed 's/.*"\([^"]*\)"$/\1/'; }
+    now=$(date +%s)
+    event() { : > "$root/events/$now$$-$agent-$1"; }
     # The agent process that owns this hold (skip an intermediate sh -c), so the
     # app can drop the hold if the agent is killed without running its Stop hook,
     # and keep it while the agent's process tree is busy.
+    # create [expires] [reason]
     create() {
       owner="$PPID"
       case "$(basename "$(ps -o comm= -p "$owner" 2>/dev/null)" 2>/dev/null)" in
         sh|bash|zsh|dash|-sh|-bash|-zsh) owner=$(ps -o ppid= -p "$owner" 2>/dev/null | tr -d ' ') ;;
       esac
       case "$owner" in ''|*[!0-9]*|0|1) owner=0 ;; esac
+      extra=""; [ -n "$2" ] && extra=",\"reason\":\"$2\""
       tmp="$root/holds/.$agent-$sid.$$.tmp"
-      printf '{"agent":"%s","started":%s,"expires":0,"pid":%s}\n' "$agent" "$(date +%s)" "$owner" > "$tmp" && mv -f "$tmp" "$hold"
+      printf '{"agent":"%s","started":%s,"expires":%s,"pid":%s%s}\n' "$agent" "$now" "${1:-0}" "$owner" "$extra" > "$tmp" && mv -f "$tmp" "$hold"
+    }
+    # Epoch of the reset in a usage-limit message ("... · resets 3:45pm",
+    # "resets Mon 12:00am", "resets 2026-08-09 00:00 UTC"), in local time; empty if none.
+    reset_at() {
+      r=$(printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z' | LC_ALL=C sed -n 's/.*resets[[:space:]]*\(at[[:space:]]*\)\{0,1\}//p' | head -n 1 | cut -c 1-40)
+      [ -z "$r" ] && return
+      d=$(printf '%s' "$r" | LC_ALL=C sed -nE 's/^([0-9]{4}-[0-9]{2}-[0-9]{2})[ t]([0-9]{1,2}:[0-9]{2}).*/\1 \2/p')
+      if [ -n "$d" ]; then
+        case "$r" in *utc*|*z\ *|*z) date -u -j -f '%Y-%m-%d %H:%M:%S' "$d:00" +%s 2>/dev/null ;;
+          *) date -j -f '%Y-%m-%d %H:%M:%S' "$d:00" +%s 2>/dev/null ;; esac
+        return
+      fi
+      wd=$(printf '%s' "$r" | LC_ALL=C sed -nE 's/^(mon|tue|wed|thu|fri|sat|sun)[a-z]*,?[[:space:]]+.*/\1/p')
+      [ -n "$wd" ] && r=$(printf '%s' "$r" | LC_ALL=C sed -E 's/^[a-z]+,?[[:space:]]+//')
+      t=$(printf '%s' "$r" | LC_ALL=C sed -nE 's/^([0-9]{1,2})(:([0-9]{2}))?[[:space:]]*(am|pm)?.*/\1 \3 \4/p')
+      [ -z "$t" ] && return
+      set -- $t
+      h=$(expr "$1" + 0); m=0; ap=""
+      case "$2" in [0-9]*) m=$(expr "$2" + 0); ap="$3" ;; *) ap="$2" ;; esac
+      case "$ap" in am) [ "$h" -eq 12 ] && h=0 ;; pm) [ "$h" -lt 12 ] && h=$((h + 12)) ;; esac
+      [ "$h" -gt 23 ] || [ "$m" -gt 59 ] && return
+      at=$(date -j -f '%Y-%m-%d %H:%M:%S' "$(date +%Y-%m-%d) $h:$m:00" +%s 2>/dev/null) || return
+      if [ -n "$wd" ]; then
+        i=1; for w in mon tue wed thu fri sat sun; do [ "$w" = "$wd" ] && break; i=$((i + 1)); done
+        at=$((at + (i - $(date +%u) + 7) % 7 * 86400))
+        [ "$at" -le "$now" ] && at=$((at + 7 * 86400))
+      else
+        [ "$at" -le "$now" ] && at=$((at + 86400))
+      fi
+      echo "$at"
     }
     case "$action" in
       start) create ;;
-      touch) if [ -f "$hold" ]; then touch "$hold"; else create; fi ;;
+      touch)
+        # A usage-limit hold (fixed expiry) turns back into a normal one when work resumes.
+        if [ -f "$hold" ] && LC_ALL=C grep -q '"expires":0,' "$hold"; then touch "$hold"; else create; fi ;;
       stop)
+        [ "$agent" = cursor ] && case "$(field status)" in
+          aborted) rm -f "$hold"; exit 0 ;;                                  # Cursor: user stopped it
+          error) [ -f "$hold" ] && { rm -f "$hold"; event failed; }; exit 0 ;;
+        esac
         # Background shells / builds still running: the session isn't done.
         if printf '%s' "$input" | LC_ALL=C grep -q '"background_tasks"[[:space:]]*:[[:space:]]*\[[[:space:]]*[^][:space:]]'; then
           [ -f "$hold" ] && touch "$hold"
@@ -46,11 +94,34 @@ enum Scripts {
         fi ;;
       notify)
         case "$(field notification_type)" in
-          permission_prompt|elicitation_dialog) [ -f "$hold" ] && event waiting ;;
+          permission_prompt|elicitation_dialog|elicitation_url_dialog) [ -f "$hold" ] && event waiting ;;
           idle_prompt) rm -f "$hold" ;;   # back at the prompt (e.g. after Esc)
+          quota_auto_resume_fired) create ;;   # usage limit reset: Claude continues the task
+          quota_auto_resume_stale|quota_auto_resume_disabled) rm -f "$hold" ;;   # not continuing
         esac ;;
       wait) [ -f "$hold" ] && event waiting ;;
-      fail) [ -f "$hold" ] && { rm -f "$hold"; event failed; } ;;   # StopFailure (API error, rate limit)
+      fail)
+        # StopFailure. A claude.ai usage limit: Claude Code waits and continues the
+        # task after the reset, so stay awake until then (at most 6 h). A plain
+        # throttle ("not your usage limit") or any other API error releases.
+        until=""
+        if [ "$(field error)" = rate_limit ]; then
+          msg="$(field last_assistant_message) $(field error_details)"
+          case "$msg" in
+            *"not your usage limit"*) ;;
+            *) until=$(reset_at "$msg")
+               case "$until" in
+                 ''|*[!0-9]*) until=$((now + 1800)) ;;          # no reset time given: 30 min
+                 *) if [ "$until" -gt $((now + 21600)) ]; then until=""   # weekly limit days away
+                    else until=$((until + 120)); fi ;;          # Claude continues shortly after
+               esac ;;
+          esac
+        fi
+        if [ -n "$until" ]; then
+          create "$until" "usage limit"; event failed
+        elif [ -f "$hold" ]; then
+          rm -f "$hold"; event failed
+        fi ;;
       end) rm -f "$hold" ;;
     esac
     exit 0

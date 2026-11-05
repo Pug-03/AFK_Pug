@@ -574,6 +574,7 @@ final class Engine: ObservableObject {
         // but then nothing counts: no headline, grace or guard.
         let previous = holds
         let scanned = HoldStore.scan(now: now)
+        AgentIntegrations.noteHookHolds(scanned)
         let newHolds = agentMode ? scanned + scanProcesses() : []
         if newHolds != holds { holds = newHolds }
         // Events left from while the app wasn't running would all fire at once.
@@ -656,7 +657,7 @@ final class Engine: ObservableObject {
         for item in pendingDone {
             if holds.contains(where: { $0.agent == item.agent }) { continue }   // resumed: drop it
             if now.timeIntervalSince(item.at) < 10, now >= item.at { keep.append(item); continue }
-            let name = item.agent == "claude" ? "Claude Code" : item.agent
+            let name = AgentIntegrations.displayName(item.agent)
             openSummary?.agentsFinished += 1
             log("checkmark.circle.fill", tr("%@ finished", name))
             if notifyAgents { notify(tr("%@ finished", name), tr("Your agent is done. AFK Pug will let the Mac sleep soon.")) }
@@ -701,7 +702,9 @@ final class Engine: ObservableObject {
         // `ps` costs ~25 ms of CPU; every ~5 s is plenty given the 30 s linger below.
         if now.timeIntervalSince(lastProcScan) >= 5 || now < lastProcScan {
             lastProcScan = now
-            let found = ProcessWatcher.scan()
+            // Agents connected through their own hooks already hold the Mac awake.
+            let hooked = AgentIntegrations.hookedProcessNames(connected: connected)
+            let found = ProcessWatcher.scan().filter { !hooked.contains($0.display) }
             // A released process stays ignored until it exits (not just until it idles).
             ignoredProcs.formIntersection(found.map(\.pid))
             for agent in found where agent.busy && !ignoredProcs.contains(agent.pid) {
@@ -819,7 +822,7 @@ final class Engine: ObservableObject {
 
     private func handleEvents(_ events: [AgentEvent]) {
         for event in events {
-            let name = event.agent == "claude" ? "Claude Code" : event.agent
+            let name = AgentIntegrations.displayName(event.agent)
             switch event.kind {
             case .done:
                 // Confirmed later: a Stop hook may continue the turn right away.

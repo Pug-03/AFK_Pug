@@ -3,7 +3,10 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        MainActor.assumeIsolated { Engine.shared.boot() }
+        MainActor.assumeIsolated {
+            Engine.shared.boot()
+            if Engine.shared.showOnboarding { OnboardingWindow.shared.show() }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -65,6 +68,17 @@ enum Main {
             }
             return
         }
+        if let i = args.firstIndex(of: "--render-onboarding"), i + 1 < args.count {
+            MainActor.assumeIsolated {
+                _ = Engine.shared
+                if let l = args.firstIndex(of: "--lang"), l + 1 < args.count { L10n.language = AppLanguage(rawValue: args[l + 1]) ?? .system }
+                var step = OnboardingWindow.Step.welcome
+                if let s = args.firstIndex(of: "--step"), s + 1 < args.count, let n = Int(args[s + 1]),
+                   let parsed = OnboardingWindow.Step(rawValue: n - 1) { step = parsed }
+                renderOnboarding(to: args[i + 1], step: step)
+            }
+            return
+        }
         if let i = args.firstIndex(of: "--simulate") {
             exit(MainActor.assumeIsolated { Simulation.main(Array(args[(i + 1)...])) })
         }
@@ -83,6 +97,16 @@ enum Main {
     static func renderPreview(to path: String, settings: Bool) {
         let engine = Engine.shared
         let view = RootView(engine: engine, page: settings ? .settings : .home).environment(\.colorScheme, .dark)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        write(renderer.nsImage, to: path)
+    }
+
+    /// Renders one onboarding step (--step 1...4) to a PNG for design review.
+    @MainActor
+    static func renderOnboarding(to path: String, step: OnboardingWindow.Step) {
+        Engine.shared.refreshIntegrations()
+        let view = OnboardingView(engine: Engine.shared, start: step).environment(\.colorScheme, .dark)
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
         write(renderer.nsImage, to: path)

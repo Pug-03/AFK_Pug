@@ -56,15 +56,9 @@ struct SettingsView: View {
                             }
                             .labelsHidden().frame(width: 92)
                         }
-                        Row(symbol: "link", title: "Claude Code",
-                            detail: engine.claudeConnected ? tr("Connected") : tr("Detects when Claude is working")) {
-                            if engine.claudeConnected {
-                                PillButton(title: tr("Disconnect"), style: .soft) { engine.disconnectClaude() }
-                            } else {
-                                PillButton(title: tr("Connect"), style: .primary) { engine.connectClaude() }
-                            }
+                        ForEach(AgentIntegrations.all) { item in
+                            AgentConnectionRow(engine: engine, item: item)
                         }
-                        if let error = engine.claudeError { ErrorText(error).padding(.leading, 30) }
                         ToggleRow(symbol: "magnifyingglass", title: tr("Detect other agents"),
                                   detail: tr("Codex, Gemini CLI, Cursor Agent, Aider, OpenCode and more"), isOn: $engine.detectOtherAgents)
                         Row(symbol: "cpu", title: tr("Let agents keep the Mac awake"),
@@ -112,6 +106,9 @@ struct SettingsView: View {
                                 .toggleStyle(MiniSwitch()).labelsHidden()
                         }
                         if let error = engine.loginError { ErrorText(error).padding(.leading, 30) }
+                        Row(symbol: "hand.wave", title: tr("Show welcome again"), detail: tr("Set up lid-closed mode and agents step by step")) {
+                            PillButton(title: tr("Open"), style: .soft) { OnboardingWindow.shared.show() }
+                        }
                         ToggleRow(symbol: "command", title: tr("⌥⌘A starts or stops AFK"),
                                   detail: tr("Works from any app"), isOn: $engine.hotkeyEnabled)
                         Row(symbol: "globe", title: tr("Language"), detail: "") {
@@ -177,6 +174,7 @@ struct SettingsView: View {
             .frame(maxHeight: .infinity)
         }
         .padding(18)
+        .onAppear { engine.refreshIntegrations() }
     }
 
     private var loginDetail: String {
@@ -235,6 +233,47 @@ private struct Section<Content: View>: View {
 }
 
 // MARK: - Shared components
+
+/// One agent from `AgentIntegrations.all`: connected / not installed / config
+/// path, Connect or Disconnect, and the last error inline.
+struct AgentConnectionRow: View {
+    @ObservedObject var engine: Engine
+    let item: AgentIntegration
+    /// Onboarding only offers Connect and shows "Connected" once done.
+    var allowDisconnect = true
+
+    var body: some View {
+        let connected = engine.connected[item.id] ?? false
+        let available = connected || item.isAvailable()
+        VStack(alignment: .leading, spacing: 6) {
+            Row(symbol: "link", title: item.name, detail: detail(connected: connected, available: available)) {
+                if connected {
+                    if allowDisconnect {
+                        PillButton(title: tr("Disconnect"), style: .soft) { engine.disconnect(item.id) }
+                    } else {
+                        DoneMark(title: tr("Connected"))
+                    }
+                } else if available {
+                    PillButton(title: tr("Connect"), style: .primary) { engine.connect(item.id) }
+                }
+            }
+            .opacity(available ? 1 : 0.6)
+            if let error = engine.integrationErrors[item.id] { ErrorText(error).padding(.leading, 30) }
+            // e.g. Codex only runs new hooks after the user trusts them in /hooks.
+            if connected, let note = item.setupNote {
+                Text(note).font(.system(size: 11)).foregroundStyle(Theme.sub)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 30)
+            }
+        }
+    }
+
+    private func detail(connected: Bool, available: Bool) -> String {
+        if !available { return tr("Not installed") }
+        if connected { return allowDisconnect ? tr("Connected") : item.configPath }
+        return item.configPath
+    }
+}
 
 /// One settings row: icon (18) + 12 + title / detail + trailing control.
 struct Row<Trailing: View>: View {

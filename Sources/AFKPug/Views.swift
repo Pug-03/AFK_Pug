@@ -462,18 +462,15 @@ private struct Modes: View {
                 }
                 .padding(.leading, 30).padding(.bottom, 8)
             }
-            if engine.agentMode, !engine.claudeConnected {
+            if engine.agentMode, needsAgents {
                 HStack(spacing: 8) {
-                    Text(tr("Connect Claude Code to detect work automatically."))
+                    Text(tr("Connect your agents to detect work automatically."))
                         .font(.system(size: 11)).foregroundStyle(Theme.sub)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
-                    PillButton(title: tr("Connect"), style: .soft) { engine.connectClaude() }
+                    PillButton(title: tr("Connect"), style: .soft) { OnboardingWindow.shared.show(step: .agents) }
                 }
-                .padding(.leading, 30).padding(.bottom, engine.claudeError == nil ? 10 : 4)
-                if let error = engine.claudeError {
-                    ErrorText(error).padding(.leading, 30).padding(.bottom, 10)
-                }
+                .padding(.leading, 30).padding(.bottom, 10)
             }
 
             Rectangle().fill(Theme.line).frame(height: 1)
@@ -506,6 +503,12 @@ private struct Modes: View {
                 Toggle(tr("Keep music playing"), isOn: $engine.keepMusic).toggleStyle(MiniSwitch()).labelsHidden()
             }
         }
+    }
+
+    /// No agent is connected, but at least one is installed and could be.
+    private var needsAgents: Bool {
+        guard !engine.connected.values.contains(true) else { return false }
+        return AgentIntegrations.all.contains { $0.isAvailable() }
     }
 
     private var agentDetail: String {

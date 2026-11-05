@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "afkpug": {
+      "command": "/Applications/AFK Pug.app/Contents/MacOS/AFKPug",
+      "args": [
+        "--mcp"
+      ]
+    }
+  }
+}

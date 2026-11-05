@@ -1,0 +1,19 @@
+{
+  "name": "afk-pug",
+  "displayName": "AFK Pug",
+  "version": "0.3.0",
+  "description": "Keeps your MacBook awake (even with the lid closed) while Claude Code works, using the AFK Pug menu bar app. Adds lifecycle hooks and the AFK Pug MCP server.",
+  "author": {
+    "name": "Pug-03",
+    "url": "https://github.com/Pug-03"
+  },
+  "homepage": "https://github.com/Pug-03/AKF_Pug",
+  "repository": "https://github.com/Pug-03/AKF_Pug",
+  "keywords": [
+    "macos",
+    "sleep",
+    "caffeinate",
+    "lid",
+    "afk"
+  ]
+}
