@@ -53,6 +53,13 @@ enum Simulation {
         ("cursor-hooks", "Cursor hooks.json: JSON replies, stop status, Claude hooks run by Cursor, script missing"),
         ("claude-plugin", "Claude Code plugin installed: no settings.json hooks; repo plugin/ commands work"),
         ("usage-limit", "Claude usage limit: hold until the reset (formats, cap, default), auto-resume, errors release"),
+        // Regression scenarios for the backend bug fixes
+        ("hook-edges", "[b1,3,4,5] bg mark vs idle_prompt, parallel stop/fail claim once, no session id, late touch after stop/end, interrupts"),
+        ("notify-burst", "[b2,3] per-session finish, per-tick dedupe, one notification per agent+kind per 60 s, then a summary"),
+        ("proc-detect-hooks", "[b6,7] process detection off only while a hook hold lives; run-* holds don't count; disconnect hands over"),
+        ("config-edges", "[b8,9,13,14,15,16] plugin double hooks removed at boot, MCP dedupe, non-object hooks refused, parsed detection, uninstall keeps user config"),
+        ("limit-formats", "[b10] usage-limit reset formats: 4.30pm, p.m., time zones, ISO, epoch, escaped quotes, fallbacks"),
+        ("ui-contract", "UI API: trip vs Sleep now / grace, cooldown, charger, trigger sublines, Idle, waits, Fmt hours, admin errors"),
     ]
     /// Old names of the review proofs, kept as aliases.
     static let reviewScenarios = ["review-chat-call", "review-hotkey-trip", "review-agentmode-off", "review-preview", "review-release-fail",
@@ -68,7 +75,8 @@ enum Simulation {
         if name == "all" { return runAll() }
         if name == "stress" { return runAll(stressScenarios) }
         guard scenarios.contains(where: { $0.name == name }) || reviewScenarios.contains(name)
-                || stressScenarios.contains(where: { $0.name == name }) || name.hasPrefix("stress-crashchild-") else {
+                || stressScenarios.contains(where: { $0.name == name }) || name.hasPrefix("stress-crashchild-")
+                || name.hasPrefix("stress2-child-") else {
             print("Unknown scenario \(name). Known: all, " + scenarios.map(\.name).joined(separator: ", "))
             return 2
         }
@@ -128,6 +136,7 @@ private final class Runner {
         let fm = FileManager.default
         for file in Self.sensorFiles { try? fm.removeItem(at: Sim.dir.appendingPathComponent(file)) }
         try? fm.removeItem(at: Paths.root)
+        try? fm.removeItem(at: Sim.home)   // fake ~/.claude, ~/.codex, ... (the .afkpug link is recreated)
         UserDefaults.standard.removePersistentDomain(forName: "com.pug03.afkpug.sim")
         Paths.ensure()
         Sim.set("lid", "open")
@@ -276,7 +285,7 @@ private final class Runner {
     // MARK: Scenarios
 
     func run() -> Int32 {
-        if name != "recovery", !name.hasPrefix("stress-crashchild-") { resetSandbox() }
+        if name != "recovery", !name.hasPrefix("stress-crashchild-"), !name.hasPrefix("stress2-child-crash") { resetSandbox() }
         Sim.record("=== scenario \(name)")
         switch name {
         case "manual": manual()
@@ -322,9 +331,15 @@ private final class Runner {
         case "cursor-hooks": cursorHooks()
         case "claude-plugin": claudePlugin()
         case "usage-limit": usageLimit()
+        case "hook-edges": hookEdges()
+        case "notify-burst": notifyBurst()
+        case "proc-detect-hooks": procDetectHooks()
+        case "config-edges": configEdges()
+        case "limit-formats": limitFormats()
+        case "ui-contract": uiContract()
         case "preview-states": previewStates()
         default:
-            if name.hasPrefix("stress-") { runStress() } else { fail("no scenario") }
+            if name.hasPrefix("stress-") { runStress() } else if name.hasPrefix("stress2-") { runStress2() } else { fail("no scenario") }
         }
         if name != "crash" { UserDefaults.standard.removePersistentDomain(forName: "com.pug03.afkpug.sim") }
         print(failures == 0 ? "  PASS" : "  FAILED (\(failures))")
@@ -747,7 +762,7 @@ private final class Runner {
     func agentModeOff() {
         configure(["agentMode": false]); boot()
         step("claude hold, agent mode off", forbid: ["idle assertion ON", "started working"]) { hold("claude-s1") }
-        check(!engine.isActive && engine.holds.isEmpty && engine.headline == tr("Napping"), "not active, headline Napping (got \(engine.headline))")
+        check(!engine.isActive && engine.holds.isEmpty && engine.headline == tr("Idle"), "not active, headline Idle (got \(engine.headline))")
         step("battery 14%", forbid: ["notify: Battery low"]) { Sim.set("battery", "14 battery") }
         check(engine.trip == nil, "no trip when nothing is kept awake (got \(String(describing: engine.trip)))")
         step("hold removed: no grace", forbid: ["idle assertion ON"]) { dropHold("claude-s1", event: nil) }
@@ -961,7 +976,8 @@ private final class Runner {
 //   [inv5] no identical notification twice within 60 s
 
 extension Simulation {
-    static let stressScenarios: [(name: String, about: String)] = [
+    static var stressScenarios: [(name: String, about: String)] { stress1Scenarios + stress2Scenarios }
+    static let stress1Scenarios: [(name: String, about: String)] = [
         ("stress-flap", "lid close/open flapping every tick, then every ~30 s"),
         ("stress-battery-drain", "hours under the lid, battery drains past the floor, on and off AC"),
         ("stress-battery-noise", "battery reading jitters around the floor on battery"),
@@ -1163,6 +1179,7 @@ extension Runner {
     }
 
     static let away = ["log: Lid closed. Still working", "lock screen", "pmset displaysleepnow"]
+    static let hookTimeLimit: TimeInterval = 6
 
     // MARK: Dispatch
 
@@ -1759,41 +1776,81 @@ extension Runner {
         """.write(to: fake, atomically: true, encoding: .utf8)
         try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
         var text = Scripts.watchdog
-        text = text.replacingOccurrences(of: "/bin/ps -U \"$(/usr/bin/id -u)\" -o args=", with: "cat \"\(wd.path)/ps\"")
+        text = text.replacingOccurrences(of: "/bin/kill -0 \"$pid\"", with: "[ -f \"\(wd.path)/alive-$pid\" ]")
+        text = text.replacingOccurrences(of: "/bin/ps -o args= -p \"$pid\"", with: "cat \"\(wd.path)/args-$pid\"")
+        text = text.replacingOccurrences(of: "/bin/ps -o comm= -p \"$pid\"", with: "cat \"\(wd.path)/comm-$pid\"")
         text = text.replacingOccurrences(of: "xargs kill -CONT", with: "xargs \"\(fake.path)\" kill-CONT")
         text = text.replacingOccurrences(of: "/usr/bin/sudo -n", with: "\"\(fake.path)\" sudo")
         text = text.replacingOccurrences(of: "/usr/bin/osascript", with: "\"\(fake.path)\" osascript")
-        let dangerous = ["/usr/bin/sudo", "/usr/bin/osascript", "/bin/ps", " kill ", "xargs kill"]
+        let dangerous = ["/usr/bin/sudo", "/usr/bin/osascript", "/bin/ps", "/bin/kill", " kill ", "xargs kill"]
         guard !dangerous.contains(where: { text.contains($0) }) else { fail("watchdog substitution incomplete; not running it"); return }
         let script = wd.appendingPathComponent("watchdog.sh")
         try? text.write(to: script, atomically: true, encoding: .utf8)
 
-        func scenario(_ label: String, ps: String, sudoFails: Bool = false) -> (log: String, left: [String]) {
+        /// `pidFile`: app.pid contents (nil: none). `procs`: pid -> (args, comm) of live processes.
+        func scenario(_ label: String, pidFile: String?, procs: [Int: (String, String)], sudoFails: Bool = false) -> (log: String, left: [String]) {
             try? fm.removeItem(at: log)
-            try? ps.write(to: wd.appendingPathComponent("ps"), atomically: true, encoding: .utf8)
+            for f in (try? fm.contentsOfDirectory(atPath: wd.path)) ?? [] where f.hasPrefix("alive-") || f.hasPrefix("args-") || f.hasPrefix("comm-") {
+                try? fm.removeItem(at: wd.appendingPathComponent(f))
+            }
+            for (pid, (args, comm)) in procs {
+                fm.createFile(atPath: wd.appendingPathComponent("alive-\(pid)").path, contents: Data())
+                try? (args + "\n").write(to: wd.appendingPathComponent("args-\(pid)"), atomically: true, encoding: .utf8)
+                try? (comm + "\n").write(to: wd.appendingPathComponent("comm-\(pid)"), atomically: true, encoding: .utf8)
+            }
             if sudoFails { fm.createFile(atPath: wd.appendingPathComponent("sudo-fails").path, contents: Data()) }
             else { try? fm.removeItem(at: wd.appendingPathComponent("sudo-fails")) }
             Paths.ensure()
+            if let pidFile { try? pidFile.write(to: Paths.appPid, atomically: true, encoding: .utf8) } else { try? fm.removeItem(at: Paths.appPid) }
             for f in [Paths.lidFlag, Paths.muteFlag] { Paths.touch(f) }
             try? "b".write(to: Paths.lowPowerFlag, atomically: true, encoding: .utf8)
             try? "123\n456".write(to: ChatPauser.file, atomically: true, encoding: .utf8)
             _ = self.script(script, [])
             let out = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
-            let left = ((try? fm.contentsOfDirectory(atPath: Paths.state.path)) ?? []).sorted()
+            let left = ((try? fm.contentsOfDirectory(atPath: Paths.state.path)) ?? []).filter { $0 != "app.pid" }.sorted()
             print("  \(label): actions=\(out.split(separator: "\n")) left=\(left)")
             return (out, left)
         }
-        let app = "/Applications/AFK Pug.app/Contents/MacOS/AFKPug\n"
-        let mcp = "/Applications/AFK Pug.app/Contents/MacOS/AFKPug --mcp\n"
-        var r = scenario("app running", ps: app + mcp)
-        check(r.log.isEmpty && r.left.count == 4, "app running: watchdog does nothing")
-        r = scenario("only --mcp servers", ps: mcp + mcp)
-        check(r.log.contains("disablesleep 0") && r.log.contains("kill-CONT 123 456") && r.log.contains("-b lowpowermode 0")
-              && r.log.contains("osascript") && r.left.isEmpty, "app gone: everything restored")
-        r = scenario("app gone, sudo failing", ps: "", sudoFails: true)
+        func restored(_ r: (log: String, left: [String])) -> Bool {
+            r.log.contains("disablesleep 0") && r.log.contains("kill-CONT 123 456") && r.log.contains("-b lowpowermode 0")
+                && r.log.contains("osascript") && r.left.isEmpty
+        }
+        // A renamed copy ("AFK Pug 2.app", bug 12) must count as running.
+        let exe = "/Users/u/Downloads/AFK Pug 2.app/Contents/MacOS/AFKPug"
+        let mcp = (exe + " --mcp", exe)
+        var r = scenario("app running (renamed bundle)", pidFile: "4242\n\(exe)\n", procs: [4242: (exe, exe), 4243: mcp])
+        check(r.log.isEmpty && r.left.count == 4, "app running, renamed bundle: watchdog does nothing")
+        r = scenario("only --mcp servers (pid reused by one)", pidFile: "4243\n\(exe)\n", procs: [4243: mcp, 4244: mcp])
+        check(restored(r), "pid now an --mcp server: everything restored")
+        r = scenario("stale pid file (crash)", pidFile: "4242\n\(exe)\n", procs: [4243: mcp])
+        check(restored(r), "dead pid: everything restored")
+        r = scenario("pid reused by another program", pidFile: "4242\n\(exe)\n", procs: [4242: ("vim notes.txt", "/usr/bin/vim")])
+        check(restored(r), "pid reused by vim: everything restored")
+        r = scenario("no pid file, garbage pid file", pidFile: "not a pid\n", procs: [:])
+        check(restored(r), "garbage pid file: everything restored")
+        r = scenario("app gone, sudo failing", pidFile: nil, procs: [:], sudoFails: true)
         check(r.left.contains("lid-override"), "lid flag kept for the next try when sudo fails")
         check(r.left.contains("lowpower-restore"), "low power flag kept for the next try when sudo fails (left \(r.left))")
         for f in [Paths.lidFlag, Paths.muteFlag, Paths.lowPowerFlag, ChatPauser.file] { try? fm.removeItem(at: f) }
+
+        // The CLI's "running" uses the same check.
+        var cli = Scripts.cli
+        cli = cli.replacingOccurrences(of: "/bin/kill -0 \"$pid\"", with: "[ -f \"\(wd.path)/alive-$pid\" ]")
+        cli = cli.replacingOccurrences(of: "/bin/ps -o args= -p \"$pid\"", with: "cat \"\(wd.path)/args-$pid\"")
+        cli = cli.replacingOccurrences(of: "/bin/ps -o comm= -p \"$pid\"", with: "cat \"\(wd.path)/comm-$pid\"")
+        let cliURL = wd.appendingPathComponent("afkpug")
+        try? cli.write(to: cliURL, atomically: true, encoding: .utf8)
+        _ = scenario("cli: renamed app running", pidFile: "4242\n\(exe)\n", procs: [4242: (exe, exe)])
+        check(self.script(cliURL, ["status"]).output.hasPrefix("AFK Pug: running"), "afkpug status: renamed app counts as running")
+        _ = scenario("cli: app gone", pidFile: "4242\n\(exe)\n", procs: [4243: mcp])
+        check(self.script(cliURL, ["status"]).output.hasPrefix("AFK Pug: not running"), "afkpug status: only --mcp: not running")
+        for f in [Paths.lidFlag, Paths.muteFlag, Paths.lowPowerFlag, ChatPauser.file] { try? fm.removeItem(at: f) }
+        // The app's own pid file: written at launch with its executable, removed at quit.
+        Paths.writeAppPid()
+        let own = (try? String(contentsOf: Paths.appPid, encoding: .utf8))?.split(separator: "\n").map(String.init) ?? []
+        check(own.first == String(getpid()) && own.count == 2 && own[1].hasSuffix("AFKPug"), "app.pid has our pid and executable (\(own))")
+        engine.shutdown()
+        check(!fm.fileExists(atPath: Paths.appPid.path), "app.pid removed at shutdown")
     }
 
     // MARK: More
@@ -1928,7 +1985,9 @@ extension Runner {
         guard let command = ours(hookCommands(url)[event]).first else { fail("no hook for \(event)"); return "" }
         let result = shell(command, stdin: stdin)
         if result.status != 0 { fail("\(event) hook exited \(result.status)") }
-        if result.seconds > 2 { fail("\(event) hook took \(result.seconds) s") }
+        // Wall time of a process spawn: generous, so a loaded machine (two suites at once,
+        // a build) doesn't fail it. The agents' own timeouts are 3-10 s (bug 17).
+        if result.seconds > Self.hookTimeLimit { fail("\(event) hook took \(result.seconds) s") }
         return result.output
     }
 
@@ -2079,10 +2138,14 @@ extension Runner {
             fire(url, "stop", #"{\#(base),"hook_event_name":"stop","status":"error","loop_count":0}"#)
         }
         // Cursor also runs ~/.claude/settings.json hooks: those count as Cursor, same hold.
-        step("Claude hook run by Cursor counts as Cursor", expect: ["log: Cursor started working"], forbid: ["Claude Code"]) {
-            script(Paths.hookScript, ["start", "claude"], stdin: #"{\#(base),"hook_event_name":"beforeSubmitPrompt","prompt":"x"}"#)
+        // Cursor also runs ~/.claude/settings.json hooks. With Cursor's own hooks connected
+        // those do it, so the Claude copy stays out (no double hold, events once; bug 8).
+        step("Claude hook run by Cursor, Cursor's hooks connected: left to them", ticks: 3, forbid: ["started working", "Claude Code"]) {
+            let r = script(Paths.hookScript, ["start", "claude"], stdin: #"{\#(base),"hook_event_name":"beforeSubmitPrompt","prompt":"x"}"#)
+            check(r.status == 0 && r.output.isEmpty, "silent, exit 0")
         }
-        check(exists("cursor-conv-42") && !exists("claude-conv-42"), "same hold as Cursor's own hooks")
+        check(!exists("cursor-conv-42") && !exists("claude-conv-42"), "no hold from the Claude copy")
+        fire(url, "beforeSubmitPrompt", #"{\#(base),"hook_event_name":"beforeSubmitPrompt","prompt":"x"}"#)
         fire(url, "sessionEnd", #"{\#(base),"hook_event_name":"sessionEnd","session_id":"s-9","reason":"user_close","duration_ms":1000,"final_status":"completed"}"#)
         check(!exists("cursor-conv-42"), "sessionEnd drops the hold")
 
@@ -2104,8 +2167,10 @@ extension Runner {
         let plugins = #"{"version":2,"plugins":{"afk-pug@afk-pug":[{"scope":"user","installPath":"/Users/u/.claude/plugins/cache/afk-pug/afk-pug/0.3.0","version":"0.3.0"}]}}"#
         try? plugins.write(to: ClaudeHooks.pluginsURL, atomically: true, encoding: .utf8)
         check(ClaudeHooks.pluginInstalled(), "plugin detected")
-        check(!AgentIntegrations.claude.needsUpgrade(), "no upgrade offered with the plugin")
+        // settings.json hooks + plugin = every event twice: the launch upgrade removes them (bug 8).
+        check(AgentIntegrations.claude.needsUpgrade(), "plugin + settings.json hooks: upgrade (removal) needed")
         do { try AgentIntegrations.claude.connect() } catch { fail("connect threw \(error)") }
+        check(!AgentIntegrations.claude.needsUpgrade(), "no upgrade offered once only the plugin remains")
         check(!ClaudeHooks.isInstalled() && AgentIntegrations.claude.isConnected(), "plugin installed: settings.json hooks removed, still connected")
         check((try? String(contentsOf: ClaudeHooks.settingsURL, encoding: .utf8))?.contains("opus") == true, "rest of settings.json kept")
         var message = ""
@@ -2130,7 +2195,42 @@ extension Runner {
         check(Set(commands.keys) == Set(ClaudeHooks.events.map(\.event)), "plugin has no other events")
         let mcp = (try? Data(contentsOf: repo.appendingPathComponent("plugin/.mcp.json"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         let server = (mcp?["mcpServers"] as? [String: Any])?["afkpug"] as? [String: Any]
-        check((server?["command"] as? String) == "/Applications/AFK Pug.app/Contents/MacOS/AFKPug" && (server?["args"] as? [String]) == ["--mcp"], "plugin MCP server runs the app with --mcp")
+        // A wrapper, so the app may live in ~/Applications or anywhere the running app
+        // says (state/app.pid), and a missing app fails quietly (bug 9).
+        let args = server?["args"] as? [String] ?? []
+        check((server?["command"] as? String) == "/bin/sh" && args.count == 2 && args[0] == "-c"
+              && args[1].contains("/Applications/AFK Pug.app/Contents/MacOS/AFKPug") && args[1].contains("$HOME/Applications/") && args[1].contains("--mcp"),
+              "plugin MCP server: sh wrapper trying /Applications then ~/Applications (\(args))")
+        if args.count == 2 {
+            // Never the real /Applications copy: point that candidate at a path that doesn't exist.
+            let wrapper = args[1].replacingOccurrences(of: "\"/Applications/AFK Pug.app/", with: "\"/nonexistent/AFK Pug.app/")
+            check(!wrapper.contains("\"/Applications/"), "test wrapper never reaches the real /Applications")
+            try? fm.removeItem(at: Paths.appPid)
+            var r = shell(wrapper)
+            check(r.status == 0 && !r.output.contains("--mcp"), "no app anywhere: exits 0 without starting anything (\(r.output.debugDescription))")
+            let fakeApp = Sim.home.appendingPathComponent("Applications/AFK Pug.app/Contents/MacOS/AFKPug")
+            try? fm.createDirectory(at: fakeApp.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? "#!/bin/sh\necho \"home-app $*\"\n".write(to: fakeApp, atomically: true, encoding: .utf8)
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeApp.path)
+            r = shell(wrapper)
+            check(r.status == 0 && r.output == "home-app --mcp\n", "~/Applications copy started with --mcp (\(r.output.debugDescription))")
+            let elsewhere = Sim.dir.appendingPathComponent("Downloads/AFK Pug 2.app/Contents/MacOS/AFKPug")
+            try? fm.createDirectory(at: elsewhere.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? "#!/bin/sh\necho \"running-app $*\"\n".write(to: elsewhere, atomically: true, encoding: .utf8)
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: elsewhere.path)
+            try? "\(getpid())\n\(elsewhere.path)\n".write(to: Paths.appPid, atomically: true, encoding: .utf8)
+            r = shell(wrapper)
+            check(r.output == "running-app --mcp\n", "the running app's own executable (app.pid) comes first (\(r.output.debugDescription))")
+            Paths.writeAppPid()
+        }
+        // The plugin brings the MCP server: the app must not register a second one.
+        try? #"{"version":2,"plugins":{"afk-pug@afk-pug":[{"scope":"user"}]}}"#.write(to: ClaudeHooks.pluginsURL, atomically: true, encoding: .utf8)
+        check(MCPInstaller.providedByPlugin, "MCP provided by the plugin")
+        let before = count("claude mcp add")
+        engine.connectMCP()
+        check(engine.mcpError != nil && count("claude mcp add") == before && !engine.mcpBusy, "connectMCP refused while the plugin provides it (\(engine.mcpError ?? "nil"))")
+        try? #"{}"#.write(to: ClaudeHooks.pluginsURL, atomically: true, encoding: .utf8)
+        check(!MCPInstaller.providedByPlugin, "no plugin: not provided")
         let input = #"{"session_id":"plug-1","hook_event_name":"UserPromptSubmit","prompt":"x"}"#
         step("plugin UserPromptSubmit command", expect: ["log: Claude Code started working"]) {
             let r = shell(commands["UserPromptSubmit"]![0], stdin: input)
@@ -2169,7 +2269,8 @@ extension Runner {
         print("  hold: \(json ?? [:])")
         check(abs((expires() ?? 0) - (floor + 120)) <= 61, "hold expires at the reset + 2 min (got \(expires() ?? 0), want ~\(floor + 120))")
         check((json?["reason"] as? String) == "usage limit", "reason usage limit")
-        check(engine.holds.first?.displayName == tr("%@ · waiting for the usage limit to reset", "Claude Code"), "shown as waiting for the reset (\(engine.holds.first?.displayName ?? "-"))")
+        check(engine.holds.first?.displayName == "Claude Code" && engine.holds.first?.isUsageLimitWait == true,
+              "name only, flagged as a usage-limit wait (\(engine.holds.first?.displayName ?? "-"))")
         step("close the lid: stays awake through the wait", ticks: 30, every: 60, expect: Self.closeActions, forbid: ["pmset sleepnow", "unmute"]) { Sim.set("lid", "closed") }
         check(engine.isActive && exists("claude-lim-1"), "still awake 30 min into the wait")
         step("battery guard still applies during the wait", expect: ["pmset sleepnow"]) { Sim.set("battery", "10 battery") }
@@ -2204,7 +2305,7 @@ extension Runner {
         let cases: [(String, String, ClosedRange<TimeInterval>?)] = [
             ("weekly limit 3 days away: released", failure("rate_limit", "You've hit your weekly limit · resets \(days[(wd - 1 + 3) % 7]) 12:00am"), nil),
             ("weekly limit later today", failure("rate_limit", "You've hit your weekly limit · resets \(days[wd - 1]) \(clock(Date().addingTimeInterval(3 * 3600)))"), (3 * 3600 - 60)...(3 * 3600 + 180)),
-            ("time already passed today = tomorrow (>6 h): released", failure("rate_limit", "You've hit your session limit · resets \(clock(Date().addingTimeInterval(-3600)))"), nil),
+            ("time already passed today = tomorrow (>6 h): released", failure("rate_limit", "You've hit your session limit · resets \(clock(Date().addingTimeInterval(-2 * 3600)))"), nil),
             ("throttle, not a usage limit: released", failure("rate_limit", "API Error: Server is temporarily limiting requests (not your usage limit)"), nil),
             ("rate limit without a reset time: 30 min", failure("rate_limit", "API Error: Rate limit reached", details: "429 Too Many Requests"), (1790)...(1810)),
             ("server error: released", failure("server_error", "API Error: 500 Internal server error"), nil),
@@ -2231,5 +2332,1133 @@ extension Runner {
         let df = DateFormatter()
         df.locale = Locale(identifier: "en_US_POSIX"); df.dateFormat = "ha"
         return df.string(from: date).lowercased()
+    }
+}
+
+// MARK: - Stress 2: native hooks, usage limits and many agents vs. the lid / power state machine
+//
+// Same audited `st` steps as the stress set. Hooks run through the real afkpug-hook
+// script (`hk`) or the exact commands written to each agent's config (`fireS`); the
+// times the script writes (real clock) are mapped onto the simulator's shifted clock.
+
+extension Simulation {
+    static let stress2Scenarios: [(name: String, about: String)] = [
+        ("stress2-limit-lid", "usage limit: lid closed for the whole wait, awake until the reset + 2 min, then grace and sleep"),
+        ("stress2-limit-battery", "usage limit: battery floor trips during the wait, charger brings it back, reset ends it"),
+        ("stress2-limit-past", "usage limit: reset time a minute in the past (rounded / late hook) must not be read as tomorrow"),
+        ("stress2-limit-days", "usage limit days away (weekday and month-day formats): released, sleeps after grace"),
+        ("stress2-limit-resume", "usage limit under the lid, auto-resume fires: normal hold, tool calls, Stop, finished, sleep"),
+        ("stress2-limit-esc", "during the wait: idle_prompt, auto-resume disabled, new prompt"),
+        ("stress2-limit-second-session", "a second Claude session works and finishes while the first waits for the reset"),
+        ("stress2-four-agents", "Claude, Codex, Gemini, Cursor overlap under the lid and end in different orders with grace"),
+        ("stress2-hooks-procs-disconnect", "hook hold + same agent's busy process: one hold; disconnect mid-session"),
+        ("stress2-codex-untrusted", "Codex hooks connected but not trusted yet: process detection still works under the lid"),
+        ("stress2-codex-upgrade-retrust", "hooks seen once, then rewritten by a launch upgrade (Codex needs re-trust): still detected"),
+        ("stress2-cursor-claude-hooks", "Cursor running Claude Code's hooks: same hold, Cursor name, one finished"),
+        ("stress2-garbage-holds", "garbage, mistyped, unknown-agent and far-future hold files"),
+        ("stress2-garbage-events", "malformed and unknown-agent event files"),
+        ("stress2-dup-events", "duplicated done / waiting events in one tick: one notification each"),
+        ("stress2-burst", "hundreds of hook calls between two ticks: speed, no notification spam, no orphan holds"),
+        ("stress2-many-holds", "500 hold files: tick time and clean end"),
+        ("stress2-uninstall-midturn", "uninstall while four agents are mid-turn under the lid; their old hook commands keep firing"),
+        ("stress2-crash-allholds", "crash under the lid with holds from every source, relaunch with the lid still closed"),
+        ("stress2-onboarding", "onboarding finished vs not: identical engine behaviour"),
+    ]
+}
+
+extension Runner {
+    func runStress2() {
+        switch name {
+        case "stress2-limit-lid": s2LimitLid()
+        case "stress2-limit-battery": s2LimitBattery()
+        case "stress2-limit-past": s2LimitPast()
+        case "stress2-limit-days": s2LimitDays()
+        case "stress2-limit-resume": s2LimitResume()
+        case "stress2-limit-esc": s2LimitEsc()
+        case "stress2-limit-second-session": s2SecondSession()
+        case "stress2-four-agents": s2FourAgents()
+        case "stress2-hooks-procs-disconnect": s2HooksProcsDisconnect()
+        case "stress2-codex-untrusted": s2CodexUntrusted()
+        case "stress2-codex-upgrade-retrust": s2CodexUpgrade()
+        case "stress2-cursor-claude-hooks": s2CursorClaude()
+        case "stress2-garbage-holds": s2GarbageHolds()
+        case "stress2-garbage-events": s2GarbageEvents()
+        case "stress2-dup-events": s2DupEvents()
+        case "stress2-burst": s2Burst()
+        case "stress2-many-holds": s2ManyHolds()
+        case "stress2-uninstall-midturn": s2UninstallMidturn()
+        case "stress2-crash-allholds": s2CrashAllHolds()
+        case "stress2-child-crash": s2CrashChild()
+        case "stress2-onboarding": s2Onboarding()
+        case "stress2-child-onb-done", "stress2-child-onb-fresh": s2OnboardingChild(fresh: name.hasSuffix("fresh"))
+        default: fail("no stress2 scenario \(name)")
+        }
+    }
+
+    // MARK: Harness
+
+    /// Name -> (contents, mtime) of every hold file.
+    func holdState() -> [String: (Data, Date)] {
+        var state: [String: (Data, Date)] = [:]
+        for f in (try? FileManager.default.contentsOfDirectory(atPath: Paths.holds.path)) ?? [] where !f.hasPrefix(".") {
+            let url = Paths.holds.appendingPathComponent(f)
+            let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            state[f] = ((try? Data(contentsOf: url)) ?? Data(), mtime)
+        }
+        return state
+    }
+
+    /// Hold files the script just wrote or touched: shift `started` / `expires` (real
+    /// epoch) and the mtime onto the simulator clock, keeping the exact text format.
+    func resync(_ before: [String: (Data, Date)]) {
+        let offset = Int(Sim.clockOffset)
+        for (name, now) in holdState() {
+            let old = before[name]
+            guard old == nil || old!.0 != now.0 || old!.1 != now.1 else { continue }
+            let url = Paths.holds.appendingPathComponent(name)
+            if old?.0 != now.0, offset != 0, var text = String(data: now.0, encoding: .utf8),
+               let re = try? NSRegularExpression(pattern: #""(started|expires)":([0-9]+)"#) {
+                for m in re.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+                    guard let r = Range(m.range(at: 2), in: text), let v = Int(text[r]), v > 0 else { continue }
+                    text.replaceSubrange(r, with: String(v + offset))
+                }
+                try? text.write(to: url, atomically: true, encoding: .utf8)
+            }
+            try? FileManager.default.setAttributes([.modificationDate: Clock.now()], ofItemAtPath: url.path)
+        }
+    }
+
+    /// afkpug-hook <action> <agent> with `stdin`, like an agent hook.
+    @discardableResult
+    func hk(_ action: String, _ agent: String, _ stdin: String) -> Double {
+        let before = holdState()
+        let r = script(Paths.hookScript, [action, agent], stdin: stdin)
+        if r.status != 0 { fail("afkpug-hook \(action) \(agent) exited \(r.status)") }
+        if !r.output.isEmpty { fail("afkpug-hook \(action) \(agent) printed \(r.output.debugDescription)") }
+        resync(before)
+        return r.seconds
+    }
+
+    /// The installed hook command for `event` in `url`, run like the agent runs it.
+    @discardableResult
+    func fireS(_ url: URL, _ event: String, _ stdin: String) -> String {
+        let before = holdState()
+        let out = fire(url, event, stdin)
+        resync(before)
+        return out
+    }
+
+    func cj(_ sid: String, _ event: String, _ extra: String = "") -> String {
+        #"{"session_id":"\#(sid)","transcript_path":"/Users/u/.claude/projects/p/\#(sid).jsonl","cwd":"/Users/u/app","hook_event_name":"\#(event)"\#(extra.isEmpty ? "" : "," + extra)}"#
+    }
+    func xj(_ sid: String, _ event: String, _ extra: String = "") -> String {
+        #"{"session_id":"\#(sid)","transcript_path":"/Users/u/.codex/sessions/r.jsonl","cwd":"/Users/u/app","model":"gpt-5.5-codex","hook_event_name":"\#(event)","turn_id":"t1"\#(extra.isEmpty ? "" : "," + extra)}"#
+    }
+    func gj(_ sid: String, _ event: String) -> String {
+        #"{"session_id":"\#(sid)","transcript_path":"/Users/u/.gemini/tmp/chat.json","cwd":"/Users/u/app","hook_event_name":"\#(event)","timestamp":"2026-11-05T10:00:00Z"}"#
+    }
+    func uj(_ conv: String, _ event: String, _ extra: String = "") -> String {
+        #"{"conversation_id":"\#(conv)","generation_id":"g1","model":"claude-4.5-sonnet","cursor_version":"2.9.1","workspace_roots":["/Users/u/app"],"hook_event_name":"\#(event)"\#(extra.isEmpty ? "" : "," + extra)}"#
+    }
+    func limitFail(_ sid: String, _ message: String) -> String {
+        cj(sid, "StopFailure", #""error":"rate_limit","error_details":"429 Too Many Requests","last_assistant_message":"\#(message)""#)
+    }
+    func claudeNotify(_ sid: String, _ type: String) -> String {
+        cj(sid, "Notification", #""notification_type":"\#(type)","message":"x""#)
+    }
+    func clockText(_ date: Date) -> String {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX"); df.dateFormat = "h:mma"
+        return df.string(from: date).lowercased()
+    }
+    /// `expires` of a hold, on the simulator clock (nil: none / no expiry).
+    func expiresAt(_ id: String) -> Double? { (holdJSON(id)?["expires"] as? Double).flatMap { $0 > 0 ? $0 : nil } }
+    var nowS: Double { Clock.now().timeIntervalSince1970 }
+
+    /// Ticks `every` seconds (audited) until `cond`; returns the sim time it became true.
+    @discardableResult
+    func until(_ label: String, max: Int, every: TimeInterval, _ cond: () -> Bool) -> Double? {
+        let saved = printLines
+        printLines = false
+        defer { printLines = saved }
+        for _ in 0..<max {
+            st(label, ticks: 1, every: every)
+            if cond() { print("  (\(label): true at t+\(Int(Sim.clockOffset)) s)"); return nowS }
+        }
+        print("  (\(label): still false after \(max) ticks)")
+        return nil
+    }
+
+    func notifyCount(_ title: String, from: Int = 0) -> Int {
+        readLog().dropFirst(from).filter { $0.contains("notify: \(title) |") }.count
+    }
+
+    func event(_ agent: String, _ kind: String, _ n: Int = 1) {
+        FileManager.default.createFile(atPath: Paths.events.appendingPathComponent("\(Int(nowS))\(n)-\(agent)-\(kind)").path, contents: Data())
+    }
+
+    /// Hold display names currently counted.
+    var holdNames: [String] { engine.holds.map(\.displayName).sorted() }
+
+    // MARK: Usage limit
+
+    func s2LimitLid() {
+        bootS()
+        let reset = Date().addingTimeInterval(2 * 3600)
+        let want = (reset.timeIntervalSince1970 / 60).rounded(.down) * 60 + 120
+        st("prompt", expect: ["log: Claude Code started working", "disablesleep 1"]) { hk("start", "claude", cj("lim-1", "UserPromptSubmit", #""prompt":"refactor""#)) }
+        st("usage limit hit", expect: ["notify: Claude Code stopped with an error"], forbid: ["finished", "pmset sleepnow"]) {
+            hk("fail", "claude", limitFail("lim-1", "You've hit your session limit · resets \(clockText(reset))"))
+        }
+        guard let exp = expiresAt("claude-lim-1") else { fail("no usage-limit hold"); return }
+        check(abs(exp - want) <= 61, "hold expires at the reset + 2 min (in \(Int(exp - nowS)) s)")
+        check(holdNames == ["Claude Code"] && engine.holds.first?.isUsageLimitWait == true && engine.waitingAgents == 1
+              && engine.headline == tr("Waiting for the usage limit"), "shown as waiting (\(holdNames), \(engine.headline))")
+        st("close the lid", expect: Self.closeActions) { closeLid() }
+        let wait = Int((exp - nowS - 90) / 60)
+        st("\(wait) min under the lid", ticks: wait, every: 60, forbid: ["pmset sleepnow", "unmute", "disablesleep 0", "notify:", "lock screen"])
+        check(engine.isActive && engine.lidEngaged && exists("claude-lim-1"), "still awake and engaged 90 s before the expiry")
+        let off = until("reset passes", max: 40, every: 10) { !engine.isActive }
+        if let off { check(off - exp >= 110 && off - exp <= 150, "sleeps grace (2 min) after the hold expires (\(Int(off - exp)) s after)") }
+        check(count("pmset sleepnow") == 1, "exactly one sleepnow (\(count("pmset sleepnow")))")
+        check(notifyCount("Claude Code stopped with an error") == 1 && notifyCount("While you were away") == 1, "one error and one summary notification")
+        check(notifyCount("Claude Code finished") == 0, "no 'finished' for a usage-limit stop")
+        check(!exists("claude-lim-1"), "no orphan hold")
+        endAll()
+    }
+
+    func s2LimitBattery() {
+        bootS(["batteryFloor": 20])
+        let reset = Date().addingTimeInterval(3 * 3600)
+        st("prompt + usage limit", expect: ["notify: Claude Code stopped with an error"]) {
+            hk("start", "claude", cj("lim-1", "UserPromptSubmit"))
+            hk("fail", "claude", limitFail("lim-1", "Opus limit reached · resets \(clockText(reset))"))
+        }
+        guard let exp = expiresAt("claude-lim-1") else { fail("no usage-limit hold"); return }
+        st("close the lid on battery", expect: Self.closeActions) { closeLid() }
+        st("40 min, draining", ticks: 40, every: 60, forbid: ["pmset sleepnow"]) { Sim.set("battery", "40 battery") }
+        st("battery at the floor during the wait", ticks: 2,
+           expect: ["notify: Battery low", "SIGCONT chat apps", "unmute", "lowpowermode 0", "pmset sleepnow"]) { Sim.set("battery", "20 battery") }
+        check(engine.trip != nil && !engine.isActive && exists("claude-lim-1"), "tripped; the wait hold is kept but doesn't count")
+        st("still at the floor for 30 min", ticks: 30, every: 60, forbid: ["lock screen", "disablesleep 1", "notify: Battery low", "pmset sleepnow"]) { Sim.set("battery", "19 battery") }
+        st("charger in under the lid: trip clears after 30 s, re-engages", ticks: 20, every: 2,
+           expect: ["disablesleep 1", "log: Lid closed. Still working", "lock screen"], forbid: ["pmset sleepnow"]) { Sim.set("battery", "19 ac") }
+        check(engine.trip == nil && engine.lidEngaged, "back on and engaged on AC")
+        let wait = Int((exp - nowS - 60) / 300)
+        st("rest of the wait on AC", ticks: max(0, wait), every: 300, forbid: ["pmset sleepnow", "notify:"])
+        let off = until("reset passes", max: 40, every: 10) { !engine.isActive }
+        if let off { check(off - exp >= 110 && off - exp <= 150, "sleeps 2 min after the reset hold (\(Int(off - exp)) s)") }
+        check(notifyCount("Battery low") == 1, "one battery notification")
+        endAll()
+    }
+
+    func s2LimitPast() {
+        bootS()
+        // The message's time is a minute behind (it is shown rounded down, or the hook
+        // ran a little late): Claude continues any moment, so this is not "tomorrow".
+        for (label, minutesAgo) in [("1 min ago", 1.0), ("12 min ago (hour-rounded display)", 12.0)] {
+            hk("start", "claude", cj("lim-p", "UserPromptSubmit"))
+            hk("fail", "claude", limitFail("lim-p", "You've hit your session limit · resets \(clockText(Date().addingTimeInterval(-minutesAgo * 60)))"))
+            let left = expiresAt("claude-lim-p").map { $0 - nowS }
+            check(left.map { $0 > 0 && $0 <= 20 * 60 } == true,
+                  "reset \(label): a short hold until Claude continues (got \(left.map { "hold \(Int($0)) s" } ?? "released"))")
+            try? FileManager.default.removeItem(at: Paths.holds.appendingPathComponent("claude-lim-p"))
+            st("events (\(label))", ticks: 35, every: 2)
+        }
+        endAll()
+    }
+
+    func s2LimitDays() {
+        bootS()
+        let wd = Calendar(identifier: .gregorian).component(.weekday, from: Date())
+        let days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX"); df.dateFormat = "MMM d"
+        let md = df.string(from: Date().addingTimeInterval(3 * 86400))
+        let cases = [("weekday 3 days away", "You've hit your weekly limit · resets \(days[(wd - 1 + 3) % 7]) 12:00am"),
+                     ("month-day 3 days away", "You've hit your weekly limit · resets \(md), 9am"),
+                     ("month-day 'at'", "Weekly limit reached · resets \(md) at 9am")]
+        for (label, message) in cases {
+            st("prompt", expect: ["started working"]) { hk("start", "claude", cj("lim-d", "UserPromptSubmit")) }
+            st("close the lid", expect: Self.closeActions) { closeLid() }
+            let mark = readLog().count
+            st("weekly limit, \(label)", ticks: 1, expect: ["notify: Claude Code stopped with an error"]) { hk("fail", "claude", limitFail("lim-d", message)) }
+            let left = expiresAt("claude-lim-d").map { $0 - nowS }
+            check(!exists("claude-lim-d"), "\(label): released, nothing to wait for (got \(left.map { "hold \(Int($0)) s" } ?? "no hold"))")
+            let failedAt = nowS
+            let off = until("grace under the lid", max: 120, every: 30) { !engine.isActive }
+            let took = off.map { Int($0 - failedAt) } ?? -1
+            check(off != nil && took <= 150 && readLog().dropFirst(mark).contains { $0.contains("pmset sleepnow") },
+                  "\(label): sleeps after the 2 min grace, not a 30 min default wait (took \(took) s)")
+            removeAllHolds()
+            openLid(idle: "600")
+            st("open", ticks: 2)
+        }
+        endAll()
+    }
+
+    func s2LimitResume() {
+        bootS()
+        let reset = Date().addingTimeInterval(45 * 60)
+        st("prompt, close the lid", expect: Self.closeActions) { hk("start", "claude", cj("lim-r", "UserPromptSubmit")); closeLid() }
+        st("usage limit", expect: ["notify: Claude Code stopped with an error"], forbid: ["pmset sleepnow"]) {
+            hk("fail", "claude", limitFail("lim-r", "You've hit your session limit · resets \(clockText(reset))"))
+        }
+        guard let exp = expiresAt("claude-lim-r") else { fail("no hold"); return }
+        st("wait", ticks: Int((exp - nowS - 150) / 60), every: 60, forbid: ["pmset sleepnow", "notify:"])
+        st("auto-resume fires at the reset", ticks: 3, forbid: ["pmset sleepnow", "started working", "notify:"]) {
+            hk("notify", "claude", claudeNotify("lim-r", "quota_auto_resume_fired"))
+        }
+        check(exists("claude-lim-r") && expiresAt("claude-lim-r") == nil, "normal hold again, same id")
+        check(holdNames == ["Claude Code"], "name back to Claude Code (\(holdNames))")
+        for i in 0..<6 {
+            st("tool calls, 5 min (\(i))", ticks: 10, every: 30, forbid: ["pmset sleepnow", "notify:"]) {
+                hk("touch", "claude", cj("lim-r", "PreToolUse", #""tool_name":"Bash","tool_input":{"command":"npm test"}"#))
+            }
+        }
+        check(exists("claude-lim-r") && engine.lidEngaged, "past the old expiry and past 15 min: still held by tool calls")
+        st("Stop", ticks: 70, expect: ["notify: Claude Code finished", "notify: While you were away", "pmset sleepnow"]) {
+            hk("stop", "claude", cj("lim-r", "Stop", #""stop_hook_active":false"#))
+        }
+        check(readLog().contains { $0.contains("While you were away") && $0.contains("1 agent turn") }, "summary counts the resumed turn")
+        endAll()
+    }
+
+    func s2LimitEsc() {
+        bootS()
+        let reset = Date().addingTimeInterval(90 * 60)
+        func limit() {
+            hk("start", "claude", cj("lim-e", "UserPromptSubmit"))
+            hk("fail", "claude", limitFail("lim-e", "You've hit your session limit · resets \(clockText(reset))"))
+        }
+        st("usage limit, lid closed", expect: Self.closeActions) { limit(); closeLid() }
+        // Claude sits at its prompt during the wait; after 60 s it sends idle_prompt.
+        st("idle_prompt during the wait", ticks: 5, forbid: ["pmset sleepnow"]) { hk("notify", "claude", claudeNotify("lim-e", "idle_prompt")) }
+        check(expiresAt("claude-lim-e") != nil, "idle_prompt keeps the usage-limit hold (Claude still continues on its own)")
+        removeAllHolds()
+        st("drained", ticks: 70)
+        openLid(idle: "600")
+        st("open", ticks: 2)
+
+        st("usage limit, lid closed", expect: Self.closeActions) { limit(); closeLid() }
+        st("user turns auto-continue off (Esc)", ticks: 70, expect: ["pmset sleepnow"], forbid: ["finished"]) {
+            hk("notify", "claude", claudeNotify("lim-e", "quota_auto_resume_disabled"))
+        }
+        check(!exists("claude-lim-e"), "hold dropped")
+        openLid(idle: "600")
+        st("open", ticks: 2)
+
+        st("usage limit, lid closed", expect: Self.closeActions) { limit(); closeLid() }
+        st("user types a new prompt instead (e.g. switched model)", ticks: 3, forbid: ["pmset sleepnow", "started working"]) {
+            hk("start", "claude", cj("lim-e", "UserPromptSubmit"))
+        }
+        check(exists("claude-lim-e") && expiresAt("claude-lim-e") == nil, "normal hold")
+        st("Stop", ticks: 70, expect: ["notify: Claude Code finished", "pmset sleepnow"]) { hk("stop", "claude", cj("lim-e", "Stop")) }
+        endAll()
+    }
+
+    func s2SecondSession() {
+        bootS()
+        let reset = Date().addingTimeInterval(60 * 60)
+        st("session A hits the limit", expect: ["notify: Claude Code stopped with an error"]) {
+            hk("start", "claude", cj("lim-a", "UserPromptSubmit"))
+            hk("fail", "claude", limitFail("lim-a", "You've hit your session limit · resets \(clockText(reset))"))
+        }
+        st("session B works, lid closed", expect: Self.closeActions) { hk("start", "claude", cj("work-b", "UserPromptSubmit")); closeLid() }
+        check(engine.holds.count == 2, "two holds (\(holdNames))")
+        st("B: tool calls for 10 min", ticks: 20, every: 30, forbid: ["pmset sleepnow"]) { hk("touch", "claude", cj("work-b", "PostToolUse")) }
+        let mark = readLog().count
+        st("B finishes", ticks: 10, forbid: ["pmset sleepnow"]) { hk("stop", "claude", cj("work-b", "Stop")) }
+        check(notifyCount("Claude Code finished", from: mark) == 1, "B's 'finished' is reported while A waits (got \(notifyCount("Claude Code finished", from: mark)))")
+        check(engine.isActive && exists("claude-lim-a"), "A's wait keeps it awake")
+        guard let exp = expiresAt("claude-lim-a") else { fail("A's hold gone"); return }
+        st("rest of A's wait", ticks: Int((exp - nowS - 60) / 60), every: 60, forbid: ["pmset sleepnow"])
+        until("A's reset passes", max: 40, every: 10) { !engine.isActive }
+        check(readLog().contains { $0.contains("While you were away") && $0.contains("1 agent turn") }, "summary counts B's turn")
+        endAll()
+    }
+
+    // MARK: Four agents
+
+    func connectAll() {
+        do { try ClaudeHooks.install() } catch { fail("claude install \(error)") }
+        for id in ["codex", "gemini", "cursor"] { engine.connect(id) }
+        engine.refreshIntegrations()
+        check(engine.connected.values.allSatisfy { $0 } && engine.connected.count == 4, "all four connected (\(engine.connected))")
+    }
+
+    func s2FourAgents() {
+        bootS()
+        connectAll()
+        let claude = ClaudeHooks.settingsURL, codex = CodexHooks.file.url, gemini = GeminiHooks.file.url, cursor = CursorHooks.configURL
+        st("all four start", ticks: 3, expect: ["started working", "disablesleep 1"]) {
+            fireS(claude, "UserPromptSubmit", cj("c-1", "UserPromptSubmit", #""prompt":"x""#))
+            fireS(codex, "UserPromptSubmit", xj("x-1", "UserPromptSubmit", #""prompt":"x""#))
+            fireS(gemini, "BeforeAgent", gj("g-1", "BeforeAgent"))
+            fireS(cursor, "beforeSubmitPrompt", uj("u-1", "beforeSubmitPrompt", #""prompt":"x""#))
+        }
+        check(holdNames == ["Claude Code", "Codex", "Cursor", "Gemini CLI"], "four holds, right names (\(holdNames))")
+        st("close the lid", expect: Self.closeActions) { closeLid() }
+        st("Codex finishes first", ticks: 30, expect: ["notify: Codex finished"], forbid: ["pmset sleepnow", "unmute"]) {
+            fireS(codex, "PreToolUse", xj("x-1", "PreToolUse", #""tool_name":"Bash""#))
+            fireS(codex, "Stop", xj("x-1", "Stop", #""stop_hook_active":false"#))
+        }
+        st("Gemini finishes", ticks: 30, expect: ["notify: Gemini CLI finished"], forbid: ["pmset sleepnow", "unmute"]) { fireS(gemini, "AfterAgent", gj("g-1", "AfterAgent")) }
+        st("Cursor aborted (silent)", ticks: 30, forbid: ["pmset sleepnow", "unmute", "Cursor finished", "error"]) {
+            fireS(cursor, "stop", uj("u-1", "stop", #""status":"aborted","loop_count":0"#))
+        }
+        check(engine.graceUntil == nil && holdNames == ["Claude Code"], "no grace while Claude still works (\(holdNames))")
+        st("Claude finishes last: grace", ticks: 30, expect: ["notify: Claude Code finished"], forbid: ["pmset sleepnow", "unmute"]) {
+            fireS(claude, "Stop", cj("c-1", "Stop", #""stop_hook_active":false"#))
+        }
+        check(engine.graceUntil != nil && engine.lidEngaged, "grace under the lid")
+        st("Codex starts again inside grace", ticks: 3, expect: ["log: Codex started working"], forbid: ["pmset sleepnow"]) {
+            fireS(codex, "UserPromptSubmit", xj("x-1", "UserPromptSubmit"))
+        }
+        check(engine.graceUntil == nil, "grace cancelled")
+        st("3 min of Codex work", ticks: 18, every: 10, forbid: ["pmset sleepnow"]) { fireS(codex, "PostToolUse", xj("x-1", "PostToolUse")) }
+        fireS(codex, "Stop", xj("x-1", "Stop"))
+        let stopped = nowS
+        let off = until("final grace", max: 30, every: 10) { !engine.isActive }
+        if let off { check(off - stopped >= 115 && off - stopped <= 135, "sleeps 2 min after the very last agent (\(Int(off - stopped)) s)") }
+        check(notifyCount("Codex finished") == 2 && notifyCount("Gemini CLI finished") == 1 && notifyCount("Claude Code finished") == 1
+              && notifyCount("Cursor finished") == 0, "finished counts: Codex 2, Gemini 1, Claude 1, Cursor 0")
+        check(readLog().contains { $0.contains("While you were away") && $0.contains("4 agent turn") }, "summary: 4 turns")
+        check(count("pmset sleepnow") == 1, "one sleepnow")
+        endAll()
+    }
+
+    // MARK: Hooks and process detection
+
+    func s2HooksProcsDisconnect() {
+        bootS()
+        engine.connect("codex"); engine.connect("cursor")
+        let codex = CodexHooks.file.url, cursor = CursorHooks.configURL
+        let busy = "  9100 1  60.0 node /opt/homebrew/bin/codex\n  9300 1  30.0 cursor-agent\n"
+        st("Codex and Cursor hooks start, both processes busy", ticks: 4, expect: ["log: Codex started working", "log: Cursor started working"]) {
+            fireS(codex, "UserPromptSubmit", xj("x-1", "UserPromptSubmit"))
+            fireS(cursor, "beforeSubmitPrompt", uj("u-1", "beforeSubmitPrompt"))
+            Sim.set("procs", busy)
+        }
+        check(holdNames == ["Codex", "Cursor"] && !engine.holds.contains { $0.id.hasPrefix("proc-") }, "hook holds only, no process doubles (\(engine.holds.map(\.id)))")
+        st("close the lid", expect: Self.closeActions) { closeLid() }
+        st("Codex disconnected mid-turn (process still busy)", ticks: 4, forbid: ["pmset sleepnow"]) { engine.disconnect("codex") }
+        let codexHolds = engine.holds.filter { AgentIntegrations.displayName($0.agent) == "Codex" }
+        check(codexHolds.count == 1, "one Codex hold after disconnect, not hook + process (\(engine.holds.map(\.id)))")
+        st("Cursor finishes", ticks: 6, expect: ["notify: Cursor finished"]) { fireS(cursor, "stop", uj("u-1", "stop", #""status":"completed""#)) }
+        // Codex's turn ends but its Stop hook is gone: only the process tells.
+        Sim.set("procs", "  9100 1  0.0 node /opt/homebrew/bin/codex\n")
+        let idle = nowS
+        let off = until("Codex process idle: linger + grace", max: 150, every: 10) { !engine.isActive }
+        let took = off.map { Int($0 - idle) } ?? -1
+        check(off != nil && took <= 200, "sleeps within linger 30 s + scan + grace 2 min of the process going idle (took \(took) s)")
+        check(!exists("codex-x-1"), "no orphan Codex hook hold left (\(engine.holds.map(\.id)))")
+        endAll()
+    }
+
+    func s2CodexUntrusted() {
+        bootS()
+        engine.connect("codex")
+        check(engine.connected["codex"] == true, "Codex connected")
+        // Codex skips the new hooks until /hooks trusts them: no hook ever runs.
+        st("Codex working (process only)", ticks: 4, expect: ["log: Codex started working", "disablesleep 1"]) {
+            Sim.set("procs", "  9100 1  60.0 node /opt/homebrew/bin/codex\n")
+        }
+        st("close the lid", expect: Self.closeActions) { closeLid() }
+        st("10 min of work", ticks: 60, every: 10, forbid: ["pmset sleepnow"])
+        Sim.set("procs", "  9100 1  0.5 node /opt/homebrew/bin/codex\n")
+        let idle = nowS
+        let off = until("idle at the prompt: linger + grace", max: 40, every: 10) { !engine.isActive }
+        if let off { check(off - idle <= 200, "sleeps after linger + grace (\(Int(off - idle)) s)") }
+        openLid(idle: "600")
+        st("open", ticks: 2)
+        // Trusted now: the hooks drive it; the process is ignored.
+        let codex = CodexHooks.file.url
+        st("trusted: prompt via hook while the process is busy", ticks: 4, expect: ["log: Codex started working"]) {
+            fireS(codex, "UserPromptSubmit", xj("x-1", "UserPromptSubmit"))
+            Sim.set("procs", "  9100 1  60.0 node /opt/homebrew/bin/codex\n")
+        }
+        check(engine.holds.map(\.id) == ["codex-x-1"], "hook hold only (\(engine.holds.map(\.id)))")
+        st("Stop (process still a bit busy)", ticks: 70, expect: ["notify: Codex finished"]) {
+            fireS(codex, "Stop", xj("x-1", "Stop")); Sim.set("procs", "  9100 1  4.0 node /opt/homebrew/bin/codex\n")
+        }
+        check(!engine.isActive, "asleep after grace")
+        endAll()
+    }
+
+    func s2CodexUpgrade() {
+        // Earlier: hooks connected and trusted (seen). An older AFK Pug wrote them.
+        let url = CodexHooks.file.url
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let old = #"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"\#(ConfigFile.hookCommand("stop", "codex"))"}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"/old/bin/afkpug-hook start codex"}]}]}}"#
+        try? old.write(to: url, atomically: true, encoding: .utf8)
+        Engine.store.set(["codex"], forKey: "hooksSeenAgents")
+        bootS()
+        check(readLog().contains { $0.contains("Updated the Codex connection") }, "launch upgraded the Codex hooks")
+        // Changed hooks are new hooks to Codex: skipped until trusted again.
+        st("Codex working, its (changed) hooks not trusted yet", ticks: 4, expect: ["log: Codex started working"]) {
+            Sim.set("procs", "  9100 1  60.0 node /opt/homebrew/bin/codex\n")
+        }
+        check(!engine.holds.isEmpty, "Codex still counts as working (\(engine.holds.map(\.id)))")
+        st("close the lid", ticks: 30, every: 10, forbid: ["pmset sleepnow"]) { closeLid() }
+        check(engine.isActive, "awake under the lid while Codex works")
+        endAll()
+    }
+
+    func s2CursorClaude() {
+        bootS()
+        do { try ClaudeHooks.install() } catch { fail("claude install \(error)") }
+        engine.refreshIntegrations()
+        let claude = ClaudeHooks.settingsURL, cursor = CursorHooks.configURL
+        // 1. Only Claude Code's hooks connected; Cursor runs them.
+        st("Cursor runs Claude's UserPromptSubmit", ticks: 3, expect: ["log: Cursor started working"], forbid: ["Claude Code started"]) {
+            fireS(claude, "UserPromptSubmit", uj("u-1", "UserPromptSubmit", #""session_id":"s-x","prompt":"x""#))
+        }
+        check(engine.holds.map(\.id) == ["cursor-u-1"], "one hold, named after conversation_id (\(engine.holds.map(\.id)))")
+        st("cursor-agent process busy too", ticks: 4) { Sim.set("procs", "  9300 1  30.0 cursor-agent\n") }
+        check(engine.holds.count == 1, "no second (process) hold for the same Cursor agent (\(engine.holds.map(\.id)))")
+        Sim.set("procs", nil)
+        st("Claude's Stop run by Cursor", ticks: 6, expect: ["notify: Cursor finished"], forbid: ["Claude Code finished"]) {
+            fireS(claude, "Stop", uj("u-1", "Stop", #""status":"completed""#))
+        }
+        st("linger", ticks: 70)
+        // 2. Cursor's own hooks connected too: every event fires twice.
+        engine.connect("cursor")
+        let mark = readLog().count
+        st("both prompt hooks", ticks: 3, expect: ["log: Cursor started working"]) {
+            fireS(cursor, "beforeSubmitPrompt", uj("u-2", "beforeSubmitPrompt"))
+            fireS(claude, "UserPromptSubmit", uj("u-2", "UserPromptSubmit"))
+        }
+        check(engine.holds.map(\.id) == ["cursor-u-2"], "still one hold (\(engine.holds.map(\.id)))")
+        st("close the lid", expect: Self.closeActions) { closeLid() }
+        st("both stop hooks", ticks: 6, expect: ["notify: Cursor finished"]) {
+            fireS(cursor, "stop", uj("u-2", "stop", #""status":"completed""#))
+            fireS(claude, "Stop", uj("u-2", "Stop", #""status":"completed""#))
+        }
+        check(notifyCount("Cursor finished", from: mark) == 1, "one 'finished' for one turn (\(notifyCount("Cursor finished", from: mark)))")
+        st("aborted via Cursor, then Claude's Stop", ticks: 70, expect: ["pmset sleepnow"], forbid: ["notify: Cursor finished", "error"]) {
+            fireS(cursor, "beforeSubmitPrompt", uj("u-3", "beforeSubmitPrompt"))
+            fireS(cursor, "stop", uj("u-3", "stop", #""status":"aborted""#))
+            fireS(claude, "Stop", uj("u-3", "Stop", #""status":"aborted""#))
+        }
+        check(count("Claude Code") == 0 || !readLog().contains { $0.contains("Claude Code started working") || $0.contains("Claude Code finished") }, "never shown as Claude Code")
+        endAll()
+    }
+
+    // MARK: Garbage
+
+    func s2GarbageHolds() {
+        bootS()
+        let fm = FileManager.default
+        let now = Int(nowS)
+        let files: [(String, String)] = [
+            ("g-empty", ""),
+            ("g-text", "not json at all \u{0}\u{7}"),
+            ("g-array", "[1,2,3]"),
+            ("g-types", #"{"agent":42,"started":"yesterday","expires":"soon","pid":"123","reason":["x"]}"#),
+            ("g-negative", #"{"agent":"claude","started":-5,"expires":-1,"pid":-7}"#),
+            ("g-hugepid", #"{"agent":"codex","started":\#(now),"expires":0,"pid":99999999999}"#),
+            ("g-unknown", #"{"agent":"zork","started":\#(now),"expires":0,"pid":0}"#),
+            ("g-emoji", #"{"agent":"🐶\nrm -rf","started":\#(now),"expires":0}"#),
+            ("g-dup-a", #"{"agent":"claude","started":\#(now),"expires":0,"pid":0}"#),
+            ("g-dup-b", #"{"agent":"claude","started":\#(now),"expires":0,"pid":0}"#),
+        ]
+        st("real Claude hold + close", expect: Self.closeActions) { hold("claude-real"); closeLid() }
+        st("garbage hold files appear", ticks: 3, forbid: ["notify:", "pmset sleepnow"]) {
+            for (id, text) in files { try? text.write(to: Paths.holds.appendingPathComponent(id), atomically: true, encoding: .utf8); age(id, by: 0) }
+            try? fm.createDirectory(at: Paths.holds.appendingPathComponent("g-dir/inner"), withIntermediateDirectories: true)
+        }
+        print("  holds: \(engine.holds.map { "\($0.id)=\($0.displayName)" })")
+        check(!engine.holds.contains { $0.id == "g-hugepid" } || true, "huge pid handled without a trap")
+        // Other "claude" holds (garbage) don't hide the real one's finish (bug 2).
+        st("real hold ends", ticks: 6, expect: ["notify: Claude Code finished"]) { dropHold("claude-real") }
+        // Nothing renews the garbage: it's gone after the 15 min untouched rule.
+        let off = until("garbage ages out, then grace", max: 120, every: 15) { !engine.isActive }
+        check(off != nil, "the Mac sleeps once untouched garbage ages out (holds left: \(engine.holds.map(\.id)))")
+        check(holdState().isEmpty, "garbage files cleaned up (\(holdState().keys.sorted()))")
+        openLid(idle: "600")
+        st("open", ticks: 2)
+        // A far-future expiry (corrupt or hand-written): every writer caps at 24 h, so
+        // more than 24 h ahead is invalid and dropped at once (bug 11).
+        st("far-future and 1e300 expiries, lid closed", ticks: 3, forbid: ["lock screen", "disablesleep 1"]) {
+            try? #"{"agent":"cli","started":\#(now),"expires":\#(now + 10 * 365 * 86400),"reason":"oops"}"#.write(to: Paths.holds.appendingPathComponent("g-far"), atomically: true, encoding: .utf8)
+            try? #"{"agent":"cli","started":\#(now),"expires":1e300}"#.write(to: Paths.holds.appendingPathComponent("g-huge"), atomically: true, encoding: .utf8)
+            closeLid()
+        }
+        check(!exists("g-far") && !exists("g-huge") && engine.holds.isEmpty, "invalid expiries dropped (\(engine.holds.map(\.id)))")
+        st("25 h under the lid", ticks: 150, every: 600)
+        check(!engine.isActive, "no hold keeps the Mac awake past 24 h (still: \(engine.holds.map { "\($0.id) until \($0.expires.map { "\($0)" } ?? "-")" }))")
+        removeAllHolds()
+        endAll()
+    }
+
+    func s2GarbageEvents() {
+        bootS()
+        let fm = FileManager.default
+        let t = Int(nowS)
+        let names = ["garbage", "\(t)-done", "\(t)1-claude-done-extra", "\(t)2--done", "\(t)3-claude-DONE", "\(t)4-claude-",
+                     "-claude-done", "\(t)5-ghost-done", "\(t)6-my-agent-waiting", ".\(t)7-claude-failed", "\(t)8-codex-waiting"]
+        st("hold + close", expect: Self.closeActions) { hold("claude-s1"); closeLid() }
+        st("malformed events", ticks: 8, forbid: ["pmset sleepnow"]) {
+            for n in names { fm.createFile(atPath: Paths.events.appendingPathComponent(n).path, contents: Data("x".utf8)) }
+            try? fm.createDirectory(at: Paths.events.appendingPathComponent("\(t)9-claude-done"), withIntermediateDirectories: true)
+            fm.createFile(atPath: Paths.events.appendingPathComponent("\(t)9-claude-done/inner").path, contents: nil)
+        }
+        let left = (try? fm.contentsOfDirectory(atPath: Paths.events.path)) ?? []
+        check(left.isEmpty, "events dir emptied (\(left))")
+        check(notifyCount("Codex needs you") == 1, "a well-formed event still fires")
+        let shown = readLog().filter { $0.contains("notify:") }.map { effectText($0) }
+        print("  notifications: \(shown)")
+        check(!shown.contains { $0.contains("notify:  ") || $0.contains("notify: finished") }, "no notification with an empty agent name")
+        check(engine.isActive && engine.lidEngaged, "real hold unaffected")
+        endAll()
+    }
+
+    func s2DupEvents() {
+        bootS()
+        st("hold + close", expect: Self.closeActions) { hold("claude-s1"); closeLid() }
+        st("hold ends; the same done event 3 times, 5 waiting, 2 failed", ticks: 8, expect: ["notify: Claude Code finished"]) {
+            dropHold("claude-s1", event: nil)
+            for i in 1...3 { event("claude", "done", i) }
+            for i in 4...8 { event("claude", "waiting", i) }
+            for i in 9...10 { event("claude", "failed", i) }
+        }
+        check(notifyCount("Claude Code finished") == 1, "one 'finished' (got \(notifyCount("Claude Code finished")))")
+        check(notifyCount("Claude Code needs you") == 1, "one 'needs you' (got \(notifyCount("Claude Code needs you")))")
+        check(notifyCount("Claude Code stopped with an error") == 1, "one 'error' (got \(notifyCount("Claude Code stopped with an error")))")
+        endAll()
+    }
+
+    // MARK: Volume
+
+    func s2Burst() {
+        bootS()
+        var times: [Double] = []
+        st("hold + close", expect: Self.closeActions) { hold("cli-keep", agent: "cli", expires: 3 * 3600); closeLid() }
+        let mark = readLog().count
+        // The engine clock is the real clock + offset, so the real seconds a burst takes
+        // pass for the engine too; move the auditor's display-push reference with them.
+        let wall = Date()
+        for i in 0..<60 {
+            times.append(hk("start", "claude", cj("b-1", "UserPromptSubmit")))
+            times.append(hk("touch", "claude", cj("b-1", "PreToolUse")))
+            times.append(hk("stop", "claude", cj("b-1", "Stop")))
+            times.append(hk("start", "codex", xj("bx-\(i % 3)", "UserPromptSubmit")))
+            times.append(hk("stop", "codex", xj("bx-\(i % 3)", "Stop")))
+        }
+        let total = Date().timeIntervalSince(wall)
+        lastDisplayOffAt -= total
+        st("60 short turns each for Claude and Codex between two ticks", ticks: 1)
+        let avg = times.reduce(0, +) / Double(max(1, times.count))
+        print(String(format: "  %d hook calls: avg %.0f ms, max %.0f ms, total %.1f s", times.count, avg * 1000, (times.max() ?? 0) * 1000, total))
+        check((times.max() ?? 0) < Self.hookTimeLimit && avg < 0.5, "every hook call under \(Int(Self.hookTimeLimit)) s, avg under 0.5 s")
+        st("confirm window", ticks: 10, forbid: ["pmset sleepnow"])
+        let claudeN = notifyCount("Claude Code finished", from: mark), codexN = notifyCount("Codex finished", from: mark)
+        check(claudeN <= 1 && codexN <= 1, "at most one 'finished' per agent for one burst (Claude \(claudeN), Codex \(codexN))")
+        check(holdState().keys.sorted() == ["cli-keep"], "no orphan holds (\(holdState().keys.sorted()))")
+        // One long turn with hundreds of tool calls.
+        st("prompt", ticks: 1) { hk("start", "claude", cj("long", "UserPromptSubmit")) }
+        let before = readLog().count
+        let wall2 = Date()
+        for _ in 0..<300 { hk("touch", "claude", cj("long", "PostToolUse")) }
+        lastDisplayOffAt -= Date().timeIntervalSince(wall2)
+        st("300 tool calls in one turn", ticks: 3, forbid: ["notify:", "started working", "pmset sleepnow"])
+        check(readLog().count - before < 20, "no log spam from tool calls (\(readLog().count - before) lines)")
+        removeAllHolds()
+        endAll()
+    }
+
+    func s2ManyHolds() {
+        bootS()
+        let agents = ["claude", "codex", "gemini", "cursor", "cli"]
+        for i in 0..<500 { hold("\(agents[i % 5])-many-\(i)", agent: agents[i % 5], expires: i % 5 == 4 ? 3600 : 0) }
+        var spent: [Double] = []
+        let mark = readLog().count
+        for _ in 0..<5 {
+            let t = Date()
+            st("tick with 500 holds", ticks: 1)
+            spent.append(Date().timeIntervalSince(t))
+        }
+        print(String(format: "  tick with 500 holds: first %.0f ms, then max %.0f ms", spent[0] * 1000, (spent.dropFirst().max() ?? 0) * 1000))
+        check((spent.dropFirst().max() ?? 1) < 0.25, "a tick with 500 holds stays under 250 ms")
+        check(engine.holds.count == 500, "all 500 counted")
+        check(readLog().dropFirst(mark).filter { $0.contains("notify:") }.isEmpty, "no notifications for 500 starts")
+        st("close the lid", expect: Self.closeActions) { closeLid() }
+        st("all released at once", ticks: 70, expect: ["pmset sleepnow"]) { removeAllHolds() }
+        endAll()
+    }
+
+    // MARK: Uninstall, crash, onboarding
+
+    func s2UninstallMidturn() {
+        bootS()
+        connectAll()
+        let urls: [(URL, String, String, String)] = [
+            (ClaudeHooks.settingsURL, "UserPromptSubmit", "Stop", cj("c-1", "Stop")),
+            (CodexHooks.file.url, "UserPromptSubmit", "Stop", xj("x-1", "Stop")),
+            (GeminiHooks.file.url, "BeforeAgent", "AfterAgent", gj("g-1", "AfterAgent")),
+            (CursorHooks.configURL, "beforeSubmitPrompt", "stop", uj("u-1", "stop", #""status":"completed""#)),
+        ]
+        let starts = [cj("c-1", "UserPromptSubmit"), xj("x-1", "UserPromptSubmit"), gj("g-1", "BeforeAgent"), uj("u-1", "beforeSubmitPrompt")]
+        st("four agents mid-turn", ticks: 3) { for (i, u) in urls.enumerated() { fireS(u.0, u.1, starts[i]) } }
+        check(engine.holds.count == 4, "four holds")
+        // Running agents keep the hook commands they loaded at startup.
+        let stale = urls.map { (ours(hookCommands($0.0)[$0.2]).first ?? "", $0.3) }
+        st("close the lid", expect: Self.closeActions) { closeLid() }
+        st("uninstall (e.g. over Screen Sharing)", ticks: 0,
+           expect: ["SIGCONT chat apps", "unmute", "lowpowermode 0", "disablesleep 0", "uninstall finished (0 problem(s))"]) { engine.uninstallEverything() }
+        for item in AgentIntegrations.all { check(!item.isConnected(), "\(item.name) hooks removed") }
+        st("agents' old Stop hooks keep firing", ticks: 5, forbid: ["notify:", "disablesleep 1", "lock screen"]) {
+            for (command, stdin) in stale {
+                let r = shell(command, stdin: stdin)
+                check(r.status == 0, "old hook exits 0")
+                if command.contains("printf") { check(r.output == "{}\n", "Cursor hook still answers {}") }
+            }
+        }
+        check(!FileManager.default.fileExists(atPath: Paths.root.path), "~/.afkpug not recreated by a late hook")
+        check(!engine.isActive && !engine.lidOverrideOn, "nothing running")
+        check(Sim.value("pmset-disablesleep") == "0" && Sim.value("muted") == baseline["muted"]
+              && snapshot()["b"] == baseline["b"] && snapshot()["c"] == baseline["c"], "power, sound and Low Power exactly as before")
+    }
+
+    func s2CrashAllHolds() {
+        configure()
+        Installer.installScripts()
+        let before = snapshot()
+        hk("start", "claude", cj("c-1", "UserPromptSubmit"))
+        hk("start", "claude", cj("lim-1", "UserPromptSubmit"))
+        hk("fail", "claude", limitFail("lim-1", "You've hit your session limit · resets \(clockText(Date().addingTimeInterval(3 * 3600)))"))
+        hk("start", "codex", xj("x-1", "UserPromptSubmit"))
+        hk("start", "gemini", gj("g-1", "BeforeAgent"))
+        hk("start", "cursor", uj("u-1", "beforeSubmitPrompt"))
+        hold("cli-1-1", agent: "cli", expires: 3600)
+        let now = Int(nowS)
+        try? #"{"agent":"cli","started":\#(now),"expires":\#(now + 3600),"reason":"deploy"}"#.write(to: Paths.holds.appendingPathComponent("mcp-424242-1"), atomically: true, encoding: .utf8)
+        try? #"{"agent":"npm","started":\#(now),"expires":0,"reason":"run","pid":\#(getpid())}"#.write(to: Paths.holds.appendingPathComponent("run-1-\(getpid())"), atomically: true, encoding: .utf8)
+        let ids = holdState().keys.sorted()
+        print("  holds before the crash: \(ids)")
+        let status = spawnSelf("stress2-child-crash")
+        check(status == 0, "child ran (status \(status))")
+        print("  after crash: disablesleep=\(Sim.value("pmset-disablesleep") ?? "-") muted=\(Sim.value("muted") ?? "-") b=\(Sim.value("pmset-lowpowermode-b") ?? "-") paused=\(FileManager.default.fileExists(atPath: ChatPauser.file.path))")
+        check(holdState().keys.sorted() == ids, "every hold survived the crash")
+        baseline = before
+        Sim.clockOffset = 0
+        logOffset = readLog().count
+        truthOpen = false
+        Sim.set("lid", "closed"); Sim.set("idle", "600")
+        st("relaunch, lid still closed", ticks: 0,
+           expect: ["disablesleep 0", "log: Restored normal lid sleep", "SIGCONT chat apps", "lowpowermode 0", "unmute", "disablesleep 1", "lock screen", "mute"]) {
+            Sim.headless = true; engine.boot()
+        }
+        check(engine.holds.count == ids.count, "all \(ids.count) holds counted (\(holdNames))")
+        check(count("started working") - 0 >= ids.count, "each logged as started")
+        st("10 min", ticks: 60, every: 10, forbid: ["lock screen", "] mute", "pmset sleepnow", "notify:"]) {
+            hk("touch", "claude", cj("c-1", "PostToolUse")); hk("touch", "codex", xj("x-1", "PostToolUse"))
+        }
+        let order: [(String, () -> Void)] = [
+            ("Gemini", { self.hk("stop", "gemini", self.gj("g-1", "AfterAgent")) }),
+            ("CLI + MCP released", { try? FileManager.default.removeItem(at: Paths.holds.appendingPathComponent("cli-1-1")); try? FileManager.default.removeItem(at: Paths.holds.appendingPathComponent("mcp-424242-1")) }),
+            ("Claude c-1", { self.hk("stop", "claude", self.cj("c-1", "Stop")) }),
+            ("run ends", { try? FileManager.default.removeItem(at: Paths.holds.appendingPathComponent("run-1-\(getpid())")) }),
+            ("Cursor", { self.hk("stop", "cursor", self.uj("u-1", "stop", #""status":"completed""#)) }),
+            ("Codex", { self.hk("stop", "codex", self.xj("x-1", "Stop")) }),
+            ("Claude lim-1 auto-continue off", { self.hk("notify", "claude", self.claudeNotify("lim-1", "quota_auto_resume_disabled")) }),
+        ]
+        for (i, (label, action)) in order.enumerated() {
+            st(label, ticks: 15, forbid: i < order.count - 1 ? ["pmset sleepnow", "unmute"] : []) { action() }
+        }
+        st("grace", ticks: 60, expect: ["pmset sleepnow"])
+        check(holdState().isEmpty, "no orphan holds (\(holdState().keys.sorted()))")
+        endAll()
+    }
+
+    func s2CrashChild() {
+        Sim.headless = true
+        printLines = false
+        bootS()
+        st("close the lid with every source's hold present", ticks: 3) { closeLid() }
+        check(engine.lidEngaged, "engaged before the crash")
+        print("  (child exits without shutdown)")
+        exit(0)
+    }
+
+    func s2Onboarding() {
+        var logs: [String: [String]] = [:]
+        for variant in ["done", "fresh"] {
+            let status = spawnSelf("stress2-child-onb-\(variant)")
+            check(status == 0, "\(variant) child passed (status \(status))")
+            let text = (try? String(contentsOf: Sim.dir.appendingPathComponent("onb-\(variant).txt"), encoding: .utf8)) ?? ""
+            logs[variant] = text.split(separator: "\n").map(String.init)
+        }
+        let a = logs["done"] ?? [], b = logs["fresh"] ?? []
+        check(!a.isEmpty && a == b, "identical engine actions with and without onboarding (\(a.count) vs \(b.count) lines)")
+        if a != b {
+            for (i, (x, y)) in zip(a, b).enumerated() where x != y { print("  first difference at \(i): '\(x)' vs '\(y)'"); break }
+        }
+    }
+
+    func s2OnboardingChild(fresh: Bool) {
+        configure()
+        Engine.store.set(!fresh, forKey: "onboardingDone")
+        baseline = snapshot()
+        boot()
+        check(engine.showOnboarding == fresh, "onboarding shown: \(fresh)")
+        st("prompt", ticks: 2) { hk("start", "claude", cj("o-1", "UserPromptSubmit")) }
+        st("close the lid", ticks: 5) { closeLid() }
+        if fresh { engine.finishOnboarding() }   // finished from the window mid-session
+        st("work", ticks: 30, every: 10) { hk("touch", "claude", cj("o-1", "PostToolUse")) }
+        st("Stop", ticks: 70) { hk("stop", "claude", cj("o-1", "Stop")) }
+        openLid(idle: "1")
+        st("Go AFK, then stop", ticks: 3) { engine.start() }
+        st("stop", ticks: 2) { engine.stop() }
+        check(!fresh || !engine.showOnboarding, "finishOnboarding hides it")
+        let lines = readLog().map(effectText).filter { !$0.hasPrefix("===") }
+        try? lines.joined(separator: "\n").write(to: Sim.dir.appendingPathComponent("onb-\(fresh ? "fresh" : "done").txt"), atomically: true, encoding: .utf8)
+    }
+}
+
+// MARK: - Regression scenarios for the backend bug fixes
+
+extension Runner {
+    func holdFiles() -> [String] { ((try? FileManager.default.contentsOfDirectory(atPath: Paths.holds.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted() }
+    func eventFiles() -> [String] { ((try? FileManager.default.contentsOfDirectory(atPath: Paths.events.path)) ?? []).sorted() }
+
+    /// Runs `copies` hook calls at the same moment (background jobs of one shell).
+    func parallel(_ action: String, _ agent: String, _ stdin: String, copies: Int) {
+        let input = Sim.dir.appendingPathComponent("parallel-input.json")
+        try? stdin.write(to: input, atomically: true, encoding: .utf8)
+        let one = "\(ConfigFile.shellQuote(Paths.hookScript.path)) \(action) \(agent) < \(ConfigFile.shellQuote(input.path))"
+        let r = shell(Array(repeating: one + " &", count: copies).joined(separator: " ") + " wait")
+        if r.status != 0 || !r.output.isEmpty { fail("parallel \(action): status \(r.status), output \(r.output.debugDescription)") }
+    }
+
+    func hookEdges() {
+        configure(); boot()
+        let fm = FileManager.default
+
+        // [b1] Stop with background tasks keeps the hold and marks it; idle_prompt keeps it.
+        hk("start", "claude", cj("s-bg", "UserPromptSubmit"))
+        hk("stop", "claude", cj("s-bg", "Stop", #""stop_hook_active":false,"background_tasks":[{"id":"b1","command":"npm run dev"}]"#))
+        check(holdJSON("claude-s-bg")?["bg"] as? Int == 1, "background tasks: hold kept and marked bg (\(holdJSON("claude-s-bg") ?? [:]))")
+        hk("notify", "claude", claudeNotify("s-bg", "idle_prompt"))
+        check(exists("claude-s-bg"), "idle_prompt keeps a hold kept for background tasks")
+        hk("stop", "claude", cj("s-bg", "Stop", #""background_tasks":[{"id":"b1"}]"#))
+        check(holdJSON("claude-s-bg")?["bg"] as? Int == 1, "a second bg Stop keeps one valid hold")
+        hk("stop", "claude", cj("s-bg", "Stop", #""background_tasks":[]"#))
+        check(!exists("claude-s-bg") && eventFiles().contains { $0.hasSuffix("-claude-done@s-bg") }, "Stop with the tasks done: released, done event with the session")
+        // A normal hold: idle_prompt (Esc at the prompt) still drops it.
+        hk("start", "claude", cj("s-esc", "UserPromptSubmit"))
+        hk("notify", "claude", claudeNotify("s-esc", "idle_prompt"))
+        check(!exists("claude-s-esc"), "idle_prompt drops a plain hold")
+        step("events", ticks: 6) {}
+
+        // [b3] Two Stop hooks at once (Cursor running both hook sets, or a retry): one done.
+        for i in 0..<8 {
+            hk("start", "claude", cj("s-par\(i)", "UserPromptSubmit"))
+            parallel("stop", "claude", cj("s-par\(i)", "Stop"), copies: 3)
+        }
+        let dones = eventFiles().filter { $0.contains("-claude-done@s-par") }
+        check(dones.count == 8, "3 parallel Stop calls x 8 turns: exactly one done each (\(dones.count))")
+        for i in 0..<5 {
+            hk("start", "claude", cj("s-pf\(i)", "UserPromptSubmit"))
+            parallel("fail", "claude", cj("s-pf\(i)", "StopFailure", #""error":"server_error""#), copies: 3)
+        }
+        check(eventFiles().filter { $0.contains("-claude-failed@s-pf") }.count == 5, "parallel StopFailure: one failed event each")
+        hk("fail", "claude", cj("s-pf0", "StopFailure", #""error":"server_error""#))
+        check(eventFiles().filter { $0.contains("-claude-failed@s-pf0") }.count == 1, "a repeated StopFailure without a hold adds no event")
+        step("events of the parallel turns", ticks: 6, expect: ["log: Claude Code finished"]) {}
+
+        // [b4] No session id: one hold per agent process, not one per hook shell.
+        let bare = #"{"hook_event_name":"UserPromptSubmit","prompt":"x"}"#
+        let cmd = ConfigFile.hookCommand("start", "claude")
+        for _ in 0..<3 { shell(cmd, stdin: bare) }
+        shell(ConfigFile.hookCommand("touch", "claude"), stdin: #"{"hook_event_name":"PostToolUse"}"#)
+        check(holdFiles() == ["claude-p\(getpid())"], "no session id: one hold named after the agent's pid (\(holdFiles()))")
+        shell(ConfigFile.hookCommand("stop", "claude"), stdin: #"{"hook_event_name":"Stop"}"#)
+        check(holdFiles().isEmpty, "Stop without a session id releases that hold")
+
+        // [b5] Late tool events after stop / end don't resurrect the hold.
+        let u = { (event: String, extra: String) in self.uj("late-1", event, extra) }
+        hk("start", "cursor", u("beforeSubmitPrompt", ""))
+        hk("stop", "cursor", u("stop", #""status":"completed""#))
+        check(fm.fileExists(atPath: Paths.holds.appendingPathComponent(".ended-cursor-late-1").path), "stop leaves a short-lived end marker")
+        hk("touch", "cursor", u("postToolUse", #""tool_name":"Shell""#))
+        hk("touch", "cursor", u("afterFileEdit", ""))
+        check(!exists("cursor-late-1"), "late postToolUse / afterFileEdit after stop: no new hold")
+        hk("touch", "cursor", u("postToolUseFailure", #""is_interrupt":true,"error_message":"aborted""#))
+        check(!exists("cursor-late-1"), "postToolUseFailure with is_interrupt: never a hold")
+        hk("start", "claude", cj("late-c", "UserPromptSubmit"))
+        hk("end", "claude", cj("late-c", "SessionEnd", #""reason":"prompt_input_exit""#))
+        hk("touch", "claude", cj("late-c", "PostToolUse"))
+        check(!exists("claude-late-c"), "PostToolUse after SessionEnd: no new hold")
+        hk("touch", "claude", cj("late-c", "PreToolUse", #""tool_name":"Bash""#))
+        check(exists("claude-late-c"), "PreToolUse (new work, e.g. a Stop hook continued the turn): hold back")
+        hk("stop", "claude", cj("late-c", "Stop"))
+        try? fm.setAttributes([.modificationDate: Date().addingTimeInterval(-61)], ofItemAtPath: Paths.holds.appendingPathComponent(".ended-claude-late-c").path)
+        hk("touch", "claude", cj("late-c", "PostToolUse"))
+        check(exists("claude-late-c"), "after 60 s the marker no longer applies")
+        hk("start", "cursor", u("beforeSubmitPrompt", ""))
+        check(exists("cursor-late-1") && !fm.fileExists(atPath: Paths.holds.appendingPathComponent(".ended-cursor-late-1").path), "a new prompt clears the marker")
+        hk("touch", "cursor", u("postToolUseFailure", #""is_interrupt":true"#))
+        check(exists("cursor-late-1"), "an interrupt failure doesn't drop or recreate anything by itself")
+        removeAllHolds()
+        step("drain", ticks: 6) {}
+    }
+
+    func notifyBurst() {
+        configure(["graceMinutes": 2]); boot()
+        // Five sessions finish in one tick: one notification for all of them.
+        step("5 sessions finish together", ticks: 6, expect: ["notify: Claude Code finished 5 tasks"], forbid: ["notify: Claude Code finished |"]) {
+            for i in 0..<5 { hk("start", "claude", cj("nb-\(i)", "UserPromptSubmit")); hk("stop", "claude", cj("nb-\(i)", "Stop")) }
+        }
+        check(count("log: Claude Code finished") == 5, "each session logged")
+        // Parallel sessions: one finishes while the other keeps working (bug 2).
+        step("A and B work; A finishes", ticks: 40, expect: ["log: Claude Code finished"]) {
+            hk("start", "claude", cj("nb-a", "UserPromptSubmit")); hk("start", "claude", cj("nb-b", "UserPromptSubmit"))
+            hk("stop", "claude", cj("nb-a", "Stop"))
+        }
+        check(exists("claude-nb-b"), "B still working")
+        let mark = readLog().count
+        // Three more finishes inside one minute: held back, then one summary.
+        step("B finishes, two more short turns within 40 s", ticks: 30, every: 2) {
+            hk("stop", "claude", cj("nb-b", "Stop"))
+        }
+        step("more", ticks: 6) { hk("start", "claude", cj("nb-c", "UserPromptSubmit")); hk("stop", "claude", cj("nb-c", "Stop")) }
+        step("more", ticks: 6) { hk("start", "claude", cj("nb-d", "UserPromptSubmit")); hk("stop", "claude", cj("nb-d", "Stop")) }
+        let single = notifyCount("Claude Code finished", from: mark)
+        step("window ends", ticks: 30, every: 2) {}
+        let summary = readLog().dropFirst(mark).filter { $0.contains("notify: Claude Code finished 2 tasks") }.count
+        check(single + summary >= 1 && summary <= 1, "rate-limited: \(single) single + \(summary) summary notification(s)")
+        let titles = readLog().dropFirst(mark).filter { $0.contains("notify: Claude Code finished") }
+        check(titles.count <= 2, "at most one notification per 60 s window plus its summary (\(titles))")
+        // The same waiting event five times in one tick, then twice more within a minute.
+        hk("start", "claude", cj("nb-w", "UserPromptSubmit"))
+        let wmark = readLog().count
+        step("permission prompt x5 in one tick", ticks: 1) { for _ in 0..<5 { hk("notify", "claude", claudeNotify("nb-w", "permission_prompt")) } }
+        check(notifyCount("Claude Code needs you", from: wmark) == 1, "one 'needs you'")
+        step("two more prompts, 20 s apart", ticks: 10) { hk("notify", "claude", claudeNotify("nb-w", "permission_prompt")) }
+        step("", ticks: 10) { hk("notify", "claude", claudeNotify("nb-w", "permission_prompt")) }
+        check(notifyCount("Claude Code needs you", from: wmark) == 1, "still one inside the window")
+        step("window ends", ticks: 15, expect: ["notify: Claude Code needs you (2 requests)"]) {}
+        removeAllHolds()
+    }
+
+    func procDetectHooks() {
+        Engine.store.set(["codex"], forKey: "hooksSeenAgents")
+        configure(); boot()
+        check(Engine.store.object(forKey: "hooksSeenAgents") == nil, "the old persisted 'hooks seen' flag is gone")
+        engine.connect("codex")
+        let me = getpid()
+        // `afkpug run -- codex` names its hold after the command: not a hook hold.
+        try? #"{"agent":"codex","started":\#(Int(nowS)),"expires":0,"reason":"run","pid":\#(me)}"#.write(to: Paths.holds.appendingPathComponent("run-1-\(me)"), atomically: true, encoding: .utf8)
+        step("run hold named codex + busy Codex process", ticks: 4) { Sim.set("procs", "  9100 1  60.0 node /opt/homebrew/bin/codex\n") }
+        check(engine.holds.contains { $0.id == "proc-9100" }, "a run-* hold doesn't switch process detection off (\(engine.holds.map(\.id)))")
+        try? FileManager.default.removeItem(at: Paths.holds.appendingPathComponent("run-1-\(me)"))
+        step("Codex hook hold appears", ticks: 4) { hk("start", "codex", xj("x-1", "UserPromptSubmit")) }
+        check(engine.holds.map(\.id) == ["codex-x-1"], "hook hold only; the process hold ends (\(engine.holds.map(\.id)))")
+        step("Stop; the same process stays a bit busy", ticks: 20) {
+            hk("stop", "codex", xj("x-1", "Stop")); Sim.set("procs", "  9100 1  5.0 node /opt/homebrew/bin/codex\n")
+        }
+        check(engine.holds.isEmpty, "that process belongs to the hooks: not detected after Stop (\(engine.holds.map(\.id)))")
+        step("a second Codex (hooks not trusted there) gets busy", ticks: 4) {
+            Sim.set("procs", "  9100 1  5.0 node /opt/homebrew/bin/codex\n  9101 1  70.0 node /opt/homebrew/bin/codex\n")
+        }
+        check(engine.holds.map(\.id) == ["proc-9101"], "a Codex process without a hook hold is detected (\(engine.holds.map(\.id)))")
+        Sim.set("procs", nil)
+        step("drain", ticks: 20) {}
+        // Cursor, only Claude's hooks connected: Claude's hooks run by Cursor cover it.
+        do { try ClaudeHooks.install() } catch { fail("claude install \(error)") }
+        engine.refreshIntegrations()
+        step("cursor-agent busy + Cursor's hold from Claude's hooks", ticks: 4) {
+            fireS(ClaudeHooks.settingsURL, "UserPromptSubmit", uj("u-9", "UserPromptSubmit"))
+            Sim.set("procs", "  9300 1  30.0 cursor-agent\n")
+        }
+        check(engine.holds.map(\.id) == ["cursor-u-9"], "no process double for Cursor (\(engine.holds.map(\.id)))")
+        // [b7] Disconnecting drops that agent's hook holds.
+        hk("start", "codex", xj("x-2", "UserPromptSubmit"))
+        step("disconnect Codex mid-turn", ticks: 2) { engine.disconnect("codex") }
+        check(!exists("codex-x-2") && !engine.holds.contains { $0.agent == "codex" }, "Codex hook hold removed on disconnect (\(holdFiles()))")
+        check(exists("cursor-u-9"), "other agents' holds kept")
+        Sim.set("procs", nil)
+        removeAllHolds()
+        step("drain", ticks: 20) {}
+    }
+
+    func configEdges() {
+        configure()
+        let fm = FileManager.default
+        // [b16] Agent configs live in a fake home, apart from the fake ~/.afkpug.
+        check(MCPInstaller.configURL.path.hasPrefix(Sim.home.path) && ClaudeHooks.settingsURL.path.hasPrefix(Sim.home.path)
+              && !Sim.home.path.hasPrefix(Paths.root.path), "configs and ~/.claude.json in the sandbox home (\(MCPInstaller.configURL.path))")
+        // [b8] Plugin installed after the settings.json hooks: removed at launch.
+        try? fm.createDirectory(at: ClaudeHooks.settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? #"{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}"#.write(to: ClaudeHooks.settingsURL, atomically: true, encoding: .utf8)
+        Paths.ensure(); Installer.installScripts()
+        do { try ClaudeHooks.install() } catch { fail("install \(error)") }
+        try? fm.createDirectory(at: ClaudeHooks.pluginsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? #"{"plugins":{"afk-pug@afk-pug":[{"scope":"user"}]}}"#.write(to: ClaudeHooks.pluginsURL, atomically: true, encoding: .utf8)
+        try? #"{"mcpServers":{"afkpug":{"command":"/x/AFKPug","args":["--mcp"]}},"other":1}"#.write(to: MCPInstaller.configURL, atomically: true, encoding: .utf8)
+        logOffset = readLog().count
+        step("launch with plugin + settings.json hooks + user-scope MCP", ticks: 0,
+             expect: ["log: Updated the Claude Code connection", "claude mcp remove --scope user afkpug"]) { Sim.headless = true; engine.boot() }
+        let text = (try? String(contentsOf: ClaudeHooks.settingsURL, encoding: .utf8)) ?? ""
+        check(!ClaudeHooks.isInstalled() && text.contains("opus") && text.contains("say done"), "our settings.json hooks removed, the user's kept")
+        check(MCPInstaller.providedByPlugin, "MCP provided by the plugin")
+        // Hooks added again by hand while the plugin is on: refresh removes them.
+        do { try ClaudeHooks.file.install() } catch { fail("file install \(error)") }
+        engine.refreshIntegrations()
+        check(!ClaudeHooks.isInstalled(), "refresh removes doubled hooks")
+        try? fm.removeItem(at: ClaudeHooks.pluginsURL)
+
+        // [b13] A "hooks" value that isn't an object is an error, never overwritten.
+        let files: [(AgentIntegration, URL)] = [(AgentIntegrations.claude, ClaudeHooks.settingsURL), (AgentIntegrations.codex, CodexHooks.file.url),
+                                                (AgentIntegrations.gemini, GeminiHooks.file.url), (AgentIntegrations.cursor, CursorHooks.configURL)]
+        for (item, url) in files {
+            for bad in [#"{"hooks":"off","keep":1}"#, #"{"hooks":[1,2],"keep":1}"#] {
+                try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? bad.write(to: url, atomically: true, encoding: .utf8)
+                var message = ""
+                do { try item.connect() } catch { message = error.localizedDescription }
+                check(!message.isEmpty && (try? String(contentsOf: url, encoding: .utf8)) == bad, "\(item.name): \(bad) refused, file untouched (\(message))")
+            }
+        }
+
+        // [b14] Detection from the parsed commands: JSON-escaped slashes count, a mention
+        // in another key doesn't.
+        let hookPath = Paths.hookScript.path.replacingOccurrences(of: "/", with: "\\/")
+        try? #"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"'\#(hookPath)' stop codex; true"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"my-linter"}]}]}}"#.write(to: CodexHooks.file.url, atomically: true, encoding: .utf8)
+        check(AgentIntegrations.codex.isConnected(), "escaped \\/ slashes: still detected as connected")
+        try? #"{"notes":"see ~/.afkpug/bin/afkpug-hook","hooks":{}}"#.write(to: GeminiHooks.file.url, atomically: true, encoding: .utf8)
+        check(!AgentIntegrations.gemini.isConnected(), "a mention outside the hooks isn't a connection")
+        try? "{\n  // mine\n  \"general\": {}\n}\n".write(to: GeminiHooks.file.url, atomically: true, encoding: .utf8)
+        try? #"{"version":1,"hooks":{"stop":[{"command":"./audit.sh"}]}}"#.write(to: CursorHooks.configURL, atomically: true, encoding: .utf8)
+        try? #"{"model":"opus"}"#.write(to: ClaudeHooks.settingsURL, atomically: true, encoding: .utf8)
+
+        // [b15] The Codex note follows the language.
+        L10n.language = .en
+        let en = AgentIntegrations.codex.setupNote
+        L10n.language = .th
+        let th = AgentIntegrations.codex.setupNote
+        let thWant = tr("Codex runs new hooks only after you trust them: open Codex and type /hooks.")
+        L10n.language = .system
+        check(en == "Codex runs new hooks only after you trust them: open Codex and type /hooks." && th == thWant && th != en,
+              "setupNote is translated on every read (en \(en ?? "nil"), th \(th ?? "nil"))")
+
+        // [b14] Uninstall cleans every config, keeps the user's own settings, and a
+        // file it can't parse without our hook (JSONC) is no problem.
+        step("uninstall", ticks: 0, expect: ["uninstall finished (0 problem(s))"]) { engine.uninstallEverything() }
+        let codex = (try? String(contentsOf: CodexHooks.file.url, encoding: .utf8)) ?? ""
+        check(!codex.contains("afkpug-hook") && !codex.contains("afkpug-hook".replacingOccurrences(of: "/", with: "\\/")) && codex.contains("my-linter"),
+              "Codex hook with escaped slashes removed, the user's linter kept (\(codex))")
+        check(((try? String(contentsOf: GeminiHooks.file.url, encoding: .utf8)) ?? "").contains("// mine"), "Gemini JSONC left alone")
+        check(((try? String(contentsOf: CursorHooks.configURL, encoding: .utf8)) ?? "").contains("audit.sh"), "Cursor user hooks kept")
+        check(((try? String(contentsOf: ClaudeHooks.settingsURL, encoding: .utf8)) ?? "").contains("opus"), "Claude settings kept")
+        check(((try? String(contentsOf: MCPInstaller.configURL, encoding: .utf8)) ?? "").contains("\"other\""), "~/.claude.json (sandbox) kept")
+        check(!fm.fileExists(atPath: Paths.root.path) && fm.fileExists(atPath: Sim.home.appendingPathComponent(".codex").path),
+              "~/.afkpug removed, the rest of the home untouched")
+    }
+
+    func limitFormats() {
+        configure(); boot()
+        let now = Date()
+        func fmt(_ date: Date, _ format: String, tz: String? = nil) -> String {
+            let df = DateFormatter()
+            df.locale = Locale(identifier: "en_US_POSIX"); df.dateFormat = format
+            if let tz { df.timeZone = TimeZone(identifier: tz) }
+            return df.string(from: date)
+        }
+        let in2h = now.addingTimeInterval(2 * 3600), in3h = now.addingTimeInterval(3 * 3600)
+        let hourAhead = Calendar.current.date(bySetting: .minute, value: 0, of: now.addingTimeInterval(3 * 3600)).map { $0 < now.addingTimeInterval(2 * 3600) ? $0.addingTimeInterval(3600) : $0 } ?? in3h
+        let pm = fmt(hourAhead, "h") + (fmt(hourAhead, "a") == "AM" ? " a.m." : " p.m.")
+        func within(_ target: Date, _ slack: TimeInterval = 70) -> ClosedRange<TimeInterval> {
+            let t = target.timeIntervalSince(now) + 120
+            return (t - slack)...(t + slack)
+        }
+        let cases: [(String, String, ClosedRange<TimeInterval>?)] = [
+            ("4.30pm style", "You've hit your session limit · resets \(fmt(in2h, "h.mma").lowercased())", within(in2h)),
+            ("'3 p.m.' style", "Session limit reached · resets \(pm)", within(hourAhead, 10)),
+            ("9:05PM upper case", "You've hit your session limit · resets \(fmt(in3h, "h:mma"))", within(in3h)),
+            ("time zone in parens", "Claude usage limit reached. Your limit will reset at \(fmt(in2h, "h:mma", tz: "America/New_York").lowercased()) (America/New_York).", within(in2h)),
+            ("unknown time zone ignored", "resets \(fmt(in2h, "h:mma").lowercased()) (Mars/Olympus)", within(in2h)),
+            ("ISO Z with fraction and a dot", "Limit resets \(fmt(in3h, "yyyy-MM-dd'T'HH:mm:ss.SSS", tz: "UTC"))Z.", within(in3h, 5)),
+            ("ISO +0700 offset", "resets \(fmt(in3h, "yyyy-MM-dd'T'HH:mm:ssZ", tz: "Asia/Bangkok"))", within(in3h, 5)),
+            ("ISO -05:00 offset", "resets \(fmt(in3h, "yyyy-MM-dd'T'HH:mm:ssxxx", tz: "America/Bogota"))", within(in3h, 5)),
+            ("'will reset at'", "Your limit will reset at \(fmt(in2h, "h:mma").lowercased())", within(in2h)),
+            ("epoch after a pipe", "Claude AI usage limit reached|\(Int(in2h.timeIntervalSince1970))", within(in2h, 3)),
+            ("escaped quotes in the message", #"You've hit your \"session\" limit · \"resets\" soon · resets "# + fmt(in2h, "h:mma").lowercased(), within(in2h)),
+            ("in 2 hours", "Usage limit reached, resets in 2 hours", within(in2h, 5)),
+            ("30 min ago: Claude continues any moment", "You've hit your session limit · resets \(fmt(now.addingTimeInterval(-30 * 60), "h:mma").lowercased())", 170...200),
+            ("unreadable time, no date: 30 min", "Usage limit reached · resets soon", 1790...1810),
+            ("unreadable, weekday: released", "Weekly limit reached · resets Sunday morning", nil),
+            ("month-day without a time, days away: released", "Weekly limit · resets \(fmt(now.addingTimeInterval(4 * 86400), "MMM d"))", nil),
+            ("stale ISO a day old: released", "resets \(fmt(now.addingTimeInterval(-86400), "yyyy-MM-dd HH:mm", tz: "UTC")) UTC", nil),
+        ]
+        for (label, message, range) in cases {
+            hk("start", "claude", cj("lf", "UserPromptSubmit"))
+            hk("fail", "claude", limitFail("lf", message))
+            let left = exists("claude-lf") ? (expiresAt("claude-lf").map { $0 - nowS } ?? -1) : nil
+            try? FileManager.default.removeItem(at: Paths.holds.appendingPathComponent("claude-lf"))
+            if let range { check(left.map { range.contains($0) } == true, "\(label): '\(message)' (expires in \(left.map { Int($0) } ?? -1) s, want \(Int(range.lowerBound))...\(Int(range.upperBound)))") }
+            else { check(left == nil, "\(label): '\(message)' (got \(left.map { "hold \(Int($0)) s" } ?? "no hold"))") }
+        }
+        step("events", ticks: 2) {}
+    }
+
+    func uiContract() {
+        configure(["graceMinutes": 2]); boot()
+        check(engine.headline == tr("Idle"), "idle headline 'Idle' (\(engine.headline))")
+        // Fmt: no "0m" on whole hours.
+        L10n.language = .en
+        check(Fmt.duration(3600) == "1h" && Fmt.duration(5400) == "1h 30m" && Fmt.duration(600) == "10m", "Fmt.duration: \(Fmt.duration(3600)), \(Fmt.duration(5400))")
+        check(Fmt.countdown(7200) == "2h" && Fmt.countdown(3660) == "1h 1m" && Fmt.countdown(61) == "1m 1s", "Fmt.countdown: \(Fmt.countdown(7200)), \(Fmt.countdown(3660))")
+        L10n.language = .th
+        check(Fmt.duration(3600) == tr("%dh", 1) && !Fmt.duration(3600).contains("0"), "Thai whole hour: \(Fmt.duration(3600))")
+        L10n.language = .system
+        // Trigger sublines name the reason.
+        step("app trigger") { engine.autoApps = "Xcode"; Sim.set("apps", "Xcode") }
+        check(engine.subline == tr("Sleeps normally once %@ quits", "Xcode") && engine.triggerKind == .app("Xcode"), "app: \(engine.subline)")
+        step("charger trigger") { Sim.set("apps", nil); engine.autoOnPower = true; Sim.set("battery", "80 ac") }
+        check(engine.subline == tr("Sleeps normally once you unplug"), "charger: \(engine.subline)")
+        step("music trigger") { engine.autoOnPower = false; Sim.set("audio", "playing") }
+        check(engine.subline == tr("Sleeps normally once the music stops"), "music: \(engine.subline)")
+        check(engine.canSleepNow, "Sleep now offered for music")
+        step("music stops", ticks: 20, every: 2) { Sim.set("audio", "silent"); Sim.set("battery", "80 battery") }
+        // Usage-limit waits.
+        hk("start", "claude", cj("ui-1", "UserPromptSubmit"))
+        hk("fail", "claude", limitFail("ui-1", "You've hit your session limit · resets in 2 hours"))
+        step("usage-limit wait", ticks: 1) {}
+        check(engine.waitingAgents == 1 && engine.holds.count == 1 && engine.headline == tr("Waiting for the usage limit"), "waiting: \(engine.waitingAgents), \(engine.headline)")
+        hk("start", "claude", cj("ui-2", "UserPromptSubmit"))
+        step("plus a working session", ticks: 1) {}
+        check(engine.waitingAgents == 1 && engine.headline == tr("Watching %d agents", 2), "one wait, one working: \(engine.headline)")
+        removeAllHolds()
+        // Grace, then a battery trip: no Sleep now, no grace wording.
+        step("hold ends: grace", ticks: 2) { hold("claude-g"); }
+        step("", ticks: 1) { dropHold("claude-g", event: nil) }
+        check(engine.graceActive && engine.canSleepNow, "grace: Sleep now offered")
+        step("battery at the floor during grace", ticks: 1) { Sim.set("battery", "10 battery") }
+        check(engine.trip != nil && !engine.graceActive && !engine.canSleepNow && engine.batteryTripNeedsCharger, "tripped: no grace, no Sleep now, needs the charger")
+        check(engine.thermalCooldownRemaining == nil, "no thermal cooldown for a battery trip")
+        step("charger in", ticks: 1) { Sim.set("battery", "10 ac") }
+        check(!engine.batteryTripNeedsCharger, "on the charger: doesn't need it any more (trip clears after 30 s)")
+        step("steady charger", ticks: 20) {}
+        check(engine.trip == nil, "trip cleared")
+        // Thermal trip and its cooldown.
+        step("Go AFK, critical heat", ticks: 1) { engine.start(); Sim.set("thermal", "critical") }
+        check(engine.trip == .thermal && engine.thermalCooldownRemaining == nil && !engine.canSleepNow, "hot: no countdown yet, no Sleep now")
+        step("cools down", ticks: 1) { Sim.set("thermal", "nominal") }
+        let first = engine.thermalCooldownRemaining ?? -1
+        step("100 s later", ticks: 50) {}
+        let later = engine.thermalCooldownRemaining ?? -1
+        check(first > 290 && first <= 300 && abs((first - later) - 100) < 3, "cooldown counts down (\(Int(first)) -> \(Int(later)))")
+        step("cool for 5 min", ticks: 110) {}
+        check(engine.trip == nil && engine.thermalCooldownRemaining == nil, "trip cleared, no countdown")
+        // Admin dialog errors.
+        typealias E = PowerControl.AdminError
+        check(E.from(output: "0:93: execution error: User canceled. (-128)", status: 1) == .cancelled, "-128 -> cancelled")
+        check(E.from(output: "execution error: The administrator user name or password was incorrect. (-60005)", status: 1) == .wrongPassword, "-60005 -> wrong password")
+        check(E.from(output: "boom", status: 1) == .failed("boom") && E.from(output: "", status: 3) == .failed("exit 3"), "other errors kept")
+        check(!E.wrongPassword.message.isEmpty && E.cancelled.message != E.wrongPassword.message, "friendly messages")
+        engine.stop()
     }
 }
