@@ -44,11 +44,14 @@ You ask Claude Code to refactor a module, close your MacBook, and walk to lunch.
 - **One click.** Pick 30m, 1h, 2h, 4h, 8h or ∞ and press **Go AFK**. Add 30 minutes or stop at any time.
 - **No monitor, no dongle.** Works with the lid closed on battery or on power.
 - **Shortcut.** <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>A</kbd> starts or stops AFK from any app.
+- **Sleep now.** When music, the charger or the grace period is keeping the Mac awake, one click lets it sleep; those triggers stay quiet until they stop and start again.
+- **Opens at login**, so agent mode keeps working after a restart (toggle in Settings → General).
 
 ### Knows when your agents work
 - **Agent mode.** Awake only while Claude Code (or another agent) is working. An idle session at the prompt doesn't count, so the Mac sleeps normally.
 - **Grace period.** Waits 2, 5 or 15 minutes after the last agent finishes, in case you send another prompt.
-- **Notifications.** Tells you when an agent finishes or is waiting for you. Optional push to your phone through [ntfy](https://ntfy.sh).
+- **Smart about Claude Code.** Background tasks still running after Claude's reply keep the Mac awake. An interrupted turn (Esc) or an API error lets it sleep. A "finished" notification only fires once the agent has really stopped.
+- **Notifications.** Tells you when an agent finishes, needs a permission or hits an error. Optional push to your phone through [ntfy](https://ntfy.sh).
 
 ### Easy on the battery
 When the lid closes, AFK Pug:
@@ -61,11 +64,11 @@ When the lid closes, AFK Pug:
 Everything is put back when you open the lid, along with a short **"While you were away"** summary: time closed, battery used, agent turns finished and peak temperature.
 
 ### Music keeps playing
-YouTube, Spotify or Apple Music playing? AFK Pug notices the audio and keeps the Mac awake with the sound on, even if you didn't press Go AFK.
+YouTube, Spotify or Apple Music playing? AFK Pug notices the audio (and shows which app), keeps the Mac awake with the sound on, and ignores short gaps between tracks. With the lid closed, audio only counts if it was already playing when you closed it, so an idle browser tab can't keep a Mac in a bag awake.
 
 ### Starts by itself
 - when the charger is connected,
-- while apps you choose are open (for example `Xcode, Docker, OBS`).
+- while apps you choose are open (names as shown in the Dock, for example `Xcode, Docker Desktop, OBS`).
 
 ### Speaks your language
 Thai and English, switchable in Settings. Follows your macOS language by default.
@@ -103,13 +106,28 @@ If you use Amphetamine or a similar app, quit it so the two don't fight over sle
 
 ### Command line
 
-The CLI is installed at `~/.afkpug/bin/afkpug`.
+The CLI is installed at `~/.afkpug/bin/afkpug`. Add it to your PATH:
 
 ```sh
-afkpug run -- npm run build              # keep awake while a command runs
-afkpug hold --for 2h --reason "deploy"   # keep awake for a while
-afkpug release                           # drop CLI holds
-afkpug status                            # what's keeping the Mac awake
+export PATH="$HOME/.afkpug/bin:$PATH"
+```
+
+```sh
+afkpug run -- npm run build              # keep awake while a command runs (exit code and Ctrl-C pass through)
+afkpug hold --for 1h30m --reason deploy  # 90s, 45m, 2h, 1h30m; a bare number means minutes; max 24h
+afkpug release                           # drop CLI and agent-tool holds
+afkpug status                            # is the app running, and every hold with time left
+```
+
+### URL commands
+
+For Shortcuts, Raycast, Alfred or scripts:
+
+```sh
+open "afkpug://start?minutes=90"   # 0 = until you stop
+open "afkpug://stop"
+open "afkpug://toggle"
+open "afkpug://sleep-now"
 ```
 
 ### Let the agent ask (MCP)
@@ -119,7 +137,7 @@ Under **Settings → Agents → Let agents keep the Mac awake**, AFK Pug registe
 | Tool | What it does |
 |---|---|
 | `keep_mac_awake` | Stay awake for 1–720 minutes, with a reason |
-| `release_mac_awake` | Drop the holds it created |
+| `release_mac_awake` | Drop the holds this session created |
 | `afk_status` | List what's keeping the Mac awake |
 
 Useful when a build or deploy keeps running after the agent's reply.
@@ -173,19 +191,32 @@ Timers end on their own, agent mode ends when the work does, and quitting the ap
 No. Everything stays on your Mac. The only network request is the optional phone notification, which goes to the ntfy topic you enter.
 </details>
 
+## Uninstall
+
+**Settings → Uninstall AFK Pug…** removes the Claude Code hooks, the MCP registration, the watchdog, the lid-closed permission and `~/.afkpug`, restores normal sleep, and quits. Then delete the app. Your original `~/.claude/settings.json` is kept as `settings.json.afkpug-backup`.
+
+## Testing
+
+A headless simulator drives the engine with fake lid, battery, heat, audio and process input. Nothing real runs: every power command is logged instead.
+
+```sh
+AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate all      # 37 scenarios
+AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate stress   # 49 adversarial scenarios
+```
+
 ## Roadmap
 
-- [ ] Signed and notarized release download
-- [ ] Privileged helper (SMAppService) instead of a sudoers rule
-- [ ] Native hooks for Codex, Cursor and Gemini CLI
-- [ ] Wake the Mac shortly before a Claude usage limit resets
+- [ ] Signed and notarized release download, Homebrew cask, auto-update (needs an Apple Developer ID)
+- [ ] Privileged helper (SMAppService) instead of a sudoers rule (needs signing)
+- [ ] Native hooks for Codex, Cursor and Gemini CLI (today: process detection)
+- [ ] Stay awake until a Claude usage limit resets
 - [ ] PushPug integration
 
 ## Project layout
 
 ```
 Sources/AFKPug/
-├── App.swift           entry point, menu bar, --mcp and render modes
+├── App.swift           entry point, menu bar, URL commands, --mcp / --simulate / render modes
 ├── Engine.swift        session logic: timers, agents, guards, lid actions
 ├── PowerControl.swift  pmset, IOKit assertions, one-time setup
 ├── Sensors.swift       lid, battery and thermal state
@@ -195,7 +226,8 @@ Sources/AFKPug/
 ├── Views.swift         home screen
 ├── Settings.swift      settings screen and shared controls
 ├── PugArt.swift        the pug, app icon and menu bar icon
-└── L10n.swift          Thai and English strings
+├── L10n.swift          Thai and English strings
+└── Simulation.swift    headless test scenarios
 ```
 
 ## Credits
