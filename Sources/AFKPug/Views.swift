@@ -8,7 +8,7 @@ enum Theme {
     static let line = Color.white.opacity(0.07)
     static let text = Color.white.opacity(0.94)
     static let sub = Color.white.opacity(0.50)
-    static let faint = Color.white.opacity(0.28)
+    static let faint = Color.white.opacity(0.42)
     static let accent = Color(red: 0.98, green: 0.63, blue: 0.35)
     static let live = Color(red: 0.40, green: 0.85, blue: 0.56)
 
@@ -119,8 +119,7 @@ private struct Header: View {
                 }
             }
             Spacer(minLength: 8)
-            IconButton(symbol: "gearshape", action: openSettings)
-                .help(tr("Settings"))
+            IconButton(symbol: "gearshape", label: tr("Settings"), action: openSettings)
         }
     }
 
@@ -146,14 +145,15 @@ private struct TimerBlock: View {
     @ObservedObject var engine: Engine
 
     /// What the big text shows outside a guard trip.
-    private enum Mode { case manual, grace, working, awake, idle }
+    private enum Mode { case manual, grace, working, awake, trip, idle }
 
     private var mode: Mode {
-        if engine.trip != nil { return .idle }
+        if engine.trip != nil { return .trip }
         if engine.manualOn { return .manual }
         if !engine.holds.isEmpty { return .working }
         if engine.graceActive { return .grace }
-        if engine.isActive { return .awake }
+        // Only a real trigger shows "Awake"; the tick right after grace ends must not flash it.
+        if engine.isActive, engine.triggerReason != nil { return .awake }
         return .idle
     }
 
@@ -175,7 +175,7 @@ private struct TimerBlock: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(bigText(mode, at: date))
                     .font(.system(size: 46, weight: .light, design: .rounded).monospacedDigit())
-                    .foregroundStyle(mode == .idle ? Theme.faint : Theme.text)
+                    .foregroundStyle(mode == .idle ? Theme.faint : (mode == .trip ? Palette.warn : Theme.text))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     // Only animates inside an explicit transaction (picking a duration),
@@ -188,6 +188,7 @@ private struct TimerBlock: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
 
+                // Only while counting down; an empty track at rest looked like a stopped timer.
                 GeometryReader { geo in
                     Capsule().fill(Theme.line)
                         .overlay(alignment: .leading) {
@@ -197,6 +198,7 @@ private struct TimerBlock: View {
                 }
                 .frame(height: 2)
                 .padding(.top, 4)
+                .opacity(counting ? 1 : 0)
             }
         }
     }
@@ -212,6 +214,9 @@ private struct TimerBlock: View {
             return engine.holds.count == 1 ? tr("1 agent") : tr("%d agents", engine.holds.count)
         case .awake:
             return tr("Awake")
+        case .trip:
+            if case .battery(let p) = engine.trip { return "\(p)%" }
+            return tr("Too hot")
         case .idle:
             let m = engine.selectedMinutes
             return m > 0 ? Fmt.clock(TimeInterval(m * 60)) : "∞"
@@ -224,7 +229,10 @@ private struct TimerBlock: View {
             if let end = engine.manualEnd { return tr("until %@", end.formatted(date: .omitted, time: .shortened)) }
         case .grace:
             // A duration with units: "14:38" here once read as a clock time.
-            return tr("Agents done. Sleeping in %@", Fmt.countdown((engine.graceUntil ?? date).timeIntervalSince(date)))
+            return tr("Sleeping in %@", Fmt.countdown((engine.graceUntil ?? date).timeIntervalSince(date)))
+        case .idle:
+            let m = engine.selectedMinutes
+            return m > 0 ? tr("Press Go AFK to stay awake for %@", Fmt.minutes(m)) : tr("Press Go AFK to stay awake until you stop")
         default:
             break
         }
@@ -252,6 +260,7 @@ private struct TimerBlock: View {
 private struct Durations: View {
     @ObservedObject var engine: Engine
     @Namespace private var ns
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let choices = [30, 60, 120, 240, 480, 0]
 
     var body: some View {
@@ -259,12 +268,16 @@ private struct Durations: View {
             ForEach(choices, id: \.self) { m in
                 Segment(title: Fmt.minutes(m), selected: engine.selectedMinutes == m, ns: ns) {
                     guard engine.selectedMinutes != m else { return }
-                    withAnimation(Theme.smooth) { engine.choose(minutes: m) }
+                    if reduceMotion { engine.choose(minutes: m) } else { withAnimation(Theme.smooth) { engine.choose(minutes: m) } }
                 }
             }
         }
         .padding(3)
         .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Theme.surface))
+        // Agents, grace or a trigger are in charge: picking a time would do nothing visible.
+        .opacity(!engine.manualOn && engine.isActive ? 0.45 : 1)
+        .help(engine.manualOn ? tr("Picking a time restarts the countdown") : "")
+        .accessibilityLabel(tr("Duration"))
     }
 
     private struct Segment: View {
@@ -308,16 +321,32 @@ private struct MainAction: View {
         HStack(spacing: 8) {
             if engine.manualOn {
                 ActionButton(title: tr("Stop"), style: .outline) { engine.stop() }
-                ActionButton(title: tr("+30m"), style: .quiet) { engine.addTime(minutes: 30) }
-                    .frame(width: 104)
-                    .disabled(engine.manualEnd == nil)
+                if engine.manualEnd != nil {
+                    ActionButton(title: tr("+30m"), style: .quiet) { engine.addTime(minutes: 30) }
+                        .frame(width: 104)
+                }
             } else {
                 ActionButton(title: tr("Go AFK"), style: .solid) { engine.start() }
                     .disabled(engine.trip != nil)
+                    .keyboardShortcut(.defaultAction)
+                    .help(tripHelp)
+                if engine.canSleepNow {
+                    ActionButton(title: tr("Sleep now"), style: .outline) { engine.sleepNow() }
+                        .frame(width: 118)
+                        .help(tr("Let the Mac sleep now; music or the charger won't keep it awake until they stop and start again"))
+                }
             }
         }
         .frame(height: 40)
         .animation(Theme.fade, value: engine.manualOn)
+    }
+
+    private var tripHelp: String {
+        switch engine.trip {
+        case .battery: return tr("Plug in the charger to keep going")
+        case .thermal: return tr("Waiting for the Mac to cool down")
+        case nil: return ""
+        }
     }
 }
 
@@ -395,7 +424,9 @@ struct MiniSwitch: ToggleStyle {
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
-            .accessibilityValue(on ? "on" : "off")
+            .accessibilityRepresentation {
+                Toggle(isOn: configuration.$isOn) { configuration.label }
+            }
         }
     }
 }
@@ -419,9 +450,14 @@ private struct Modes: View {
                 Toggle(tr("Agent mode"), isOn: $engine.agentMode).toggleStyle(MiniSwitch()).labelsHidden()
             }
             if engine.agentMode, !engine.holds.isEmpty {
-                VStack(spacing: 2) {
-                    ForEach(engine.holds) { hold in
+                // At most 3 rows so the window doesn't keep growing.
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(engine.holds.prefix(3)) { hold in
                         AgentRow(hold: hold) { engine.release(hold) }
+                    }
+                    if engine.holds.count > 3 {
+                        Text(tr("+%d more", engine.holds.count - 3)).font(.system(size: 11)).foregroundStyle(Theme.sub)
+                            .padding(.leading, 14)
                     }
                 }
                 .padding(.leading, 30).padding(.bottom, 8)
@@ -443,13 +479,22 @@ private struct Modes: View {
             Rectangle().fill(Theme.line).frame(height: 1)
 
             ModeRow(symbol: "laptopcomputer", title: tr("Lid-closed mode"),
-                    detail: engine.setupDone ? tr("Screen off, sound off, work keeps running") : tr("Needs a one-time permission")) {
-                if engine.setupDone || !engine.lidMode {
-                    Toggle(tr("Lid-closed mode"), isOn: $engine.lidMode).toggleStyle(MiniSwitch()).labelsHidden()
-                } else {
-                    PillButton(title: tr("Set up"), style: .primary) { engine.runSetup() }
-                        .help(tr("Asks for your password once. Only allows turning lid sleep on and off."))
+                    detail: engine.setupDone ? tr("Screen off, work keeps running") : tr("Needs a one-time permission")) {
+                Toggle(tr("Lid-closed mode"), isOn: $engine.lidMode).toggleStyle(MiniSwitch()).labelsHidden()
+            }
+            if engine.lidMode, !engine.setupDone {
+                HStack(spacing: 8) {
+                    Text(tr("Asks for your password once. Only allows turning lid sleep on and off."))
+                        .font(.system(size: 11)).foregroundStyle(Theme.sub)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    if engine.setupWorking {
+                        PillButton(title: tr("Working…"), style: .soft) {}.disabled(true)
+                    } else {
+                        PillButton(title: tr("Set up"), style: .primary) { engine.runSetup() }
+                    }
                 }
+                .padding(.leading, 30).padding(.bottom, 10)
             }
             if let error = engine.setupError {
                 ErrorText(error).padding(.leading, 30).padding(.bottom, 10)
@@ -457,8 +502,7 @@ private struct Modes: View {
 
             Rectangle().fill(Theme.line).frame(height: 1)
 
-            ModeRow(symbol: "music.note", title: tr("Keep music playing"),
-                    detail: engine.musicPlaying && engine.keepMusic ? tr("music playing") : tr("YouTube, Spotify, Apple Music keep playing and sound stays on")) {
+            ModeRow(symbol: "music.note", title: tr("Keep music playing"), detail: musicDetail) {
                 Toggle(tr("Keep music playing"), isOn: $engine.keepMusic).toggleStyle(MiniSwitch()).labelsHidden()
             }
         }
@@ -466,9 +510,16 @@ private struct Modes: View {
 
     private var agentDetail: String {
         if engine.agentMode, engine.holds.isEmpty {
-            return engine.graceActive ? tr("All done. Cooling down before sleep") : tr("No agents working right now")
+            return engine.graceActive ? tr("Waiting in case more work comes") : tr("No agents working right now")
         }
         return tr("Awake only while your AI agents work")
+    }
+
+    private var musicDetail: String {
+        if engine.keepMusic, engine.musicPlaying, !engine.musicApps.isEmpty {
+            return tr("Playing: %@", engine.musicApps.prefix(2).joined(separator: ", "))
+        }
+        return tr("Mac stays awake while audio plays")
     }
 }
 
@@ -486,8 +537,10 @@ private struct ModeRow<Trailing: View>: View {
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
+                // One line, so a changing detail never resizes the window.
                 Text(detail).font(.system(size: 11)).foregroundStyle(Theme.sub)
-                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1).truncationMode(.tail)
+                    .help(detail)
             }
             Spacer(minLength: 8)
             trailing
@@ -518,14 +571,17 @@ private struct AgentRow: View {
             LiveDot(color: Theme.live)
             Text(hold.displayName).font(.system(size: 11.5, weight: .medium))
                 .lineLimit(1)
-                .layoutPriority(1)
+                .truncationMode(.middle)
             // Minute resolution, so a slow timeline is enough (and it only runs while visible).
+            // The time keeps its width; a long name truncates instead.
             TimelineView(.periodic(from: .now, by: 30)) { _ in
                 Text(hold.expires.map { tr("until %@", $0.formatted(date: .omitted, time: .shortened)) }
                      ?? tr("working for %@", Fmt.duration(Clock.now().timeIntervalSince(hold.started))))
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.sub)
                     .lineLimit(1)
+                    .fixedSize()
             }
+            .layoutPriority(1)
             Spacer(minLength: 4)
             Button(action: release) {
                 Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
@@ -537,6 +593,7 @@ private struct AgentRow: View {
             .buttonStyle(.plain)
             .onHover { hover = $0 }
             .help(tr("Stop keeping awake for this one"))
+            .accessibilityLabel(tr("Stop keeping awake for this one"))
         }
         .padding(.vertical, 4)
     }
@@ -551,11 +608,11 @@ private struct StatusBar: View {
     var body: some View {
         HStack(spacing: 14) {
             if engine.battery.hasBattery {
-                item(engine.battery.onAC ? "bolt.fill" : "battery.50percent", "\(engine.battery.percent)%",
+                item(batterySymbol, "\(engine.battery.percent)%",
                      warn: engine.battery.percent <= engine.batteryFloor && !engine.battery.onAC)
             }
             item("thermometer.medium", engine.thermal.label, warn: engine.thermal.rawValue >= ProcessInfo.ThermalState.serious.rawValue)
-            item(engine.lidOverrideOn ? "lock.open" : "lock", engine.lidOverrideOn ? tr("Lid armed") : tr("Lid normal"), warn: false)
+            item("laptopcomputer", engine.lidOverrideOn ? tr("Lid: keeps running") : tr("Lid: sleeps"), warn: false)
             Spacer(minLength: 8)
             Button(tr("Quit")) { NSApp.terminate(nil) }
                 .buttonStyle(.plain)
@@ -564,6 +621,17 @@ private struct StatusBar: View {
                 .onHover { quitHover = $0 }
         }
         .padding(.top, 2)
+    }
+
+    private var batterySymbol: String {
+        if engine.battery.onAC { return "battery.100percent.bolt" }
+        switch engine.battery.percent {
+        case ..<13: return "battery.0percent"
+        case ..<38: return "battery.25percent"
+        case ..<63: return "battery.50percent"
+        case ..<88: return "battery.75percent"
+        default: return "battery.100percent"
+        }
     }
 
     private func item(_ symbol: String, _ text: String, warn: Bool) -> some View {
@@ -586,7 +654,7 @@ private struct SummaryCard: View {
             HStack {
                 Text(tr("While you were away")).font(.system(size: 12, weight: .semibold))
                 Spacer()
-                IconButton(symbol: "xmark", size: 22, action: dismiss)
+                IconButton(symbol: "xmark", size: 22, label: tr("Close"), action: dismiss)
             }
             HStack(alignment: .top, spacing: 8) {
                 Figure(value: Fmt.duration(summary.duration), label: tr("lid closed"))

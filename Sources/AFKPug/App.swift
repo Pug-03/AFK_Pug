@@ -9,6 +9,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated { Engine.shared.shutdown() }
     }
+
+    /// afkpug://start?minutes=90, stop, toggle, sleep-now (Shortcuts, scripts, Raycast …).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        MainActor.assumeIsolated { urls.forEach { Engine.shared.handle(url: $0) } }
+    }
 }
 
 struct AFKPugApp: App {

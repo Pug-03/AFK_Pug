@@ -3,128 +3,123 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var engine: Engine
     var back: () -> Void
+    @State private var confirmRemove = false
+    @State private var confirmUninstall = false
+    @State private var phoneSent = false
+    @State private var showDev = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 6) {
-                IconButton(symbol: "chevron.left", action: back)
+                IconButton(symbol: "chevron.left", label: tr("Back"), action: back)
+                    .keyboardShortcut(.cancelAction)
                 Text(tr("Settings")).font(.system(size: 13, weight: .semibold))
                 Spacer()
             }
 
             ScrollView {
                 VStack(spacing: 18) {
-                    Section(title: tr("Language")) {
-                        Picker("", selection: $engine.language) {
-                            ForEach(AppLanguage.allCases) { lang in Text(lang.label).tag(lang) }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                    }
-
                     Section(title: tr("When the lid closes")) {
-                        ToggleRow(symbol: "music.note", tint: Palette.night, title: tr("Keep music playing"),
-                                  detail: tr("YouTube, Spotify, Apple Music keep playing and sound stays on"), isOn: $engine.keepMusic)
-                        ToggleRow(symbol: "display", tint: Palette.night, title: tr("Turn the screen off"),
+                        ToggleRow(symbol: "display", title: tr("Turn the screen off"),
                                   detail: tr("Keeps the panel dark under the lid"), isOn: $engine.displayOffOnClose)
-                        ToggleRow(symbol: "speaker.slash.fill", tint: Palette.night, title: tr("Mute sound"),
+                        ToggleRow(symbol: "speaker.slash", title: tr("Mute sound"),
                                   detail: tr("Restored when you open the lid"), isOn: $engine.muteOnClose)
-                        ToggleRow(symbol: "leaf.fill", tint: Palette.awake, title: tr("Low Power Mode on battery"),
+                        ToggleRow(symbol: "leaf", title: tr("Low Power Mode on battery"),
                                   detail: tr("Also turns on if the Mac gets hot"), isOn: $engine.lowPowerOnClose)
-                        ToggleRow(symbol: "powerplug.fill", tint: Palette.apricot, title: tr("Only when plugged in"),
-                                  detail: tr("Lid-closed mode needs a charger"), isOn: $engine.lidOnlyOnPower)
-                        ToggleRow(symbol: "lock.fill", tint: Palette.mask, title: tr("Lock the screen"),
+                        ToggleRow(symbol: "lock", title: tr("Lock the screen"),
                                   detail: tr("Nobody can use your Mac while you're away"), isOn: $engine.lockOnClose)
-                        ToggleRow(symbol: "bubble.left.and.bubble.right.fill", tint: Palette.night, title: tr("Pause chat apps"),
+                        ToggleRow(symbol: "bubble.left.and.bubble.right", title: tr("Pause chat apps"),
                                   detail: tr("Slack, Discord, LINE and others. Resumed when you open the lid"), isOn: $engine.pauseChatApps)
+                        ToggleRow(symbol: "powerplug", title: tr("Only when plugged in"),
+                                  detail: tr("On battery, closing the lid sleeps the Mac as usual"), isOn: $engine.lidOnlyOnPower)
                     }
 
                     Section(title: tr("Safety")) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Label(tr("Stop at battery"), systemImage: "battery.25percent")
-                                    .font(.system(size: 12, weight: .semibold))
-                                Spacer()
-                                Text("\(engine.batteryFloor)%")
-                                    .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
-                                    .foregroundStyle(Theme.text)
-                            }
-                            Slider(value: Binding(get: { Double(engine.batteryFloor) },
-                                                  set: { engine.batteryFloor = Int($0) }), in: 5...50, step: 5)
+                        Row(symbol: "battery.25percent", title: tr("Stop at battery"),
+                            detail: tr("If the Mac gets critically hot, AFK Pug always lets it sleep.")) {
+                            Text("\(engine.batteryFloor)%")
+                                .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
                         }
-                        Text(tr("If the Mac gets critically hot, AFK Pug always lets it sleep."))
-                            .font(.system(size: 10.5)).foregroundStyle(Theme.sub)
+                        Slider(value: Binding(get: { Double(engine.batteryFloor) },
+                                              set: { engine.batteryFloor = Int($0) }), in: 5...50, step: 5)
+                            .padding(.leading, 30)
+                            .accessibilityLabel(tr("Stop at battery"))
                     }
 
                     Section(title: tr("Agents")) {
-                        ToggleRow(symbol: "bell.badge.fill", tint: Palette.apricot, title: tr("Notify me"),
+                        ToggleRow(symbol: "bell", title: tr("Notify me"),
                                   detail: tr("When an agent finishes or needs you"), isOn: $engine.notifyAgents)
-                        HStack {
-                            Label(tr("Wait before sleeping"), systemImage: "hourglass").font(.system(size: 12, weight: .semibold))
-                            Spacer()
-                            Picker("", selection: $engine.graceMinutes) {
+                        Row(symbol: "hourglass", title: tr("Wait before sleeping"),
+                            detail: tr("After the last agent finishes")) {
+                            Picker(tr("Wait before sleeping"), selection: $engine.graceMinutes) {
                                 Text(tr("Off")).tag(0); Text(tr("2 min")).tag(2); Text(tr("5 min")).tag(5); Text(tr("15 min")).tag(15)
                             }
-                            .labelsHidden().frame(width: 90)
+                            .labelsHidden().frame(width: 92)
                         }
-                        HStack {
-                            Label("Claude Code", systemImage: "link").font(.system(size: 12, weight: .semibold))
-                            Spacer()
+                        Row(symbol: "link", title: "Claude Code",
+                            detail: engine.claudeConnected ? tr("Connected") : tr("Detects when Claude is working")) {
                             if engine.claudeConnected {
-                                PillButton(title: tr("Disconnect"), style: .quiet) { engine.disconnectClaude() }
+                                PillButton(title: tr("Disconnect"), style: .soft) { engine.disconnectClaude() }
                             } else {
-                                PillButton(title: tr("Connect"), style: .soft) { engine.connectClaude() }
+                                PillButton(title: tr("Connect"), style: .primary) { engine.connectClaude() }
                             }
                         }
-                        if let error = engine.claudeError { ErrorText(error) }
-                        ToggleRow(symbol: "magnifyingglass", tint: Palette.awake, title: tr("Detect other agents"),
+                        if let error = engine.claudeError { ErrorText(error).padding(.leading, 30) }
+                        ToggleRow(symbol: "magnifyingglass", title: tr("Detect other agents"),
                                   detail: tr("Codex, Gemini CLI, Cursor Agent, Aider, OpenCode and more"), isOn: $engine.detectOtherAgents)
-                        HStack {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Label(tr("Let agents keep the Mac awake"), systemImage: "cpu").font(.system(size: 12, weight: .semibold))
-                                Text(tr("Adds an AFK Pug tool to Claude Code for long builds and deploys"))
-                                    .font(.system(size: 10.5)).foregroundStyle(Theme.sub).fixedSize(horizontal: false, vertical: true)
-                            }
-                            Spacer()
+                        Row(symbol: "cpu", title: tr("Let agents keep the Mac awake"),
+                            detail: tr("Adds an AFK Pug tool to Claude Code for long builds and deploys")) {
                             if engine.mcpBusy {
-                                PillButton(title: tr("Working…"), style: .quiet) {}
-                                    .disabled(true)
+                                PillButton(title: tr("Working…"), style: .soft) {}.disabled(true)
                             } else if engine.mcpConnected {
-                                PillButton(title: tr("Disconnect"), style: .quiet) { engine.disconnectMCP() }
+                                PillButton(title: tr("Disconnect"), style: .soft) { engine.disconnectMCP() }
                             } else {
-                                PillButton(title: tr("Connect"), style: .soft) { engine.connectMCP() }
+                                PillButton(title: tr("Connect"), style: .primary) { engine.connectMCP() }
                             }
                         }
-                        if let error = engine.mcpError { ErrorText(error) }
-                        Text(tr("Any other tool: run  afkpug run -- <command>  or  afkpug hold --for 2h  (in ~/.afkpug/bin)"))
-                            .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.sub)
-                            .textSelection(.enabled)
+                        if let error = engine.mcpError { ErrorText(error).padding(.leading, 30) }
                     }
 
                     Section(title: tr("Phone notifications")) {
                         Text(tr("Install the free ntfy app on your phone, subscribe to a topic name only you know, then enter the same name here."))
-                            .font(.system(size: 10.5)).foregroundStyle(Theme.sub).fixedSize(horizontal: false, vertical: true)
+                            .font(.system(size: 11)).foregroundStyle(Theme.sub).fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 6) {
-                            TextField(tr("topic name, e.g. afkpug-nathaporn-82"), text: $engine.phoneTopic)
+                            TextField(tr("topic name, e.g. afkpug-ab12cd"), text: $engine.phoneTopic)
                                 .textFieldStyle(.roundedBorder).font(.system(size: 11.5))
-                            PillButton(title: tr("Test"), style: .soft) { engine.testPhone() }
-                                .disabled(engine.phoneTopic.trimmingCharacters(in: .whitespaces).isEmpty)
+                            PillButton(title: phoneSent ? tr("Sent") : tr("Test"), style: .soft) {
+                                engine.testPhone()
+                                phoneSent = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { phoneSent = false }
+                            }
+                            .disabled(engine.phoneTopic.trimmingCharacters(in: .whitespaces).isEmpty)
                         }
                     }
 
                     Section(title: tr("Start automatically")) {
-                        ToggleRow(symbol: "bolt.fill", tint: Palette.apricot, title: tr("When the charger is connected"),
+                        ToggleRow(symbol: "bolt", title: tr("When the charger is connected"),
                                   detail: tr("Stays awake whenever it's plugged in"), isOn: $engine.autoOnPower)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Label(tr("While these apps are open"), systemImage: "app.badge").font(.system(size: 12, weight: .semibold))
-                            TextField(tr("e.g. Xcode, Docker, OBS"), text: $engine.autoApps)
-                                .textFieldStyle(.roundedBorder).font(.system(size: 11.5))
-                        }
+                        Row(symbol: "app.badge", title: tr("While these apps are open"),
+                            detail: tr("App names as shown in the Dock, separated by commas")) { EmptyView() }
+                        TextField(tr("e.g. Xcode, Docker Desktop, OBS"), text: $engine.autoApps)
+                            .textFieldStyle(.roundedBorder).font(.system(size: 11.5))
+                            .padding(.leading, 30)
                     }
 
-                    Section(title: tr("Shortcut")) {
-                        ToggleRow(symbol: "command", tint: Palette.night, title: tr("⌥⌘A starts or stops AFK"),
+                    Section(title: tr("General")) {
+                        Row(symbol: "power", title: tr("Open at login"), detail: loginDetail) {
+                            Toggle(tr("Open at login"), isOn: Binding(get: { engine.launchAtLogin == .on },
+                                                                       set: { engine.setLaunchAtLogin($0) }))
+                                .toggleStyle(MiniSwitch()).labelsHidden()
+                        }
+                        if let error = engine.loginError { ErrorText(error).padding(.leading, 30) }
+                        ToggleRow(symbol: "command", title: tr("⌥⌘A starts or stops AFK"),
                                   detail: tr("Works from any app"), isOn: $engine.hotkeyEnabled)
+                        Row(symbol: "globe", title: tr("Language"), detail: "") {
+                            Picker(tr("Language"), selection: $engine.language) {
+                                ForEach(AppLanguage.allCases) { lang in Text(lang.label).tag(lang) }
+                            }
+                            .labelsHidden().frame(width: 110)
+                        }
                     }
 
                     Section(title: tr("Activity")) {
@@ -132,29 +127,91 @@ struct SettingsView: View {
                             Text(tr("Nothing yet")).font(.system(size: 11)).foregroundStyle(Theme.sub)
                         }
                         ForEach(engine.activity.prefix(8)) { item in
-                            HStack(spacing: 8) {
-                                Image(systemName: item.icon).font(.system(size: 10)).foregroundStyle(Theme.sub).frame(width: 14)
+                            HStack(alignment: .top, spacing: 12) {
+                                Image(systemName: item.icon).font(.system(size: 10)).foregroundStyle(Theme.sub).frame(width: 18)
                                 Text(item.text).font(.system(size: 11)).lineLimit(2)
                                     .fixedSize(horizontal: false, vertical: true)
-                                Spacer()
+                                Spacer(minLength: 4)
                                 Text(item.date.formatted(date: .omitted, time: .shortened))
                                     .font(.system(size: 10).monospacedDigit()).foregroundStyle(Theme.faint)
                             }
                         }
                     }
 
-                    if engine.setupDone {
-                        Button(tr("Remove lid-closed permission")) { engine.removeSetup() }
-                            .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.warn)
+                    Section(title: tr("For developers")) {
+                        Button {
+                            showDev.toggle()
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "terminal").font(.system(size: 12.5)).foregroundStyle(Theme.sub).frame(width: 18)
+                                Text(tr("Command line and URL commands")).font(.system(size: 12.5, weight: .medium))
+                                Spacer()
+                                Image(systemName: showDev ? "chevron.up" : "chevron.down").font(.system(size: 10)).foregroundStyle(Theme.sub)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        if showDev {
+                            Text("~/.afkpug/bin/afkpug run -- <command>\n~/.afkpug/bin/afkpug hold --for 2h\n~/.afkpug/bin/afkpug status\nafkpug://start?minutes=90  ·  afkpug://stop\nafkpug://toggle  ·  afkpug://sleep-now")
+                                .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.sub)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        if engine.setupDone {
+                            ConfirmButton(title: tr("Remove lid-closed permission"), confirm: tr("Remove it? Lid-closed mode stops working."),
+                                          busy: engine.setupWorking, armed: $confirmRemove) { engine.removeSetup() }
+                        }
+                        ConfirmButton(title: tr("Uninstall AFK Pug…"), confirm: tr("Remove hooks, permission and all AFK Pug files, then quit?"),
+                                      busy: engine.uninstalling, armed: $confirmUninstall) { engine.uninstallEverything() }
+                        ForEach(engine.uninstallErrors, id: \.self) { ErrorText($0) }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 2)
                 }
                 .padding(.bottom, 4)
             }
             .scrollIndicators(.automatic)
-            // Height comes from RootView (matches the home page) so the window never resizes.
             .frame(maxHeight: .infinity)
         }
         .padding(18)
+    }
+
+    private var loginDetail: String {
+        switch engine.launchAtLogin {
+        case .on: return tr("Agent mode works right after a restart")
+        case .off: return tr("Off: after a restart, open AFK Pug yourself")
+        case .needsApproval: return tr("Allow it in System Settings → General → Login Items")
+        }
+    }
+}
+
+/// A red text action that asks once inline before doing something destructive.
+private struct ConfirmButton: View {
+    let title: String
+    let confirm: String
+    var busy: Bool
+    @Binding var armed: Bool
+    let action: () -> Void
+
+    var body: some View {
+        if busy {
+            Text(tr("Working…")).font(.system(size: 11)).foregroundStyle(Theme.sub)
+        } else if armed {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(confirm).font(.system(size: 11)).foregroundStyle(Theme.sub)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    PillButton(title: tr("Yes, remove"), style: .primary) { armed = false; action() }
+                    PillButton(title: tr("Cancel"), style: .soft) { armed = false }
+                }
+            }
+        } else {
+            Button(title) { armed = true }
+                .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.warn)
+        }
     }
 }
 
@@ -164,9 +221,11 @@ private struct Section<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.faint).tracking(1)
+            // Only Latin titles are uppercased; Thai has no case.
+            Text(L10n.isThai ? title : title.uppercased())
+                .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.faint).tracking(L10n.isThai ? 0 : 1)
                 .padding(.leading, 2)
+                .accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 14) { content }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -177,12 +236,12 @@ private struct Section<Content: View>: View {
 
 // MARK: - Shared components
 
-struct ToggleRow: View {
+/// One settings row: icon (18) + 12 + title / detail + trailing control.
+struct Row<Trailing: View>: View {
     let symbol: String
-    let tint: Color
     let title: String
     let detail: String
-    @Binding var isOn: Bool
+    @ViewBuilder var trailing: Trailing
 
     var body: some View {
         HStack(spacing: 12) {
@@ -190,13 +249,29 @@ struct ToggleRow: View {
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.sub)
                 .frame(width: 18)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 12.5, weight: .medium))
-                Text(detail).font(.system(size: 11)).foregroundStyle(Theme.sub)
-                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                if !detail.isEmpty {
+                    Text(detail).font(.system(size: 11)).foregroundStyle(Theme.sub)
+                        .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 6)
-            Toggle("", isOn: $isOn).toggleStyle(MiniSwitch()).labelsHidden()
+            trailing
+        }
+    }
+}
+
+struct ToggleRow: View {
+    let symbol: String
+    let title: String
+    let detail: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Row(symbol: symbol, title: title, detail: detail) {
+            Toggle(title, isOn: $isOn).toggleStyle(MiniSwitch()).labelsHidden()
         }
     }
 }
@@ -220,6 +295,7 @@ struct PillButton: View {
             .padding(.vertical, 5)
             .foregroundStyle(style == .primary ? Color.black : (style == .soft ? Theme.text : Theme.sub))
             .background(Capsule().fill(background))
+            .overlay(Capsule().stroke(style == .soft ? Theme.line : .clear, lineWidth: 1))
             .lineLimit(1)
             .fixedSize()
             .opacity(enabled ? 1 : 0.35)
@@ -244,6 +320,7 @@ struct PillButton: View {
 struct IconButton: View {
     let symbol: String
     var size: CGFloat = 28
+    var label: String = ""
     let action: () -> Void
     @State private var hover = false
 
@@ -259,5 +336,7 @@ struct IconButton: View {
         .buttonStyle(PressStyle())
         .onHover { hover = $0 }
         .animation(Theme.hover, value: hover)
+        .accessibilityLabel(label.isEmpty ? symbol : label)
+        .help(label)
     }
 }
