@@ -8,7 +8,7 @@ let package = Package(
         .executableTarget(
             name: "AFKPug",
             path: "Sources/AFKPug",
-            linkerSettings: [.linkedFramework("IOKit")]
+            linkerSettings: [.linkedFramework("IOKit"), .linkedFramework("CoreAudio")]
         )
     ]
 )
