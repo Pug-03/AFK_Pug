@@ -180,7 +180,7 @@ private struct Zzz: View {
             ForEach(0..<3) { i in
                 Text("z")
                     .font(.system(size: size * (0.14 + CGFloat(i) * 0.05), weight: .heavy, design: .rounded))
-                    .foregroundStyle(Palette.night.opacity(0.85))
+                    .foregroundStyle(Color(red: 0.80, green: 0.82, blue: 1.0))
                     .offset(x: CGFloat(i) * size * 0.1, y: CGFloat(-i) * size * 0.12 + (float ? -size * 0.06 : 0))
                     .opacity(float ? (i == 2 ? 0.4 : 1) : (i == 2 ? 1 : 0.6))
             }

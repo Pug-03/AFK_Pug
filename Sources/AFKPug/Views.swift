@@ -2,26 +2,39 @@ import SwiftUI
 
 struct RootView: View {
     @ObservedObject var engine: Engine
-    @State private var page: Page = .home
+    @State var page: Page = .home
 
     enum Page { case home, settings }
 
     var body: some View {
         ZStack {
             if page == .home {
-                HomeView(engine: engine, openSettings: { withAnimation(.snappy) { page = .settings } })
+                HomeView(engine: engine, openSettings: { withAnimation(.snappy(duration: 0.3)) { page = .settings } })
                     .transition(.move(edge: .leading).combined(with: .opacity))
             } else {
-                SettingsView(engine: engine, back: { withAnimation(.snappy) { page = .home } })
+                SettingsView(engine: engine, back: { withAnimation(.snappy(duration: 0.3)) { page = .home } })
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .frame(width: 340)
-        .background(
-            LinearGradient(colors: [Palette.apricot.opacity(engine.isActive ? 0.14 : 0.05), .clear],
-                           startPoint: .top, endPoint: .center)
-                .animation(.easeInOut(duration: 0.6), value: engine.isActive)
-        )
+        .frame(width: 360)
+    }
+}
+
+// MARK: - Scene colours per state
+
+private enum StageMood {
+    case night, day, alert
+
+    @MainActor init(_ engine: Engine) {
+        if engine.trip != nil { self = .alert } else { self = engine.isActive ? .day : .night }
+    }
+
+    var gradient: [Color] {
+        switch self {
+        case .night: return [Color(red: 0.13, green: 0.14, blue: 0.30), Color(red: 0.27, green: 0.22, blue: 0.45)]
+        case .day: return [Color(red: 1.00, green: 0.72, blue: 0.42), Color(red: 0.93, green: 0.42, blue: 0.24)]
+        case .alert: return [Color(red: 0.45, green: 0.18, blue: 0.20), Color(red: 0.70, green: 0.28, blue: 0.24)]
+        }
     }
 }
 
@@ -32,179 +45,363 @@ struct HomeView: View {
     var openSettings: () -> Void
 
     var body: some View {
-        VStack(spacing: 12) {
-            Header(engine: engine, openSettings: openSettings)
-            HeroCard(engine: engine)
+        VStack(spacing: 14) {
+            Stage(engine: engine, openSettings: openSettings)
+            Controls(engine: engine)
             if let summary = engine.summary {
                 SummaryCard(summary: summary) { withAnimation { engine.summary = nil } }
             }
-            AgentsCard(engine: engine)
-            LidCard(engine: engine)
-            VitalsStrip(engine: engine)
-            Footer()
+            ModesList(engine: engine)
+            StatusBar(engine: engine)
         }
-        .padding(14)
+        .padding(12)
     }
 }
 
-private struct Header: View {
+// MARK: Stage (hero)
+
+private struct Stage: View {
     @ObservedObject var engine: Engine
     var openSettings: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            PugFace(mood: engine.mood, size: 52)
-                .frame(width: 64, height: 54)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text("AFK Pug").font(.system(size: 15, weight: .heavy, design: .rounded))
-                    StatusDot(engine: engine)
+        let scene = StageMood(engine)
+        ZStack(alignment: .top) {
+            LinearGradient(colors: scene.gradient, startPoint: .topLeading, endPoint: .bottomTrailing)
+                .animation(.easeInOut(duration: 0.8), value: engine.isActive)
+
+            if scene == .night { Stars().transition(.opacity) }
+            if scene == .day { Sun().transition(.opacity) }
+
+            VStack(spacing: 0) {
+                HStack {
+                    HStack(spacing: 6) {
+                        Image(systemName: "pawprint.fill").font(.system(size: 10, weight: .bold))
+                        Text("AFK PUG").font(.system(size: 11, weight: .heavy, design: .rounded)).tracking(1.5)
+                    }
+                    .foregroundStyle(.white.opacity(0.85))
+                    Spacer()
+                    GlassButton(symbol: "slider.horizontal.3", action: openSettings)
                 }
-                Text(engine.headline)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.primary.opacity(0.85))
-                    .contentTransition(.opacity)
-                Text(engine.subline)
-                    .font(.system(size: 11.5).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+
+                ZStack(alignment: .bottom) {
+                    Ellipse()
+                        .fill(.black.opacity(0.18))
+                        .frame(width: 92, height: 14)
+                        .blur(radius: 3)
+                        .offset(y: 4)
+                    PugFace(mood: engine.mood, size: 92)
+                        .frame(width: 120, height: 96)
+                }
+                .padding(.top, 2)
+
+                VStack(spacing: 3) {
+                    if engine.manualOn, let r = engine.remaining {
+                        Text(Fmt.clock(r))
+                            .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
+                            .contentTransition(.numericText(countsDown: true))
+                            .animation(.snappy, value: Int(r))
+                    } else {
+                        Text(engine.headline)
+                            .font(.system(size: 21, weight: .bold, design: .rounded))
+                    }
+                    Text(engine.manualOn && engine.remaining != nil ? engine.headline : engine.subline)
+                        .font(.system(size: 12, weight: .medium))
+                        .opacity(0.82)
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .padding(.top, 10)
             }
-            Spacer(minLength: 0)
-            IconButton(symbol: "gearshape.fill", action: openSettings)
+            .padding(14)
+
+            if engine.manualOn, engine.remaining != nil {
+                VStack {
+                    Spacer()
+                    GeometryReader { geo in
+                        Capsule().fill(.white.opacity(0.22))
+                            .overlay(alignment: .leading) {
+                                Capsule().fill(.white).frame(width: geo.size.width * engine.progress)
+                                    .animation(.linear(duration: 0.4), value: engine.progress)
+                            }
+                    }
+                    .frame(height: 4)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 12)
+                }
+            }
         }
+        .frame(height: 252)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .shadow(color: scene.gradient[1].opacity(0.35), radius: 14, y: 6)
+        .animation(.easeInOut(duration: 0.6), value: scene)
     }
 }
 
-private struct StatusDot: View {
-    @ObservedObject var engine: Engine
-    @State private var pulse = false
-
-    var color: Color {
-        if engine.trip != nil { return Palette.warn }
-        return engine.isActive ? Palette.awake : Color.secondary.opacity(0.5)
-    }
+private struct Stars: View {
+    private let stars: [(CGFloat, CGFloat, CGFloat, Double)] = [
+        (0.10, 0.22, 2.0, 0.0), (0.22, 0.10, 1.4, 0.6), (0.82, 0.30, 2.2, 1.2), (0.70, 0.12, 1.3, 0.3),
+        (0.92, 0.55, 1.5, 0.9), (0.06, 0.62, 1.3, 1.5), (0.30, 0.40, 1.1, 0.4), (0.60, 0.48, 1.0, 1.1),
+        (0.15, 0.85, 1.6, 0.7), (0.88, 0.80, 1.2, 0.2),
+    ]
+    @State private var twinkle = false
 
     var body: some View {
-        Circle().fill(color).frame(width: 7, height: 7)
-            .overlay(Circle().stroke(color.opacity(0.5), lineWidth: 2).scaleEffect(pulse ? 2.2 : 1).opacity(pulse ? 0 : 1))
-            .onAppear { withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) { pulse = true } }
+        GeometryReader { geo in
+            ZStack {
+                ForEach(0..<stars.count, id: \.self) { i in
+                    let s = stars[i]
+                    Circle().fill(.white)
+                        .frame(width: s.2 * 1.6, height: s.2 * 1.6)
+                        .position(x: geo.size.width * s.0, y: geo.size.height * s.1)
+                        .opacity(twinkle ? 0.25 + (s.3 / 3) : 0.9)
+                        .animation(.easeInOut(duration: 1.6 + s.3).repeatForever(autoreverses: true), value: twinkle)
+                }
+                Circle()
+                    .fill(Color(red: 1, green: 0.95, blue: 0.82))
+                    .frame(width: 26, height: 26)
+                    .overlay(Circle().fill(StageMood.night.gradient[0]).frame(width: 22, height: 22).offset(x: 8, y: -5))
+                    .position(x: geo.size.width * 0.16, y: geo.size.height * 0.36)
+                    .opacity(0.9)
+            }
+        }
+        .onAppear { twinkle = true }
+        .allowsHitTesting(false)
     }
 }
 
-// MARK: Hero
+private struct Sun: View {
+    @State private var spin = false
 
-private struct HeroCard: View {
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                Circle().fill(.white.opacity(0.18)).frame(width: 220, height: 220)
+                Circle().fill(.white.opacity(0.14)).frame(width: 150, height: 150)
+            }
+            .position(x: geo.size.width * 0.5, y: geo.size.height * 0.42)
+            .scaleEffect(spin ? 1.06 : 0.96)
+            .animation(.easeInOut(duration: 3).repeatForever(autoreverses: true), value: spin)
+        }
+        .onAppear { spin = true }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct GlassButton: View {
+    let symbol: String
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(.white.opacity(hover ? 0.3 : 0.18)))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(tr("Settings"))
+    }
+}
+
+// MARK: Controls
+
+private struct Controls: View {
     @ObservedObject var engine: Engine
+    @Namespace private var ns
     private let choices = [30, 60, 120, 240, 480, 0]
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 14) {
-                Ring(progress: engine.manualOn ? engine.progress : 0, active: engine.manualOn) {
-                    VStack(spacing: 0) {
-                        if engine.manualOn {
-                            Text(engine.remaining.map { Fmt.clock($0) } ?? "∞")
-                                .font(.system(size: engine.remaining == nil ? 26 : 15, weight: .bold, design: .rounded).monospacedDigit())
-                                .minimumScaleFactor(0.6)
-                            Text("left").font(.system(size: 9.5, weight: .medium)).foregroundStyle(.secondary)
-                        } else {
-                            Image(systemName: "moon.zzz.fill")
-                                .font(.system(size: 20))
-                                .foregroundStyle(Palette.night.opacity(0.8))
-                        }
-                    }
-                }
-                .frame(width: 78, height: 78)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(engine.manualOn ? "You're AFK" : "Going somewhere?")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                    Text(engine.manualOn ? "Close the lid. Agents, builds and downloads keep running." : "Keep your Mac awake, even with the lid closed.")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if engine.manualOn {
-                        HStack(spacing: 6) {
-                            PillButton(title: "+30m", style: .soft) { engine.addTime(minutes: 30) }
-                            PillButton(title: "Stop", style: .quiet) { withAnimation(.snappy) { engine.stop() } }
-                        }
-                    } else {
-                        PillButton(title: "Go AFK", symbol: "pawprint.fill", style: .primary) {
-                            withAnimation(.snappy) { engine.start() }
-                        }
-                        .disabled(engine.trip != nil)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-
-            HStack(spacing: 5) {
+        VStack(spacing: 10) {
+            HStack(spacing: 2) {
                 ForEach(choices, id: \.self) { m in
-                    Chip(title: Fmt.minutes(m), selected: engine.selectedMinutes == m) {
-                        withAnimation(.snappy) { engine.choose(minutes: m) }
+                    let selected = engine.selectedMinutes == m
+                    Button {
+                        withAnimation(.snappy(duration: 0.25)) { engine.choose(minutes: m) }
+                    } label: {
+                        Text(Fmt.minutes(m))
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(selected ? Color.primary : Color.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 7)
+                            .background {
+                                if selected {
+                                    Capsule().fill(Color(nsColor: .controlBackgroundColor))
+                                        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                                        .matchedGeometryEffect(id: "chip", in: ns)
+                                }
+                            }
+                            .contentShape(Capsule())
                     }
+                    .buttonStyle(.plain)
                 }
+            }
+            .padding(3)
+            .background(Capsule().fill(Color.primary.opacity(0.07)))
+
+            if engine.manualOn {
+                HStack(spacing: 8) {
+                    BigButton(title: tr("Stop"), symbol: "stop.fill", style: .secondary) { withAnimation(.snappy) { engine.stop() } }
+                    BigButton(title: tr("+30m"), symbol: "plus", style: .tinted) { engine.addTime(minutes: 30) }
+                        .frame(width: 118)
+                }
+            } else {
+                BigButton(title: tr("Go AFK"), symbol: "pawprint.fill", style: .primary) { withAnimation(.snappy) { engine.start() } }
+                    .disabled(engine.trip != nil)
             }
         }
-        .card(highlight: engine.manualOn)
     }
 }
 
-private struct Ring<Content: View>: View {
-    var progress: Double
-    var active: Bool
-    @ViewBuilder var content: Content
+private struct BigButton: View {
+    enum Style { case primary, secondary, tinted }
+    let title: String
+    let symbol: String
+    var style: Style = .primary
+    let action: () -> Void
+    @State private var hover = false
+    @State private var pressed = false
+    @Environment(\.isEnabled) private var enabled
 
     var body: some View {
-        ZStack {
-            Circle().stroke(Color.primary.opacity(0.08), lineWidth: 7)
-            Circle()
-                .trim(from: 0, to: active ? progress : 0)
-                .stroke(AngularGradient(colors: [Palette.apricot, Palette.apricotDeep, Palette.apricot], center: .center),
-                        style: StrokeStyle(lineWidth: 7, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .animation(.linear(duration: 0.4), value: progress)
-            content
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: symbol).font(.system(size: 13, weight: .bold))
+                Text(title).font(.system(size: 14, weight: .bold, design: .rounded))
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 42)
+            .foregroundStyle(foreground)
+            .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(background))
+            .overlay(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .stroke(.white.opacity(style == .primary ? 0.25 : 0), lineWidth: 1)
+                    .blendMode(.overlay)
+            )
+            .shadow(color: style == .primary ? Palette.apricotDeep.opacity(hover ? 0.45 : 0.28) : .clear, radius: hover ? 10 : 6, y: 3)
+            .scaleEffect(pressed ? 0.97 : 1)
+            .opacity(enabled ? 1 : 0.4)
+        }
+        .buttonStyle(.plain)
+        .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hover = h } }
+        .simultaneousGesture(DragGesture(minimumDistance: 0)
+            .onChanged { _ in withAnimation(.easeOut(duration: 0.08)) { pressed = true } }
+            .onEnded { _ in withAnimation(.spring(duration: 0.25)) { pressed = false } })
+    }
+
+    private var foreground: Color {
+        switch style {
+        case .primary: return .white
+        case .secondary: return .primary
+        case .tinted: return Palette.apricotDeep
+        }
+    }
+
+    private var background: AnyShapeStyle {
+        switch style {
+        case .primary: return AnyShapeStyle(LinearGradient(colors: [Palette.apricot, Palette.apricotDeep], startPoint: .top, endPoint: .bottom))
+        case .secondary: return AnyShapeStyle(Color.primary.opacity(hover ? 0.11 : 0.07))
+        case .tinted: return AnyShapeStyle(Palette.apricot.opacity(hover ? 0.24 : 0.16))
         }
     }
 }
 
-// MARK: Agents
+// MARK: Modes (grouped list)
 
-private struct AgentsCard: View {
+private struct ModesList: View {
     @ObservedObject var engine: Engine
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ToggleRow(symbol: "sparkles", tint: Palette.awake, title: "Agent mode",
-                      detail: "Awake only while your AI agents work", isOn: $engine.agentMode)
-
-            if engine.agentMode {
-                if !engine.claudeConnected {
-                    HStack {
-                        Text("Connect Claude Code to detect work automatically.")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer()
-                        PillButton(title: "Connect", style: .soft) { engine.connectClaude() }
+        VStack(spacing: 0) {
+            ListRow(symbol: "sparkles", tint: Palette.awake, title: tr("Agent mode"),
+                    detail: agentDetail) {
+                Toggle("", isOn: $engine.agentMode).toggleStyle(.switch).controlSize(.small).labelsHidden().tint(Palette.awake)
+            }
+            if engine.agentMode, !engine.holds.isEmpty {
+                VStack(spacing: 6) {
+                    ForEach(engine.holds) { hold in
+                        AgentRow(hold: hold, now: engine.now) { engine.release(hold) }
                     }
                 }
-                if engine.holds.isEmpty {
-                    HStack(spacing: 8) {
-                        Image(systemName: "circle.dashed").foregroundStyle(.tertiary)
-                        Text(engine.graceUntil.map { $0 > engine.now } == true ? "All done. Cooling down before sleep" : "No agents working right now")
-                            .font(.system(size: 11.5)).foregroundStyle(.secondary)
-                    }
+                .padding(.leading, 44).padding(.trailing, 12).padding(.bottom, 10)
+            }
+            if engine.agentMode, !engine.claudeConnected {
+                HStack {
+                    Text(tr("Connect Claude Code to detect work automatically."))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    PillButton(title: tr("Connect"), style: .soft) { engine.connectClaude() }
+                }
+                .padding(.leading, 44).padding(.trailing, 12).padding(.bottom, 10)
+            }
+
+            Divider().padding(.leading, 44)
+
+            ListRow(symbol: "laptopcomputer", tint: Palette.apricot, title: tr("Lid-closed mode"),
+                    detail: engine.setupDone ? tr("Screen off, sound off, work keeps running") : tr("Needs a one-time permission")) {
+                if engine.setupDone || !engine.lidMode {
+                    Toggle("", isOn: $engine.lidMode).toggleStyle(.switch).controlSize(.small).labelsHidden().tint(Palette.apricot)
                 } else {
-                    VStack(spacing: 6) {
-                        ForEach(engine.holds) { hold in
-                            AgentRow(hold: hold, now: engine.now) { engine.release(hold) }
-                        }
-                    }
+                    PillButton(title: tr("Set up"), style: .primary) { engine.runSetup() }
                 }
             }
+            if let error = engine.setupError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11)).foregroundStyle(Palette.warn)
+                    .padding(.leading, 44).padding(.trailing, 12).padding(.bottom, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Divider().padding(.leading, 44)
+
+            ListRow(symbol: engine.musicPlaying ? "music.note" : "music.note.list", tint: Palette.night, title: tr("Keep music playing"),
+                    detail: engine.musicPlaying && engine.keepMusic ? tr("music playing") : tr("YouTube, Spotify, Apple Music keep playing and sound stays on")) {
+                Toggle("", isOn: $engine.keepMusic).toggleStyle(.switch).controlSize(.small).labelsHidden().tint(Palette.night)
+            }
         }
-        .card()
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.primary.opacity(0.045)))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.primary.opacity(0.06), lineWidth: 1))
+    }
+
+    private var agentDetail: String {
+        if !engine.agentMode { return tr("Awake only while your AI agents work") }
+        if engine.holds.isEmpty {
+            return engine.graceUntil.map { $0 > engine.now } == true ? tr("All done. Cooling down before sleep") : tr("No agents working right now")
+        }
+        return tr("Awake only while your AI agents work")
+    }
+}
+
+private struct ListRow<Trailing: View>: View {
+    let symbol: String
+    let tint: Color
+    let title: String
+    let detail: String
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: 11) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(LinearGradient(colors: [tint.opacity(0.95), tint.opacity(0.75)], startPoint: .top, endPoint: .bottom))
+                    .frame(width: 28, height: 28)
+                Image(systemName: symbol).font(.system(size: 12.5, weight: .bold)).foregroundStyle(.white)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 6)
+            trailing
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
     }
 }
 
@@ -212,68 +409,37 @@ private struct AgentRow: View {
     let hold: AgentHold
     let now: Date
     var release: () -> Void
-    @State private var spin = false
+    @State private var pulse = false
 
     var body: some View {
-        HStack(spacing: 9) {
-            ZStack {
-                Circle().fill(Palette.awake.opacity(0.15)).frame(width: 24, height: 24)
-                Image(systemName: "bolt.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.awake)
-            }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(hold.displayName).font(.system(size: 12, weight: .semibold))
-                Text(hold.expires.map { "until \($0.formatted(date: .omitted, time: .shortened))" } ?? "working for \(Fmt.duration(now.timeIntervalSince(hold.started)))")
-                    .font(.system(size: 10.5).monospacedDigit()).foregroundStyle(.secondary)
-            }
+        HStack(spacing: 8) {
+            Circle().fill(Palette.awake).frame(width: 7, height: 7)
+                .overlay(Circle().stroke(Palette.awake.opacity(0.6), lineWidth: 2).scaleEffect(pulse ? 2.4 : 1).opacity(pulse ? 0 : 1))
+                .onAppear { withAnimation(.easeOut(duration: 1.3).repeatForever(autoreverses: false)) { pulse = true } }
+            Text(hold.displayName).font(.system(size: 12, weight: .semibold))
+            Text(hold.expires.map { tr("until %@", $0.formatted(date: .omitted, time: .shortened)) } ?? tr("working for %@", Fmt.duration(now.timeIntervalSince(hold.started))))
+                .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
             Spacer()
             Button(action: release) {
-                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
-                    .frame(width: 20, height: 20).background(Circle().fill(Color.primary.opacity(0.06)))
+                Image(systemName: "xmark").font(.system(size: 8.5, weight: .bold)).foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18).background(Circle().fill(Color.primary.opacity(0.07)))
             }
             .buttonStyle(.plain)
-            .help("Stop keeping awake for this one")
+            .help(tr("Stop keeping awake for this one"))
         }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Palette.awake.opacity(0.08)))
     }
 }
 
-// MARK: Lid
+// MARK: Status bar
 
-private struct LidCard: View {
-    @ObservedObject var engine: Engine
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ToggleRow(symbol: "laptopcomputer", tint: Palette.apricot, title: "Lid-closed mode",
-                      detail: engine.setupDone ? "Screen off, sound off, work keeps running" : "Needs a one-time permission",
-                      isOn: $engine.lidMode)
-            if engine.lidMode, !engine.setupDone {
-                HStack(spacing: 8) {
-                    Image(systemName: "lock.shield.fill").foregroundStyle(Palette.apricot)
-                    Text("Asks for your password once. Only allows turning lid sleep on and off.")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    PillButton(title: "Set up", style: .primary) { engine.runSetup() }
-                }
-            }
-            if let error = engine.setupError {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11)).foregroundStyle(Palette.warn)
-            }
-        }
-        .card()
-    }
-}
-
-// MARK: Vitals
-
-private struct VitalsStrip: View {
+private struct StatusBar: View {
     @ObservedObject var engine: Engine
 
     var batterySymbol: String {
-        let p = engine.battery.percent
         if engine.battery.onAC { return "battery.100percent.bolt" }
-        switch p {
+        switch engine.battery.percent {
         case ..<13: return "battery.0percent"
         case ..<38: return "battery.25percent"
         case ..<63: return "battery.50percent"
@@ -291,32 +457,34 @@ private struct VitalsStrip: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 12) {
             if engine.battery.hasBattery {
-                Vital(symbol: batterySymbol, text: "\(engine.battery.percent)%",
-                      tint: engine.battery.percent <= engine.batteryFloor && !engine.battery.onAC ? Palette.warn : .primary)
+                Stat(symbol: batterySymbol, text: "\(engine.battery.percent)%",
+                     tint: engine.battery.percent <= engine.batteryFloor && !engine.battery.onAC ? Palette.warn : .secondary)
             }
-            Vital(symbol: "thermometer.medium", text: engine.thermal.label, tint: thermalColor)
-            Vital(symbol: engine.lidOverrideOn ? "lock.open.fill" : "lock.fill",
-                  text: engine.lidOverrideOn ? "Lid armed" : "Lid normal",
-                  tint: engine.lidOverrideOn ? Palette.apricot : .secondary)
+            Stat(symbol: "thermometer.medium", text: engine.thermal.label, tint: thermalColor)
+            Stat(symbol: engine.lidOverrideOn ? "lock.open.fill" : "lock.fill",
+                 text: engine.lidOverrideOn ? tr("Lid armed") : tr("Lid normal"),
+                 tint: engine.lidOverrideOn ? Palette.apricot : .secondary)
+            Spacer()
+            Button(tr("Quit")) { NSApp.terminate(nil) }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
         }
+        .padding(.horizontal, 6)
     }
-}
 
-private struct Vital: View {
-    let symbol: String
-    let text: String
-    var tint: Color = .primary
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(tint)
-            Text(text).font(.system(size: 11, weight: .medium).monospacedDigit())
+    private struct Stat: View {
+        let symbol: String
+        let text: String
+        let tint: Color
+        var body: some View {
+            HStack(spacing: 4) {
+                Image(systemName: symbol).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(tint)
+                Text(text).font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundStyle(.secondary)
+            }
         }
-        .padding(.horizontal, 9).padding(.vertical, 6)
-        .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.primary.opacity(0.05)))
     }
 }
 
@@ -327,9 +495,9 @@ private struct SummaryCard: View {
     var dismiss: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("While you were away", systemImage: "sun.horizon.fill")
+                Label(tr("While you were away"), systemImage: "sun.horizon.fill")
                     .font(.system(size: 12.5, weight: .bold, design: .rounded))
                     .foregroundStyle(Palette.apricotDeep)
                 Spacer()
@@ -337,43 +505,28 @@ private struct SummaryCard: View {
                     .buttonStyle(.plain).foregroundStyle(.secondary)
             }
             HStack(spacing: 0) {
-                Stat(value: Fmt.duration(summary.duration), label: "lid closed")
+                Figure(value: Fmt.duration(summary.duration), label: tr("lid closed"))
                 if summary.hadBattery {
-                    Stat(value: "\(summary.startBattery - summary.endBattery)%", label: "battery used")
+                    Figure(value: "\(summary.startBattery - summary.endBattery)%", label: tr("battery used"))
                 }
-                Stat(value: "\(summary.agentsFinished)", label: "agent turns")
-                Stat(value: summary.peakThermal.label, label: "peak heat")
+                Figure(value: "\(summary.agentsFinished)", label: tr("agent turns"))
+                Figure(value: summary.peakThermal.label, label: tr("peak heat"))
             }
         }
-        .card(highlight: true)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Palette.apricot.opacity(0.1)))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Palette.apricot.opacity(0.3), lineWidth: 1))
     }
-}
 
-private struct Stat: View {
-    let value: String
-    let label: String
-    var body: some View {
-        VStack(spacing: 1) {
-            Text(value).font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
-            Text(label).font(.system(size: 9.5)).foregroundStyle(.secondary)
+    private struct Figure: View {
+        let value: String
+        let label: String
+        var body: some View {
+            VStack(spacing: 1) {
+                Text(value).font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
+                Text(label).font(.system(size: 9.5)).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-private struct Footer: View {
-    var body: some View {
-        HStack {
-            Text("tip: afkpug run -- <cmd>")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-            Spacer()
-            Button("Quit") { NSApp.terminate(nil) }
-                .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 2)
     }
 }

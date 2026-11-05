@@ -8,27 +8,41 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 IconButton(symbol: "chevron.left", action: back)
-                Text("Settings").font(.system(size: 15, weight: .heavy, design: .rounded))
+                Text(tr("Settings")).font(.system(size: 15, weight: .heavy, design: .rounded))
                 Spacer()
             }
 
             ScrollView {
                 VStack(spacing: 12) {
-                    Section(title: "When the lid closes") {
-                        ToggleRow(symbol: "display", tint: Palette.night, title: "Turn the screen off",
-                                  detail: "Keeps the panel dark under the lid", isOn: $engine.displayOffOnClose)
-                        ToggleRow(symbol: "speaker.slash.fill", tint: Palette.night, title: "Mute sound",
-                                  detail: "Restored when you open the lid", isOn: $engine.muteOnClose)
-                        ToggleRow(symbol: "leaf.fill", tint: Palette.awake, title: "Low Power Mode on battery",
-                                  detail: "Also turns on if the Mac gets hot", isOn: $engine.lowPowerOnClose)
-                        ToggleRow(symbol: "powerplug.fill", tint: Palette.apricot, title: "Only when plugged in",
-                                  detail: "Lid-closed mode needs a charger", isOn: $engine.lidOnlyOnPower)
+                    Section(title: tr("Language")) {
+                        Picker("", selection: $engine.language) {
+                            ForEach(AppLanguage.allCases) { lang in Text(lang.label).tag(lang) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
                     }
 
-                    Section(title: "Safety") {
+                    Section(title: tr("When the lid closes")) {
+                        ToggleRow(symbol: "music.note", tint: Palette.night, title: tr("Keep music playing"),
+                                  detail: tr("YouTube, Spotify, Apple Music keep playing and sound stays on"), isOn: $engine.keepMusic)
+                        ToggleRow(symbol: "display", tint: Palette.night, title: tr("Turn the screen off"),
+                                  detail: tr("Keeps the panel dark under the lid"), isOn: $engine.displayOffOnClose)
+                        ToggleRow(symbol: "speaker.slash.fill", tint: Palette.night, title: tr("Mute sound"),
+                                  detail: tr("Restored when you open the lid"), isOn: $engine.muteOnClose)
+                        ToggleRow(symbol: "leaf.fill", tint: Palette.awake, title: tr("Low Power Mode on battery"),
+                                  detail: tr("Also turns on if the Mac gets hot"), isOn: $engine.lowPowerOnClose)
+                        ToggleRow(symbol: "powerplug.fill", tint: Palette.apricot, title: tr("Only when plugged in"),
+                                  detail: tr("Lid-closed mode needs a charger"), isOn: $engine.lidOnlyOnPower)
+                        ToggleRow(symbol: "lock.fill", tint: Palette.mask, title: tr("Lock the screen"),
+                                  detail: tr("Nobody can use your Mac while you're away"), isOn: $engine.lockOnClose)
+                        ToggleRow(symbol: "bubble.left.and.bubble.right.fill", tint: Palette.night, title: tr("Pause chat apps"),
+                                  detail: tr("Slack, Discord, LINE and others. Resumed when you open the lid"), isOn: $engine.pauseChatApps)
+                    }
+
+                    Section(title: tr("Safety")) {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Label("Stop at battery", systemImage: "battery.25percent")
+                                Label(tr("Stop at battery"), systemImage: "battery.25percent")
                                     .font(.system(size: 12, weight: .semibold))
                                 Spacer()
                                 Text("\(engine.batteryFloor)%")
@@ -39,18 +53,18 @@ struct SettingsView: View {
                                                   set: { engine.batteryFloor = Int($0) }), in: 5...50, step: 5)
                                 .tint(Palette.apricot)
                         }
-                        Text("If the Mac gets critically hot, AFK Pug always lets it sleep.")
+                        Text(tr("If the Mac gets critically hot, AFK Pug always lets it sleep."))
                             .font(.system(size: 10.5)).foregroundStyle(.secondary)
                     }
 
-                    Section(title: "Agents") {
-                        ToggleRow(symbol: "bell.badge.fill", tint: Palette.apricot, title: "Notify me",
-                                  detail: "When an agent finishes or needs you", isOn: $engine.notifyAgents)
+                    Section(title: tr("Agents")) {
+                        ToggleRow(symbol: "bell.badge.fill", tint: Palette.apricot, title: tr("Notify me"),
+                                  detail: tr("When an agent finishes or needs you"), isOn: $engine.notifyAgents)
                         HStack {
-                            Label("Wait before sleeping", systemImage: "hourglass").font(.system(size: 12, weight: .semibold))
+                            Label(tr("Wait before sleeping"), systemImage: "hourglass").font(.system(size: 12, weight: .semibold))
                             Spacer()
                             Picker("", selection: $engine.graceMinutes) {
-                                Text("Off").tag(0); Text("2 min").tag(2); Text("5 min").tag(5); Text("15 min").tag(15)
+                                Text(tr("Off")).tag(0); Text(tr("2 min")).tag(2); Text(tr("5 min")).tag(5); Text(tr("15 min")).tag(15)
                             }
                             .labelsHidden().frame(width: 90)
                         }
@@ -58,19 +72,60 @@ struct SettingsView: View {
                             Label("Claude Code", systemImage: "link").font(.system(size: 12, weight: .semibold))
                             Spacer()
                             if engine.claudeConnected {
-                                PillButton(title: "Disconnect", style: .quiet) { engine.disconnectClaude() }
+                                PillButton(title: tr("Disconnect"), style: .quiet) { engine.disconnectClaude() }
                             } else {
-                                PillButton(title: "Connect", style: .soft) { engine.connectClaude() }
+                                PillButton(title: tr("Connect"), style: .soft) { engine.connectClaude() }
                             }
                         }
-                        Text("Any other tool: run  afkpug run -- <command>  or  afkpug hold --for 2h  (in ~/.afkpug/bin)")
+                        ToggleRow(symbol: "magnifyingglass", tint: Palette.awake, title: tr("Detect other agents"),
+                                  detail: tr("Codex, Gemini CLI, Cursor Agent, Aider, OpenCode and more"), isOn: $engine.detectOtherAgents)
+                        HStack {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Label(tr("Let agents keep the Mac awake"), systemImage: "cpu").font(.system(size: 12, weight: .semibold))
+                                Text(tr("Adds an AFK Pug tool to Claude Code for long builds and deploys"))
+                                    .font(.system(size: 10.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
+                            if engine.mcpConnected {
+                                PillButton(title: tr("Disconnect"), style: .quiet) { engine.disconnectMCP() }
+                            } else {
+                                PillButton(title: tr("Connect"), style: .soft) { engine.connectMCP() }
+                            }
+                        }
+                        Text(tr("Any other tool: run  afkpug run -- <command>  or  afkpug hold --for 2h  (in ~/.afkpug/bin)"))
                             .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
 
-                    Section(title: "Activity") {
+                    Section(title: tr("Phone notifications")) {
+                        Text(tr("Install the free ntfy app on your phone, subscribe to a topic name only you know, then enter the same name here."))
+                            .font(.system(size: 10.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 6) {
+                            TextField(tr("topic name, e.g. afkpug-nathaporn-82"), text: $engine.phoneTopic)
+                                .textFieldStyle(.roundedBorder).font(.system(size: 11.5))
+                            PillButton(title: tr("Test"), style: .soft) { engine.testPhone() }
+                                .disabled(engine.phoneTopic.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
+
+                    Section(title: tr("Start automatically")) {
+                        ToggleRow(symbol: "bolt.fill", tint: Palette.apricot, title: tr("When the charger is connected"),
+                                  detail: tr("Stays awake whenever it's plugged in"), isOn: $engine.autoOnPower)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label(tr("While these apps are open"), systemImage: "app.badge").font(.system(size: 12, weight: .semibold))
+                            TextField(tr("e.g. Xcode, Docker, OBS"), text: $engine.autoApps)
+                                .textFieldStyle(.roundedBorder).font(.system(size: 11.5))
+                        }
+                    }
+
+                    Section(title: tr("Shortcut")) {
+                        ToggleRow(symbol: "command", tint: Palette.night, title: tr("⌥⌘A starts or stops AFK"),
+                                  detail: tr("Works from any app"), isOn: $engine.hotkeyEnabled)
+                    }
+
+                    Section(title: tr("Activity")) {
                         if engine.activity.isEmpty {
-                            Text("Nothing yet").font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text(tr("Nothing yet")).font(.system(size: 11)).foregroundStyle(.secondary)
                         }
                         ForEach(engine.activity.prefix(8)) { item in
                             HStack(spacing: 8) {
@@ -84,12 +139,12 @@ struct SettingsView: View {
                     }
 
                     if engine.setupDone {
-                        Button("Remove lid-closed permission") { engine.removeSetup() }
+                        Button(tr("Remove lid-closed permission")) { engine.removeSetup() }
                             .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.warn)
                     }
                 }
             }
-            .frame(height: 430)
+            .frame(height: 470)
         }
         .padding(14)
     }
@@ -100,11 +155,16 @@ private struct Section<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title.uppercased()).font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).tracking(0.6)
-            content
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).tracking(0.8)
+                .padding(.leading, 6)
+            VStack(alignment: .leading, spacing: 12) { content }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.primary.opacity(0.045)))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.primary.opacity(0.06), lineWidth: 1))
         }
-        .card()
     }
 }
 
@@ -120,8 +180,10 @@ struct ToggleRow: View {
     var body: some View {
         HStack(spacing: 10) {
             ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous).fill(tint.opacity(0.16)).frame(width: 26, height: 26)
-                Image(systemName: symbol).font(.system(size: 12, weight: .semibold)).foregroundStyle(tint)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(LinearGradient(colors: [tint.opacity(0.95), tint.opacity(0.75)], startPoint: .top, endPoint: .bottom))
+                    .frame(width: 26, height: 26)
+                Image(systemName: symbol).font(.system(size: 11.5, weight: .bold)).foregroundStyle(.white)
             }
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.system(size: 12.5, weight: .semibold))
