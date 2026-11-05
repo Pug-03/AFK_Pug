@@ -29,12 +29,17 @@ struct AFKPugApp: App {
 enum Main {
     static func main() {
         let args = CommandLine.arguments
+        if args.contains("--mcp") { MCPServer.run(); return }
         if let i = args.firstIndex(of: "--render-icon"), i + 1 < args.count {
             MainActor.assumeIsolated { renderIcon(to: args[i + 1]) }
             return
         }
         if let i = args.firstIndex(of: "--render-preview"), i + 1 < args.count {
-            MainActor.assumeIsolated { renderPreview(to: args[i + 1]) }
+            MainActor.assumeIsolated {
+                _ = Engine.shared
+                if let l = args.firstIndex(of: "--lang"), l + 1 < args.count { L10n.language = AppLanguage(rawValue: args[l + 1]) ?? .system }
+                renderPreview(to: args[i + 1], settings: args.contains("--settings"))
+            }
             return
         }
         AFKPugApp.main()
@@ -49,9 +54,9 @@ enum Main {
 
     /// Renders the popover to a PNG for design review.
     @MainActor
-    static func renderPreview(to path: String) {
+    static func renderPreview(to path: String, settings: Bool) {
         let engine = Engine.shared
-        let view = RootView(engine: engine).background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light)
+        let view = RootView(engine: engine, page: settings ? .settings : .home).background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light)
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
         write(renderer.nsImage, to: path)

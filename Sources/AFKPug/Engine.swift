@@ -47,6 +47,15 @@ final class Engine: ObservableObject {
     @Published var lidOnlyOnPower: Bool { didSet { save(lidOnlyOnPower, "lidOnlyOnPower"); tick() } }
     @Published var notifyAgents: Bool { didSet { save(notifyAgents, "notifyAgents") } }
     @Published var graceMinutes: Int { didSet { save(graceMinutes, "graceMinutes") } }
+    @Published var language: AppLanguage { didSet { save(language.rawValue, "language"); L10n.language = language } }
+    @Published var detectOtherAgents: Bool { didSet { save(detectOtherAgents, "detectOtherAgents"); tick() } }
+    @Published var pauseChatApps: Bool { didSet { save(pauseChatApps, "pauseChatApps") } }
+    @Published var lockOnClose: Bool { didSet { save(lockOnClose, "lockOnClose") } }
+    @Published var hotkeyEnabled: Bool { didSet { save(hotkeyEnabled, "hotkeyEnabled"); HotKey.setEnabled(hotkeyEnabled) } }
+    @Published var phoneTopic: String { didSet { save(phoneTopic, "phoneTopic") } }
+    @Published var autoOnPower: Bool { didSet { save(autoOnPower, "autoOnPower"); tick() } }
+    @Published var autoApps: String { didSet { save(autoApps, "autoApps") } }
+    @Published var keepMusic: Bool { didSet { save(keepMusic, "keepMusic"); tick() } }
 
     // MARK: Live state
 
@@ -67,6 +76,9 @@ final class Engine: ObservableObject {
     @Published private(set) var activity: [ActivityItem] = []
     @Published private(set) var now = Date()
     @Published var setupError: String?
+    @Published private(set) var triggerReason: String?
+    @Published private(set) var musicPlaying = false
+    @Published private(set) var mcpConnected = MCPInstaller.isInstalled()
 
     private var timer: Timer?
     private var tickCount = 0
@@ -74,6 +86,10 @@ final class Engine: ObservableObject {
     private var lowPowerChangedByUs = false
     private var openSummary: LidSummary?
     private var lastDisplayOff = Date.distantPast
+    private var procLastBusy: [Int32: Date] = [:]
+    private var procFirstSeen: [Int32: Date] = [:]
+    private var procNames: [Int32: String] = [:]
+    private var ignoredProcs = Set<Int32>()
 
     private init() {
         let ud = UserDefaults.standard
@@ -89,6 +105,16 @@ final class Engine: ObservableObject {
         lidOnlyOnPower = bool("lidOnlyOnPower", false)
         notifyAgents = bool("notifyAgents", true)
         graceMinutes = int("graceMinutes", 2)
+        language = AppLanguage(rawValue: ud.string(forKey: "language") ?? "") ?? .system
+        detectOtherAgents = bool("detectOtherAgents", true)
+        pauseChatApps = bool("pauseChatApps", false)
+        lockOnClose = bool("lockOnClose", true)
+        hotkeyEnabled = bool("hotkeyEnabled", true)
+        phoneTopic = ud.string(forKey: "phoneTopic") ?? ""
+        autoOnPower = bool("autoOnPower", false)
+        autoApps = ud.string(forKey: "autoApps") ?? ""
+        keepMusic = bool("keepMusic", true)
+        L10n.language = language
     }
 
     private func save(_ value: Any, _ key: String) { defaults.set(value, forKey: key) }
@@ -103,7 +129,12 @@ final class Engine: ObservableObject {
         if Bundle.main.bundleIdentifier != nil {
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         }
-        log("pawprint.fill", "AFK Pug is ready")
+        HotKey.action = { [weak self] in
+            guard let self else { return }
+            self.manualOn ? self.stop() : self.start()
+        }
+        HotKey.setEnabled(hotkeyEnabled)
+        log("pawprint.fill", tr("AFK Pug is ready"))
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -123,8 +154,9 @@ final class Engine: ObservableObject {
     private func recoverFromCrash() {
         if FileManager.default.fileExists(atPath: Paths.lidFlag.path) {
             PowerControl.setSleepDisabled(false)
-            log("arrow.uturn.backward", "Restored normal lid sleep after an unexpected quit")
+            log("arrow.uturn.backward", tr("Restored normal lid sleep after an unexpected quit"))
         }
+        ChatPauser.resume()
         let lpFlag = Paths.state.appendingPathComponent("lowpower-restore")
         if FileManager.default.fileExists(atPath: lpFlag.path) {
             PowerControl.setLowPower(false)
@@ -139,7 +171,7 @@ final class Engine: ObservableObject {
         manualOn = true
         manualStart = Date()
         manualEnd = selectedMinutes > 0 ? Date().addingTimeInterval(TimeInterval(selectedMinutes * 60)) : nil
-        log("sun.max.fill", selectedMinutes > 0 ? "Awake for \(Fmt.minutes(selectedMinutes))" : "Awake until you stop")
+        log("sun.max.fill", selectedMinutes > 0 ? tr("Awake for %@", Fmt.minutes(selectedMinutes)) : tr("Awake until you stop"))
         tick()
     }
 
@@ -148,7 +180,7 @@ final class Engine: ObservableObject {
         manualOn = false
         manualEnd = nil
         manualStart = nil
-        log("moon.zzz.fill", "Stopped. Back to normal sleep")
+        log("moon.zzz.fill", tr("Stopped. Back to normal sleep"))
         tick()
     }
 
@@ -156,7 +188,7 @@ final class Engine: ObservableObject {
         guard manualOn else { return }
         let base = max(manualEnd ?? Date(), Date())
         manualEnd = base.addingTimeInterval(TimeInterval(minutes * 60))
-        log("plus.circle.fill", "Added \(Fmt.minutes(minutes))")
+        log("plus.circle.fill", tr("Added %@", Fmt.minutes(minutes)))
     }
 
     func choose(minutes: Int) {
@@ -168,6 +200,7 @@ final class Engine: ObservableObject {
     }
 
     func release(_ hold: AgentHold) {
+        if hold.id.hasPrefix("proc-"), let pid = Int32(hold.id.dropFirst(5)) { ignoredProcs.insert(pid) }
         HoldStore.release(hold)
         tick()
     }
@@ -179,9 +212,9 @@ final class Engine: ObservableObject {
             setupDone = PowerControl.isSetupDone
             if setupDone {
                 Installer.installWatchdog()
-                log("checkmark.seal.fill", "Lid-closed mode is ready")
+                log("checkmark.seal.fill", tr("Lid-closed mode is ready"))
             } else {
-                setupError = "Permission was not applied. Please try again."
+                setupError = tr("Permission was not applied. Please try again.")
             }
         case .failure(let error):
             setupError = error.localizedDescription
@@ -199,16 +232,34 @@ final class Engine: ObservableObject {
         do {
             try ClaudeHooks.install()
             claudeConnected = true
-            log("link", "Connected to Claude Code")
+            log("link", tr("Connected to Claude Code"))
         } catch {
             setupError = error.localizedDescription
         }
     }
 
+    func connectMCP() {
+        if MCPInstaller.install() {
+            log("cpu", tr("Agents can now ask AFK Pug to stay awake"))
+        } else {
+            setupError = tr("Could not run the claude command. Is Claude Code installed?")
+        }
+        mcpConnected = MCPInstaller.isInstalled()
+    }
+
+    func disconnectMCP() {
+        MCPInstaller.uninstall()
+        mcpConnected = MCPInstaller.isInstalled()
+    }
+
+    func testPhone() {
+        PhoneNotifier.send(topic: phoneTopic, title: "AFK Pug", body: tr("Test notification. Your phone is connected."))
+    }
+
     func disconnectClaude() {
         try? ClaudeHooks.uninstall()
         claudeConnected = ClaudeHooks.isInstalled()
-        log("link.badge.plus", "Disconnected from Claude Code")
+        log("link.badge.plus", tr("Disconnected from Claude Code"))
     }
 
     // MARK: Derived
@@ -228,29 +279,30 @@ final class Engine: ObservableObject {
 
     var headline: String {
         switch trip {
-        case .battery: return "Low battery, napping"
-        case .thermal: return "Too hot, cooling down"
+        case .battery: return tr("Low battery, napping")
+        case .thermal: return tr("Too hot, cooling down")
         case nil: break
         }
-        if manualOn { return manualEnd == nil ? "Awake until you stop" : "Staying awake" }
-        if !holds.isEmpty { return holds.count == 1 ? "Watching 1 agent" : "Watching \(holds.count) agents" }
-        if let grace = graceUntil, grace > now { return "Agents done" }
-        return "Napping"
+        if manualOn { return manualEnd == nil ? tr("Awake until you stop") : tr("Staying awake") }
+        if let reason = triggerReason, holds.isEmpty { return tr("Awake: %@", reason) }
+        if !holds.isEmpty { return holds.count == 1 ? tr("Watching 1 agent") : tr("Watching %d agents", holds.count) }
+        if let grace = graceUntil, grace > now { return tr("Agents done") }
+        return tr("Napping")
     }
 
     var subline: String {
         switch trip {
-        case .battery(let p): return "Stopped at \(p)%. Plug in to continue"
-        case .thermal: return "Your Mac got too hot, so it can sleep now"
+        case .battery(let p): return tr("Stopped at %d%%. Plug in to continue", p)
+        case .thermal: return tr("Your Mac got too hot, so it can sleep now")
         case nil: break
         }
         if manualOn {
-            if let r = remaining { return "\(Fmt.clock(r)) left" }
-            return "Close the lid. Your work keeps running"
+            if let r = remaining { return tr("%@ left", Fmt.clock(r)) }
+            return tr("Close the lid. Your work keeps running")
         }
-        if !holds.isEmpty { return "Awake while they work, then sleeps" }
-        if let grace = graceUntil, grace > now { return "Sleeping in \(Fmt.clock(grace.timeIntervalSince(now)))" }
-        return agentMode ? "Wakes when your agents start" : "Your Mac sleeps normally"
+        if !holds.isEmpty { return tr("Awake while they work, then sleeps") }
+        if let grace = graceUntil, grace > now { return tr("Sleeping in %@", Fmt.clock(grace.timeIntervalSince(now))) }
+        return agentMode ? tr("Wakes when your agents start") : tr("Your Mac sleeps normally")
     }
 
     var lidReady: Bool { lidMode && setupDone }
@@ -265,14 +317,14 @@ final class Engine: ObservableObject {
 
         // Agents
         let previous = holds
-        holds = HoldStore.scan(now: now)
+        holds = HoldStore.scan(now: now) + scanProcesses()
         handleEvents(HoldStore.consumeEvents())
         if !previous.isEmpty, holds.isEmpty {
             graceUntil = now.addingTimeInterval(TimeInterval(graceMinutes * 60))
         }
         if !holds.isEmpty { graceUntil = nil }
         for hold in holds where !previous.contains(where: { $0.id == hold.id }) {
-            log("bolt.fill", "\(hold.displayName) started working")
+            log("bolt.fill", tr("%@ started working", hold.displayName))
         }
 
         // Manual timer
@@ -280,15 +332,20 @@ final class Engine: ObservableObject {
             manualOn = false
             manualEnd = nil
             manualStart = nil
-            log("alarm.fill", "Timer finished")
-            notify("Time's up", "AFK Pug let your Mac go back to sleep.")
+            log("alarm.fill", tr("Timer finished"))
+            notify(tr("Time's up"), tr("AFK Pug let your Mac go back to sleep."))
         }
 
         // Guards
         updateGuards()
 
         let agentsWant = agentMode && (!holds.isEmpty || (graceUntil.map { $0 > now } ?? false))
-        let want = trip == nil && (manualOn || agentsWant)
+        triggerReason = nil
+        musicPlaying = AudioWatcher.isPlaying()
+        if keepMusic, musicPlaying { triggerReason = tr("music playing") }
+        if autoOnPower, battery.hasBattery, battery.onAC { triggerReason = tr("charger connected") }
+        if let app = Triggers.runningApp(from: autoApps) { triggerReason = app }
+        let want = trip == nil && (manualOn || agentsWant || triggerReason != nil)
         apply(active: want)
 
         // Lid
@@ -309,6 +366,26 @@ final class Engine: ObservableObject {
         }
     }
 
+    /// Agents without hooks, found by process and CPU use.
+    private func scanProcesses() -> [AgentHold] {
+        guard agentMode, detectOtherAgents else { return [] }
+        for busy in ProcessWatcher.scan() where !ignoredProcs.contains(busy.pid) {
+            procLastBusy[busy.pid] = now
+            procNames[busy.pid] = busy.display
+            if procFirstSeen[busy.pid] == nil { procFirstSeen[busy.pid] = now }
+        }
+        // Count as working for 30 s after the last busy sample, so short pauses don't flap.
+        for (pid, last) in procLastBusy where now.timeIntervalSince(last) > 30 {
+            procLastBusy[pid] = nil
+            procFirstSeen[pid] = nil
+            procNames[pid] = nil
+            ignoredProcs.remove(pid)
+        }
+        return procLastBusy.keys.sorted().map { pid in
+            AgentHold(id: "proc-\(pid)", agent: procNames[pid] ?? "agent", started: procFirstSeen[pid] ?? now, expires: nil, reason: nil)
+        }
+    }
+
     private func updateGuards() {
         if let current = trip {
             switch current {
@@ -319,17 +396,17 @@ final class Engine: ObservableObject {
             }
             return
         }
-        guard isActive || manualOn || !holds.isEmpty else { return }
+        guard isActive || manualOn || !holds.isEmpty || triggerReason != nil else { return }
         if battery.hasBattery, !battery.onAC, battery.percent <= batteryFloor {
             trip = .battery(battery.percent)
             manualOn = false
-            log("battery.25percent", "Battery at \(battery.percent)%. Letting the Mac sleep")
-            notify("Battery low", "AFK Pug stopped at \(battery.percent)% so your Mac can sleep safely.")
+            log("battery.25percent", tr("Battery at %d%%. Letting the Mac sleep", battery.percent))
+            notify(tr("Battery low"), tr("AFK Pug stopped at %d%% so your Mac can sleep safely.", battery.percent))
         } else if thermal == .critical {
             trip = .thermal
             manualOn = false
-            log("thermometer.high", "Mac too hot. Letting it sleep")
-            notify("Too hot", "AFK Pug stopped so your Mac can cool down.")
+            log("thermometer.high", tr("Mac too hot. Letting it sleep"))
+            notify(tr("Too hot"), tr("AFK Pug stopped so your Mac can cool down."))
         }
     }
 
@@ -365,11 +442,11 @@ final class Engine: ObservableObject {
             switch event.kind {
             case .done:
                 openSummary?.agentsFinished += 1
-                log("checkmark.circle.fill", "\(name) finished")
-                if notifyAgents { notify("\(name) finished", "Your agent is done. AFK Pug will let the Mac sleep soon.") }
+                log("checkmark.circle.fill", tr("%@ finished", name))
+                if notifyAgents { notify(tr("%@ finished", name), tr("Your agent is done. AFK Pug will let the Mac sleep soon.")) }
             case .waiting:
-                log("hand.raised.fill", "\(name) needs you")
-                if notifyAgents { notify("\(name) needs you", "Your agent is waiting for your input.") }
+                log("hand.raised.fill", tr("%@ needs you", name))
+                if notifyAgents { notify(tr("%@ needs you", name), tr("Your agent is waiting for your input.")) }
             }
         }
     }
@@ -378,26 +455,28 @@ final class Engine: ObservableObject {
 
     private func lidDidClose() {
         guard isActive else { return }
-        log("laptopcomputer", "Lid closed. Still working")
+        log("laptopcomputer", tr("Lid closed. Still working"))
         openSummary = LidSummary(closedAt: now, startBattery: battery.percent, endBattery: battery.percent,
                                  peakThermal: thermal, agentsFinished: 0, hadBattery: battery.hasBattery)
+        if lockOnClose { ScreenLock.lock() }
         if displayOffOnClose {
             PowerControl.displaySleepNow()
             lastDisplayOff = now
         }
-        if muteOnClose {
+        if pauseChatApps { ChatPauser.pause() }
+        if muteOnClose, !(keepMusic && musicPlaying) {
             wasMuted = PowerControl.isMuted()
             if wasMuted == false { PowerControl.setMuted(true) }
         }
         if lowPowerOnClose, setupDone, battery.hasBattery, !battery.onAC { enableLowPower() }
-        NSSound(named: "Tink")?.play()
+        if !musicPlaying { NSSound(named: "Tink")?.play() }
     }
 
     private func lidDidOpen() {
         restoreLidChanges()
         if openSummary != nil {
             finishSummary()
-            log("sun.horizon.fill", "Welcome back")
+            log("sun.horizon.fill", tr("Welcome back"))
         }
     }
 
@@ -410,6 +489,7 @@ final class Engine: ObservableObject {
     }
 
     private func restoreLidChanges() {
+        ChatPauser.resume()
         if let muted = wasMuted, muted == false { PowerControl.setMuted(false) }
         wasMuted = nil
         if lowPowerChangedByUs {
@@ -426,10 +506,10 @@ final class Engine: ObservableObject {
         openSummary = nil
         guard s.duration > 20 else { return }
         summary = s
-        var body = "Lid closed for \(Fmt.duration(s.duration))."
-        if s.hadBattery { body += " Battery \(s.startBattery)% → \(s.endBattery)%." }
-        if s.agentsFinished > 0 { body += " \(s.agentsFinished) agent turn(s) finished." }
-        notify("While you were away", body)
+        var body = tr("Lid closed for %@.", Fmt.duration(s.duration))
+        if s.hadBattery { body += tr(" Battery %d%% → %d%%.", s.startBattery, s.endBattery) }
+        if s.agentsFinished > 0 { body += tr(" %d agent turn(s) finished.", s.agentsFinished) }
+        notify(tr("While you were away"), body)
     }
 
     // MARK: Output
@@ -446,6 +526,7 @@ final class Engine: ObservableObject {
         content.body = body
         content.sound = .default
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        PhoneNotifier.send(topic: phoneTopic, title: title, body: body)
     }
 }
 
@@ -458,13 +539,14 @@ enum Fmt {
 
     static func minutes(_ m: Int) -> String {
         if m <= 0 { return "∞" }
-        if m % 60 == 0 { return "\(m / 60)h" }
-        return m > 60 ? "\(m / 60)h \(m % 60)m" : "\(m)m"
+        if m % 60 == 0 { return tr("%dh", m / 60) }
+        if m > 60 { return tr("%dh %dm", m / 60, m % 60) }
+        return L10n.isThai ? tr("%dm·short", m) : "\(m)m"
     }
 
     static func duration(_ t: TimeInterval) -> String {
         let m = Int(t / 60)
-        if m < 1 { return "under a minute" }
-        return m >= 60 ? "\(m / 60)h \(m % 60)m" : "\(m)m"
+        if m < 1 { return tr("under a minute") }
+        return m >= 60 ? tr("%dh %dm", m / 60, m % 60) : tr("%dm", m)
     }
 }
