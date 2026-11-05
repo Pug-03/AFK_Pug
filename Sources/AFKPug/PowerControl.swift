@@ -30,6 +30,9 @@ enum Sim {
         return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".afkpug/sim", isDirectory: true)
     }()
     static var actionLog: URL { dir.appendingPathComponent("actions.log") }
+    /// Fake home for agent configs (~/.claude, ~/.codex, ...) and the hook scripts'
+    /// $HOME; its .afkpug is a link to `<dir>/root`.
+    static var home: URL { dir.appendingPathComponent("home") }
     /// Seconds added to the wall clock, so scenarios can skip ahead.
     nonisolated(unsafe) static var clockOffset: TimeInterval = 0
     /// Set by the headless runner: no timer, hotkey or notification prompt.
@@ -216,8 +219,24 @@ enum PowerControl {
     /// Installs the sudoers rule. Shows the standard macOS admin prompt once.
     enum AdminError: Error, Equatable {
         case cancelled
+        case wrongPassword
         case badUser
         case failed(String)
+
+        /// osascript's output for a failed `do shell script ... with administrator privileges`.
+        static func from(output: String, status: Int32) -> AdminError {
+            let text = output.lowercased()
+            // -128 user cancelled, -60006 errAuthorizationCanceled
+            if text.contains("-128") || text.contains("-60006") || text.contains("user canceled") || text.contains("user cancelled") {
+                return .cancelled
+            }
+            // -60005 errAuthorizationDenied: wrong password (three times) or not an admin
+            if text.contains("-60005") || text.contains("password was incorrect") || text.contains("password is incorrect") {
+                return .wrongPassword
+            }
+            let message = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .failed(message.isEmpty ? "exit \(status)" : message)
+        }
     }
 
     /// Installs the sudoers rule with one admin prompt. The rule is written by the
@@ -253,9 +272,7 @@ enum PowerControl {
         let source = "do shell script \"\(escaped)\" with administrator privileges with prompt \"\(prompt)\""
         let result = run("/usr/bin/osascript", ["-e", source])
         if result.status == 0 { return .success(()) }
-        if result.output.contains("-128") { return .failure(.cancelled) }
-        let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-        return .failure(.failed(message.isEmpty ? "exit \(result.status)" : message))
+        return .failure(.from(output: result.output, status: result.status))
     }
 
     // MARK: Helpers
@@ -289,7 +306,8 @@ enum PowerControl {
 extension PowerControl.AdminError {
     var message: String {
         switch self {
-        case .cancelled: return tr("Cancelled")
+        case .cancelled: return tr("Cancelled. Nothing was changed.")
+        case .wrongPassword: return tr("That password didn't work. Use the password of an administrator account on this Mac.")
         case .badUser: return tr("Your account name has characters a permission rule can't use.")
         case .failed(let text): return tr("Couldn't set up the permission: %@", text)
         }

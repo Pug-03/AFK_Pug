@@ -9,6 +9,13 @@ enum GuardTrip: Equatable {
 
 enum PugMood { case sleeping, awake, worried }
 
+/// What besides agents and the timer keeps the Mac awake.
+enum TriggerKind: Equatable {
+    case music
+    case charger
+    case app(String)
+}
+
 /// What happened while the lid was closed.
 struct LidSummary: Identifiable {
     let id = UUID()
@@ -103,6 +110,7 @@ final class Engine: ObservableObject {
     @Published private(set) var mcpError: String?
     @Published private(set) var mcpBusy = false
     @Published private(set) var triggerReason: String?
+    @Published private(set) var triggerKind: TriggerKind?
     @Published private(set) var musicPlaying = false
     @Published private(set) var mcpConnected = MCPInstaller.isInstalled()
 
@@ -138,8 +146,17 @@ final class Engine: ObservableObject {
     private var lastBatteryNotice = Date.distantPast
     private var lastThermalNotice = Date.distantPast
     private var lastTickTime: Date?
-    /// "finished" events waiting 10 s to make sure the agent really stopped.
-    private var pendingDone: [(agent: String, at: Date)] = []
+    /// "finished" events waiting 10 s to make sure the agent really stopped. One per
+    /// session (hold id `<agent>-<sid>`); events from older hooks carry no session.
+    private var pendingDone: [(agent: String, holdId: String?, at: Date)] = []
+    /// Agent notifications: at most one per agent + kind per `noticeWindow`; the rest
+    /// are summed up and sent as one ("Claude Code finished 5 tasks") when it ends.
+    static let noticeWindow: TimeInterval = 60
+    private var lastNotice: [String: Date] = [:]
+    private var heldNotices: [String: (agent: String, kind: AgentEvent.Kind, count: Int)] = [:]
+    /// Agent processes seen while that agent's hooks held the Mac awake: the hooks
+    /// report them, so process detection leaves them alone until they exit.
+    private var hookedProcs: [Int32: String] = [:]
 
     private init() {
         let ud = Engine.store
@@ -172,7 +189,10 @@ final class Engine: ObservableObject {
     // MARK: Lifecycle
 
     func boot() {
+        Paths.writeAppPid()
         Installer.installScripts()
+        // Replaced by "a live hook hold exists" (see scanProcesses).
+        Engine.store.removeObject(forKey: "hooksSeenAgents")
         setupDone = PowerControl.isSetupDone
         if setupDone { Installer.installWatchdog() }
         // Older connections lack the PreToolUse / PostToolUse hooks.
@@ -186,7 +206,16 @@ final class Engine: ObservableObject {
             if launchAtLogin == .off, !Sim.enabled { setLaunchAtLogin(true) }
         }
         launchAtLogin = LoginItem.state
-        if MCPInstaller.needsRefresh() { background({ MCPInstaller.install() }) { _ in } }
+        if MCPInstaller.providedByPlugin {
+            // The plugin brings its own MCP server: drop the user-scope duplicate.
+            if MCPInstaller.isInstalled() {
+                background({ MCPInstaller.uninstall() }) { [weak self] _ in
+                    self?.mcpConnected = Sim.enabled ? false : MCPInstaller.isInstalled()
+                }
+            }
+        } else if MCPInstaller.needsRefresh() {
+            background({ MCPInstaller.install() }) { _ in }
+        }
         if Bundle.main.bundleIdentifier != nil, !Sim.enabled {
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         }
@@ -215,6 +244,7 @@ final class Engine: ObservableObject {
         PowerControl.setIdleAssertion(false)
         lidOverrideOn = false
         isActive = false
+        Paths.removeAppPid()
     }
 
     private func recoverFromCrash() {
@@ -342,7 +372,8 @@ final class Engine: ObservableObject {
     }
 
     /// Something besides agents is keeping the Mac awake, so "Sleep now" makes sense.
-    var canSleepNow: Bool { manualOn || triggerReason != nil || graceActive }
+    /// Never during a guard trip: the Mac is already allowed to sleep.
+    var canSleepNow: Bool { trip == nil && (manualOn || triggerReason != nil || graceActive) }
 
     /// Ends the manual session and the grace period, and snoozes triggers (music,
     /// charger, apps) until each one goes away. Agents still working keep it awake.
@@ -413,6 +444,10 @@ final class Engine: ObservableObject {
     func connectMCP() {
         guard !mcpBusy else { return }
         mcpError = nil
+        if MCPInstaller.providedByPlugin {
+            mcpError = tr("The AFK Pug plugin for Claude Code already gives agents these tools.")
+            return
+        }
         mcpBusy = true
         background({ MCPInstaller.install() }) { [weak self] result in
             guard let self else { return }
@@ -459,6 +494,10 @@ final class Engine: ObservableObject {
     // MARK: Agent integrations
 
     func refreshIntegrations() {
+        // Plugin installed after the settings.json hooks: every event would fire twice.
+        if ClaudeHooks.doubledByPlugin(), (try? ClaudeHooks.install()) != nil {
+            log("link", tr("Updated the %@ connection", AgentIntegrations.claude.name))
+        }
         var state: [String: Bool] = [:]
         for item in AgentIntegrations.all { state[item.id] = item.isConnected() }
         if state != connected { connected = state }
@@ -483,6 +522,9 @@ final class Engine: ObservableObject {
         integrationErrors[id] = nil
         do {
             try item.disconnect()
+            // Its hook holds would never be released now (no Stop hook runs any more),
+            // and process detection takes over for a running agent.
+            HoldStore.releaseAll(agent: item.id)
             log("link.badge.plus", tr("Disconnected from %@", item.name))
         } catch {
             integrationErrors[id] = tr("Could not disconnect: %@", error.localizedDescription)
@@ -511,8 +553,27 @@ final class Engine: ObservableObject {
         return total > 0 ? max(0, min(1, end.timeIntervalSince(Clock.now()) / total)) : 0
     }
 
-    /// Agents only count (headline, grace, guards) with Agent mode on.
-    var graceActive: Bool { agentMode && (graceUntil.map { $0 > Clock.now() } ?? false) }
+    /// Agents only count (headline, grace, guards) with Agent mode on. A guard trip
+    /// overrides grace: the Mac may sleep right away.
+    var graceActive: Bool { trip == nil && agentMode && (graceUntil.map { $0 > Clock.now() } ?? false) }
+
+    /// Holds that only wait for a Claude usage limit to reset.
+    var waitingAgents: Int { holds.filter(\.isUsageLimitWait).count }
+
+    /// Seconds until a thermal trip can clear (the Mac has to stay cool for 5 min);
+    /// nil when there is no thermal trip or the Mac is still too hot to start counting.
+    var thermalCooldownRemaining: TimeInterval? {
+        guard trip == .thermal, let since = coolSince else { return nil }
+        return max(0, Engine.coolDown - Clock.now().timeIntervalSince(since))
+    }
+    static let coolDown: TimeInterval = 300
+
+    /// A battery trip that only clears once a charger is connected (the battery
+    /// alone won't climb 5 % above the floor while the Mac is in use).
+    var batteryTripNeedsCharger: Bool {
+        if case .battery = trip { return !battery.onAC }
+        return false
+    }
 
     var mood: PugMood {
         if trip != nil { return .worried }
@@ -527,9 +588,10 @@ final class Engine: ObservableObject {
         }
         if manualOn { return manualEnd == nil ? tr("Awake until you stop") : tr("Staying awake") }
         if let reason = triggerReason, holds.isEmpty { return tr("Awake: %@", reason) }
+        if !holds.isEmpty, waitingAgents == holds.count { return tr("Waiting for the usage limit") }
         if !holds.isEmpty { return holds.count == 1 ? tr("Watching 1 agent") : tr("Watching %d agents", holds.count) }
         if graceActive { return tr("Agents done") }
-        return tr("Napping")
+        return tr("Idle")
     }
 
     var subline: String {
@@ -543,7 +605,12 @@ final class Engine: ObservableObject {
             return tr("Close the lid. Your work keeps running")
         }
         if !holds.isEmpty { return tr("Awake while they work, then sleeps") }
-        if triggerReason != nil { return tr("Sleeps normally once that stops") }
+        switch triggerKind {
+        case .music: return tr("Sleeps normally once the music stops")
+        case .charger: return tr("Sleeps normally once you unplug")
+        case .app(let name): return tr("Sleeps normally once %@ quits", name)
+        case nil: if triggerReason != nil { return tr("Sleeps normally once that stops") }
+        }
         if graceActive, let grace = graceUntil { return tr("Sleeping in %@", Fmt.countdown(grace.timeIntervalSince(Clock.now()))) }
         return agentMode ? tr("Wakes when your agents start") : tr("Your Mac sleeps normally")
     }
@@ -574,8 +641,7 @@ final class Engine: ObservableObject {
         // but then nothing counts: no headline, grace or guard.
         let previous = holds
         let scanned = HoldStore.scan(now: now)
-        AgentIntegrations.noteHookHolds(scanned)
-        let newHolds = agentMode ? scanned + scanProcesses() : []
+        let newHolds = agentMode ? scanned + scanProcesses(hookHolds: scanned) : []
         if newHolds != holds { holds = newHolds }
         // Events left from while the app wasn't running would all fire at once.
         handleEvents(HoldStore.consumeEvents(notBefore: firstTick ? Date().addingTimeInterval(-120) : nil))
@@ -586,9 +652,10 @@ final class Engine: ObservableObject {
         if newGrace != graceUntil { graceUntil = newGrace }
         if let g = graceUntil, g <= now { holdsEndedAt = nil; graceUntil = nil }
         for hold in holds where !previous.contains(where: { $0.id == hold.id }) {
-            log("bolt.fill", tr("%@ started working", hold.displayName))
+            log("bolt.fill", tr("%@ started working", hold.logName))
         }
         confirmFinished()
+        flushHeldNotices()
 
         // Manual timer
         if manualOn, let end = manualEnd, now >= end {
@@ -601,6 +668,7 @@ final class Engine: ObservableObject {
 
         // Triggers (before the guards, so they see this tick's reasons)
         var reason: String?
+        var kind: TriggerKind?
         // A short gap between tracks must not end the session.
         let musicOn = lastMusicHeard.map { now.timeIntervalSince($0) < 30 && now >= $0 } ?? false
         if musicOn != musicPlaying { musicPlaying = musicOn }
@@ -613,10 +681,11 @@ final class Engine: ObservableObject {
         if snoozeCharger, !battery.onAC { snoozeCharger = false }
         let app = Triggers.runningApp(from: autoApps)
         if let snoozed = snoozeApp, app != snoozed { snoozeApp = nil }
-        if keepMusic, musicOn, !snoozeMusic, !lidClosed || musicAtClose { reason = tr("music playing") }
-        if autoOnPower, battery.hasBattery, battery.onAC, !snoozeCharger { reason = tr("charger connected") }
-        if let app, app != snoozeApp { reason = app }
+        if keepMusic, musicOn, !snoozeMusic, !lidClosed || musicAtClose { reason = tr("music playing"); kind = .music }
+        if autoOnPower, battery.hasBattery, battery.onAC, !snoozeCharger { reason = tr("charger connected"); kind = .charger }
+        if let app, app != snoozeApp { reason = app; kind = .app(app) }
         if reason != triggerReason { triggerReason = reason }
+        if kind != triggerKind { triggerKind = kind }
 
         // Guards
         updateGuards()
@@ -650,19 +719,62 @@ final class Engine: ObservableObject {
         updateLidSession()
     }
 
-    /// Report "finished" only if the agent didn't pick the work up again within 10 s.
+    /// Report "finished" only if the session didn't pick the work up again within 10 s
+    /// (its hold `<agent>-<sid>` is back). Another session of the same agent working
+    /// doesn't hide it.
     private func confirmFinished() {
         guard !pendingDone.isEmpty else { return }
-        var keep: [(agent: String, at: Date)] = []
+        var keep: [(agent: String, holdId: String?, at: Date)] = []
+        var finished: [String: Int] = [:]
+        var order: [String] = []
         for item in pendingDone {
-            if holds.contains(where: { $0.agent == item.agent }) { continue }   // resumed: drop it
+            if let id = item.holdId, holds.contains(where: { $0.id == id }) { continue }   // resumed: drop it
             if now.timeIntervalSince(item.at) < 10, now >= item.at { keep.append(item); continue }
-            let name = AgentIntegrations.displayName(item.agent)
             openSummary?.agentsFinished += 1
-            log("checkmark.circle.fill", tr("%@ finished", name))
-            if notifyAgents { notify(tr("%@ finished", name), tr("Your agent is done. AFK Pug will let the Mac sleep soon.")) }
+            log("checkmark.circle.fill", tr("%@ finished", AgentIntegrations.displayName(item.agent)))
+            if finished[item.agent] == nil { order.append(item.agent) }
+            finished[item.agent, default: 0] += 1
         }
         pendingDone = keep
+        for agent in order { agentNotice(agent, .done, count: finished[agent] ?? 1) }
+    }
+
+    /// Posts an agent notification, or holds it back if this agent + kind was already
+    /// notified within the window (a burst of short turns is one notification).
+    private func agentNotice(_ agent: String, _ kind: AgentEvent.Kind, count: Int = 1) {
+        guard notifyAgents else { return }
+        let key = "\(agent)|\(kind.rawValue)"
+        if let last = lastNotice[key], now.timeIntervalSince(last) < Engine.noticeWindow, now >= last {
+            heldNotices[key] = (agent, kind, (heldNotices[key]?.count ?? 0) + count)
+            return
+        }
+        lastNotice[key] = now
+        postNotice(agent, kind, count: count)
+    }
+
+    /// Sends the summary of notifications held back once their window is over.
+    private func flushHeldNotices() {
+        for (key, held) in heldNotices {
+            if let last = lastNotice[key], now.timeIntervalSince(last) < Engine.noticeWindow, now >= last { continue }
+            heldNotices[key] = nil
+            lastNotice[key] = now
+            if notifyAgents { postNotice(held.agent, held.kind, count: held.count) }
+        }
+    }
+
+    private func postNotice(_ agent: String, _ kind: AgentEvent.Kind, count: Int) {
+        let name = AgentIntegrations.displayName(agent)
+        switch kind {
+        case .done:
+            if count > 1 { notify(tr("%@ finished %d tasks", name, count), tr("Your agents are done. AFK Pug will let the Mac sleep soon.")) }
+            else { notify(tr("%@ finished", name), tr("Your agent is done. AFK Pug will let the Mac sleep soon.")) }
+        case .failed:
+            if count > 1 { notify(tr("%@ stopped with an error %d times", name, count), tr("Your agent hit an error or a usage limit.")) }
+            else { notify(tr("%@ stopped with an error", name), tr("Your agent hit an error or a usage limit.")) }
+        case .waiting:
+            if count > 1 { notify(tr("%@ needs you (%d requests)", name, count), tr("Your agent is waiting for your input.")) }
+            else { notify(tr("%@ needs you", name), tr("Your agent is waiting for your input.")) }
+        }
     }
 
     /// Lid edge bookkeeping for the music rule.
@@ -696,25 +808,35 @@ final class Engine: ObservableObject {
             openSummary = s }
     }
 
-    /// Agents without hooks, found by process and CPU use.
-    private func scanProcesses() -> [AgentHold] {
+    /// Agents without hooks, found by process and CPU use. An agent whose hooks hold
+    /// the Mac awake right now is skipped, and so are the processes seen meanwhile
+    /// (until they exit or the hooks are disconnected): the hooks report that agent.
+    private func scanProcesses(hookHolds: [AgentHold]) -> [AgentHold] {
         guard agentMode, detectOtherAgents else { return [] }
+        let hooked = AgentIntegrations.hookedProcessNames(holds: hookHolds)
+        // Disconnected hooks report nothing any more: process detection takes over.
+        let active = Set(AgentIntegrations.all.filter { AgentIntegrations.hooksActive($0, connected: connected) }.flatMap(\.processNames))
+        hookedProcs = hookedProcs.filter { active.contains($0.value) }
         // `ps` costs ~25 ms of CPU; every ~5 s is plenty given the 30 s linger below.
         if now.timeIntervalSince(lastProcScan) >= 5 || now < lastProcScan {
             lastProcScan = now
-            // Agents connected through their own hooks already hold the Mac awake.
-            let hooked = AgentIntegrations.hookedProcessNames(connected: connected)
-            let found = ProcessWatcher.scan().filter { !hooked.contains($0.display) }
+            let all = ProcessWatcher.scan()
+            let live = Set(all.map(\.pid))
+            hookedProcs = hookedProcs.filter { live.contains($0.key) }
+            for agent in all where hooked.contains(agent.display) && active.contains(agent.display) { hookedProcs[agent.pid] = agent.display }
+            let found = all.filter { !hooked.contains($0.display) && hookedProcs[$0.pid] == nil }
             // A released process stays ignored until it exits (not just until it idles).
-            ignoredProcs.formIntersection(found.map(\.pid))
+            ignoredProcs.formIntersection(live)
             for agent in found where agent.busy && !ignoredProcs.contains(agent.pid) {
                 procLastBusy[agent.pid] = now
                 procNames[agent.pid] = agent.display
                 if procFirstSeen[agent.pid] == nil { procFirstSeen[agent.pid] = now }
             }
         }
-        // Count as working for 30 s after the last busy sample, so short pauses don't flap.
-        for (pid, last) in procLastBusy where now.timeIntervalSince(last) > 30 {
+        // Count as working for 30 s after the last busy sample, so short pauses don't flap;
+        // a hook taking over ends the process hold right away.
+        for (pid, last) in procLastBusy where now.timeIntervalSince(last) > 30 || hookedProcs[pid] != nil
+            || procNames[pid].map(hooked.contains) == true {
             procLastBusy[pid] = nil
             procFirstSeen[pid] = nil
             procNames[pid] = nil
@@ -735,7 +857,7 @@ final class Engine: ObservableObject {
                 if acSteady || battery.percent > batteryFloor + 5 { trip = nil }
             case .thermal:
                 // Stay off until the Mac has been cool for 5 minutes.
-                if let since = coolSince, now.timeIntervalSince(since) >= 300 { trip = nil }
+                if let since = coolSince, now.timeIntervalSince(since) >= Engine.coolDown { trip = nil }
             }
             return
         }
@@ -821,18 +943,22 @@ final class Engine: ObservableObject {
     }
 
     private func handleEvents(_ events: [AgentEvent]) {
-        for event in events {
+        // The same event written twice (parallel hooks, Cursor running Claude's hooks
+        // too) counts once per agent + session + kind.
+        var seen = Set<String>()
+        for event in events where seen.insert("\(event.agent)|\(event.session ?? "")|\(event.kind.rawValue)").inserted {
             let name = AgentIntegrations.displayName(event.agent)
             switch event.kind {
             case .done:
                 // Confirmed later: a Stop hook may continue the turn right away.
-                pendingDone.append((agent: event.agent, at: now))
+                if let id = event.holdId, pendingDone.contains(where: { $0.holdId == id }) { continue }
+                pendingDone.append((agent: event.agent, holdId: event.holdId, at: now))
             case .failed:
                 log("exclamationmark.triangle.fill", tr("%@ stopped with an error", name))
-                if notifyAgents { notify(tr("%@ stopped with an error", name), tr("Your agent hit an error or a usage limit.")) }
+                agentNotice(event.agent, .failed)
             case .waiting:
                 log("hand.raised.fill", tr("%@ needs you", name))
-                if notifyAgents { notify(tr("%@ needs you", name), tr("Your agent is waiting for your input.")) }
+                agentNotice(event.agent, .waiting)
             }
         }
     }
@@ -959,13 +1085,14 @@ enum Fmt {
     /// Countdown with units ("1m 52s"), so it never reads as a time of day.
     static func countdown(_ t: TimeInterval) -> String {
         let s = max(0, Int(t.rounded(.up)))
-        if s >= 3600 { return tr("%dh %dm", s / 3600, (s % 3600) / 60) }
+        if s >= 3600 { return (s % 3600) / 60 == 0 ? tr("%dh", s / 3600) : tr("%dh %dm", s / 3600, (s % 3600) / 60) }
         return s >= 60 ? tr("%dm %ds", s / 60, s % 60) : tr("%ds", s)
     }
 
     static func duration(_ t: TimeInterval) -> String {
         let m = Int(t / 60)
         if m < 1 { return tr("under a minute") }
-        return m >= 60 ? tr("%dh %dm", m / 60, m % 60) : tr("%dm", m)
+        if m < 60 { return tr("%dm", m) }
+        return m % 60 == 0 ? tr("%dh", m / 60) : tr("%dh %dm", m / 60, m % 60)
     }
 }
