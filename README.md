@@ -139,7 +139,7 @@ xattr -dr com.apple.quarantine "/Applications/AFK Pug.app"
 
 ### B. Build it yourself
 
-Needs Xcode, or the Swift 5.10+ toolchain from `xcode-select --install`. Check with `swift --version`.
+Needs Xcode 16 or newer, or its command line tools from `xcode-select --install`. Check with `swift --version`.
 
 ```sh
 git clone https://github.com/Pug-03/AFK_Pug.git
@@ -259,7 +259,7 @@ Click the A in the menu bar. The big line at the top always tells you why the Ma
 
 **What it means:** each agent that's working has a green dot. An idle session waiting at the prompt doesn't count, and background tasks still running after a reply do.
 
-**What to do:** close the lid and go. The **×** stops keeping the Mac awake for that one agent, without stopping the agent itself.
+**What to do:** close the lid and go. The **×** stops keeping the Mac awake for that one agent, without stopping the agent itself. An agent that's still running comes back on its next tool call. During one long command it doesn't, so the Mac can sleep mid-command.
 
 </td>
 </tr>
@@ -281,9 +281,9 @@ Click the A in the menu bar. The big line at the top always tells you why the Ma
 <td valign="top"><img src="docs/screens/en/grace.png" width="230" alt="Grace countdown after agents finish"></td>
 <td valign="top">
 
-**What it means:** the last agent finished. AFK Pug waits in case you send another prompt: 2 minutes by default, or off, 5 or 15 in Settings.
+**What it means:** the last agent finished, or you dismissed it with **×**, in which case the top line says *Stopped watching*. AFK Pug waits in case you send another prompt: 2 minutes by default, or off, 5 or 15 in Settings.
 
-**What to do:** nothing. Press **Allow sleep** if you don't want to wait.
+**What to do:** nothing. Press **Allow sleep** if you don't want to wait. It stops keeping the Mac awake, and macOS sleeps when it's ready.
 
 </td>
 </tr>
@@ -333,7 +333,7 @@ Click the A in the menu bar. The big line at the top always tells you why the Ma
 
 Choose the look under **Settings → Appearance**. Click a swatch and it applies right away. **Background** can match your Mac, or be white, black, navy, forest, plum or any color you pick. **Accent color** sets the switches and the app mark, with six presets. The rainbow swatch opens a color pad and a hex field for anything else.
 
-Text color follows the background and is raised until it's readable, so no combination can leave you with an unreadable app. Green, amber and red keep their meaning: working, waiting and warning.
+Text color follows the background and is raised until it's readable, so no combination can leave you with an unreadable app. Green, amber and red keep their meaning: working, waiting and warning. On macOS 26, cards use Liquid Glass.
 
 <p align="center">
   <img src="docs/screens/en/working.png" width="250" alt="Black background with an orange accent">
@@ -366,7 +366,9 @@ Both are off by default. Turn them on under **Settings → Start automatically**
 
 ### Notifications on your Mac and phone
 
-You're told when an agent finishes, needs a permission or hits an error. A "finished" notification only fires once the agent has really stopped.
+You're told when an agent finishes, needs a permission or hits an error. A "finished" notification only fires once the agent has really stopped. On battery, you also get a warning 5 points above your battery floor, before AFK Pug has to stop.
+
+If an agent is waiting for your permission with the lid closed, the notification says the Mac sleeps in about 15 minutes unless the agent moves on. Phone messages are sent before the Mac goes to sleep.
 
 For your phone, install the free [ntfy](https://ntfy.sh) app, subscribe to a topic name only you know, and enter the same name under **Settings → Phone notifications**. Press **Test** to check it.
 
@@ -406,7 +408,7 @@ For Shortcuts, Raycast, Alfred or scripts:
 open "afkpug://start?minutes=90"   # 0 = until you stop
 open "afkpug://stop"
 open "afkpug://toggle"
-open "afkpug://sleep-now"
+open "afkpug://sleep-now"           # same as Allow sleep
 ```
 
 ### Let the agent ask (MCP)
@@ -455,7 +457,7 @@ Press the gear at the top right of the app.
 
 A closed MacBook sheds heat more slowly, so AFK Pug has several guards:
 
-- **Battery floor.** Stops at 15% on battery (adjustable from 5% to 50%) and lets the Mac sleep.
+- **Battery floor.** Warns 5 points early, then stops at 15% on battery (adjustable from 5% to 50%) and lets the Mac sleep.
 - **Heat.** Turns on Low Power Mode when the Mac gets hot and always stops at critical temperature. This guard can't be turned off.
 - **Crash-safe.** If the app quits or crashes, a launchd watchdog restores normal lid sleep within 30 seconds and resumes any paused apps. The next launch checks again.
 - **Narrow permission.** The one-time setup adds a sudoers rule for exactly six commands: `pmset -a disablesleep 0|1`, and `pmset -b|-c lowpowermode 0|1` for the current power source only, so your own Low Power Mode settings are kept. Remove it any time from Settings.
@@ -480,6 +482,14 @@ On a MacBook with a notch, macOS hides menu bar icons when there isn't room, and
 <br>
 
 Open the app and check **Lid-closed mode**. If it says *Needs a one-time permission*, press **Set up**. Then check that something is keeping the Mac awake: an agent, a timer or music. With nothing to do, sleeping is correct. **Only when plugged in** also lets it sleep on battery.
+
+</details>
+
+<details>
+<summary><b>I pressed Allow sleep and the Mac stayed awake</b></summary>
+<br>
+
+**Allow sleep** only stops AFK Pug keeping the Mac awake. macOS still sleeps on its own timer, and other apps can hold it awake. To see which ones, run `pmset -g assertions` in Terminal. To sleep right away, use the Apple menu or close the lid.
 
 </details>
 
@@ -550,7 +560,7 @@ Timers end on their own, agent mode ends when the work does, and quitting the ap
 A headless simulator drives the engine with fake lid, battery, heat, audio and process input. Nothing real runs: every power command is logged instead.
 
 ```sh
-swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate all      # 49 scenarios
+swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate all      # 53 scenarios
 swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate stress   # 69 adversarial scenarios
 scripts/screenshots.sh               # renders the app screens into docs/screens/
 node scripts/guide-illustrations.mjs # draws the install pictures into docs/guide/
@@ -591,7 +601,7 @@ Sources/AFKPug/
 
 ### Roadmap
 
-- [ ] Signed and notarized download, Homebrew cask, auto-update (needs an Apple Developer ID)
+- [ ] Signed and notarized download, Homebrew cask (needs an Apple Developer ID)
 - [ ] Privileged helper (SMAppService) instead of a sudoers rule (needs signing)
 - [ ] PushPug integration
 
