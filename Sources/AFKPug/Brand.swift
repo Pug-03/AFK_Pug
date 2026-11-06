@@ -59,13 +59,18 @@ struct AppMark: View {
     }
 }
 
-/// App icon: the dark glyph on an orange rounded square.
+/// App icon: the white glyph on a black rounded square, with a hairline so it holds its
+/// shape on a dark Dock.
 struct AppIconView: View {
     var body: some View {
         RoundedRectangle(cornerRadius: 185, style: .continuous)
-            .fill(ThemePalette.brand.color)
+            .fill(Color.black)
+            .overlay {
+                RoundedRectangle(cornerRadius: 185, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 5)
+            }
             .frame(width: 824, height: 824)
-            .overlay { GlyphView(size: 500, color: Color(red: 0.09, green: 0.09, blue: 0.10)) }
+            .overlay { GlyphView(size: 500, color: .white) }
             .frame(width: 1024, height: 1024)
     }
 }

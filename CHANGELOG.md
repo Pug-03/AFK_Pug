@@ -22,6 +22,7 @@
 - Reading audio and processes no longer blocks the main thread every few seconds, which could stutter animations.
 
 ### Changed
+- New app icon: a white A on black.
 - **Keep the screen on** moved to the home screen, because it changes from night to night.
 - New installs start in English with a black background and white accent. White replaces red among the accent presets.
 - The welcome opens once more after this update, and after a reinstall from a new version.
