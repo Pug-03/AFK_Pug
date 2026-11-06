@@ -105,7 +105,7 @@ Remove it with `/plugin uninstall afk-pug`. With the plugin installed, Settings 
 
 ## Quick start
 
-1. Follow the welcome window: press **Allow** for lid-closed mode (your password, once) and **Connect** next to your agents. Later, the same buttons are in the popover (click the paw in the menu bar) and in Settings → Agents.
+1. Follow the welcome window: press **Allow** for lid-closed mode (your password, once) and **Connect** next to your agents. Later, the same buttons are in the popover (click the A icon in the menu bar) and in Settings → Agents.
 2. Keep **Agent mode** on.
 3. Start a task in your agent and close the lid.
 
@@ -253,11 +253,11 @@ Sources/AFKPug/
 ├── Views.swift         home screen
 ├── Settings.swift      settings screen and shared controls
 ├── Onboarding.swift    first-run welcome window
-├── PugArt.swift        the pug, app icon and menu bar icon
+├── Brand.swift         app mark and app icon
 ├── L10n.swift          Thai and English strings
 └── Simulation.swift    headless test scenarios
 ```
 
 ## Credits
 
-Made by [Pug-03](https://github.com/Pug-03), who also made [PushPug](https://github.com/Pug-03/PushPug). The pug is drawn entirely in SwiftUI.
+Made by [Pug-03](https://github.com/Pug-03), who also made [PushPug](https://github.com/Pug-03/PushPug).

@@ -250,7 +250,7 @@ enum PhoneNotifier {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let payload: [String: Any] = ["topic": topic, "title": title, "message": body, "tags": ["dog"]]
+        let payload: [String: Any] = ["topic": topic, "title": title, "message": body, "tags": ["bell"]]
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         URLSession.shared.dataTask(with: request).resume()
     }

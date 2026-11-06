@@ -7,7 +7,6 @@ enum GuardTrip: Equatable {
     case thermal
 }
 
-enum PugMood { case sleeping, awake, worried }
 
 /// What besides agents and the timer keeps the Mac awake.
 enum TriggerKind: Equatable {
@@ -224,7 +223,7 @@ final class Engine: ObservableObject {
             self.manualOn ? self.stop() : self.start()
         }
         if !Sim.enabled { HotKey.setEnabled(hotkeyEnabled) }
-        log("pawprint.fill", tr("AFK Pug is ready"))
+        log("power", tr("AFK Pug is ready"))
         if Sim.headless { tick(); return }
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -573,11 +572,6 @@ final class Engine: ObservableObject {
     var batteryTripNeedsCharger: Bool {
         if case .battery = trip { return !battery.onAC }
         return false
-    }
-
-    var mood: PugMood {
-        if trip != nil { return .worried }
-        return isActive ? .awake : .sleeping
     }
 
     var headline: String {

@@ -101,10 +101,9 @@ struct OnboardingView: View {
             }
             .frame(height: 20)
 
-            PugFace(mood: engine.setupError != nil && step == .lid ? .worried : .awake, size: 56)
-                .frame(width: 72, height: 60, alignment: .leading)
-                .padding(.bottom, 18)
-                .animation(Theme.fade, value: engine.setupError != nil)
+            AppMark(size: 48)
+                .padding(.top, 6)
+                .padding(.bottom, 24)
 
             ZStack(alignment: .topLeading) {
                 page(step)
@@ -146,7 +145,7 @@ struct OnboardingView: View {
             Heading(title: tr("Meet AFK Pug"),
                     text: tr("Keeps your Mac awake with the lid closed while your AI agents work, then lets it sleep when they're done."))
             MenuBarHint().padding(.top, 26)
-            Text(tr("Find the paw in the menu bar, at the top right of your screen."))
+            Text(tr("Find the A icon in the menu bar, at the top right of your screen."))
                 .font(.system(size: 11.5)).foregroundStyle(Theme.sub)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 10)
@@ -209,7 +208,7 @@ struct OnboardingView: View {
     private var finishPage: some View {
         VStack(alignment: .leading, spacing: 0) {
             Heading(title: tr("You're all set"),
-                    text: tr("Turn on Agent mode, close the lid and walk away. The pug keeps watch."))
+                    text: tr("Turn on Agent mode, close the lid and walk away. AFK Pug keeps watch."))
             Card {
                 ToggleRow(symbol: "sparkles", title: tr("Agent mode"),
                           detail: tr("Awake only while your AI agents work"), isOn: $engine.agentMode)
@@ -323,15 +322,14 @@ struct DoneMark: View {
     }
 }
 
-/// A sketch of the right end of the menu bar with the paw picked out.
+/// A sketch of the right end of the menu bar with the icon picked out.
 private struct MenuBarHint: View {
     var body: some View {
         HStack(spacing: 16) {
             Spacer()
             Image(systemName: "wifi")
             Image(systemName: "battery.75percent")
-            Image(systemName: "pawprint.fill")
-                .foregroundStyle(Theme.text)
+            GlyphView(size: 16, color: Theme.text)
                 .frame(width: 30, height: 22)
                 .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.white.opacity(0.14)))
                 .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Theme.accent.opacity(0.9), lineWidth: 1.2))

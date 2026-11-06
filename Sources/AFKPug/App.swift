@@ -40,7 +40,7 @@ private struct MenuBarLabel: View {
     @State private var active = Engine.shared.isActive
 
     var body: some View {
-        Image(systemName: active ? "pawprint.fill" : "pawprint")
+        Image(nsImage: AppGlyph.menuImage(active: active))
             .onReceive(Engine.shared.$isActive.removeDuplicates()) { value in
                 if value != active { active = value }
             }
@@ -54,10 +54,6 @@ enum Main {
         if args.contains("--mcp") { MCPServer.run(); return }
         if let i = args.firstIndex(of: "--render-icon"), i + 1 < args.count {
             MainActor.assumeIsolated { renderIcon(to: args[i + 1]) }
-            return
-        }
-        if let i = args.firstIndex(of: "--render-menuicon"), i + 1 < args.count {
-            MainActor.assumeIsolated { renderMenuIcon(to: args[i + 1]) }
             return
         }
         if let i = args.firstIndex(of: "--render-preview"), i + 1 < args.count {
@@ -96,7 +92,7 @@ enum Main {
     @MainActor
     static func renderPreview(to path: String, settings: Bool) {
         let engine = Engine.shared
-        let view = RootView(engine: engine, page: settings ? .settings : .home).environment(\.colorScheme, .dark)
+        let view = RootView(engine: engine, page: settings ? .settings : .home, fitsWindow: false).environment(\.colorScheme, .dark)
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
         write(renderer.nsImage, to: path)
@@ -110,31 +106,6 @@ enum Main {
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
         write(renderer.nsImage, to: path)
-    }
-
-    /// Both menu bar icon states, enlarged, on light and dark strips.
-    @MainActor
-    static func renderMenuIcon(to path: String) {
-        let scale: CGFloat = 10
-        let image = NSImage(size: NSSize(width: 22 * scale * 2 + 60, height: 18 * scale * 2 + 60), flipped: false) { rect in
-            for (row, bg) in [NSColor.white, NSColor(white: 0.12, alpha: 1)].enumerated() {
-                bg.setFill()
-                NSRect(x: 0, y: CGFloat(row) * (rect.height / 2), width: rect.width, height: rect.height / 2).fill()
-                for (col, active) in [false, true].enumerated() {
-                    let icon = MenuIcon.make(active: active)
-                    let tinted = NSImage(size: icon.size, flipped: false) { r in
-                        icon.draw(in: r)
-                        (row == 0 ? NSColor.black : NSColor.white).set()
-                        r.fill(using: .sourceAtop)
-                        return true
-                    }
-                    tinted.draw(in: NSRect(x: 20 + CGFloat(col) * (22 * scale + 20), y: CGFloat(row) * (rect.height / 2) + 10,
-                                           width: 22 * scale, height: 18 * scale))
-                }
-            }
-            return true
-        }
-        write(image, to: path)
     }
 
     private static func write(_ image: NSImage?, to path: String) {

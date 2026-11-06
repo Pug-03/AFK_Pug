@@ -27,6 +27,8 @@ enum Theme {
 struct RootView: View {
     @ObservedObject var engine: Engine
     @State var page: Page = .home
+    /// Off for PNG previews: ImageRenderer can't draw an NSView and shows a placeholder.
+    var fitsWindow = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Page { case home, settings }
@@ -49,7 +51,9 @@ struct RootView: View {
         .frame(width: 340, alignment: .top)
         .fixedSize(horizontal: false, vertical: true)
         .clipped()
-        .background(GeometryReader { WindowHeightFitter(height: $0.size.height) })
+        .background {
+            if fitsWindow { GeometryReader { WindowHeightFitter(height: $0.size.height) } }
+        }
         .background(Theme.bg.ignoresSafeArea())
         .modifier(WindowBackground())
         .foregroundStyle(Theme.text)
@@ -143,9 +147,7 @@ private struct Header: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            PugFace(mood: engine.mood, size: 34)
-                .frame(width: 44, height: 36)
-                .animation(Theme.fade, value: engine.mood)
+            AppMark()
             VStack(alignment: .leading, spacing: 2) {
                 Text("AFK Pug").font(.system(size: 13, weight: .semibold))
                 HStack(spacing: 6) {
