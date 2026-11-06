@@ -22,6 +22,7 @@
 
 ### Changed
 - **Keep the screen on** moved to the home screen, because it changes from night to night.
+- New installs start in English with a black background and white accent. White replaces red among the accent presets.
 - The duration picker no longer dims while an agent works.
 - A notification about an unanswered prompt under the lid says the Mac sleeps in about 15 minutes.
 - **Sleep now** is now **Allow sleep**, because it stops keeping the Mac awake and leaves the sleeping to macOS.

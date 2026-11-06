@@ -14,7 +14,7 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 }
 
 enum L10n {
-    static var language: AppLanguage = .system
+    static var language: AppLanguage = .en
 
     static var isThai: Bool {
         switch language {
@@ -235,7 +235,6 @@ private let thaiV3: [String: String] = [
     "Green": "เขียว",
     "Pink": "ชมพู",
     "Purple": "ม่วง",
-    "Red": "แดง",
     "Navy": "กรมท่า",
     "Forest": "เขียวเข้ม",
     "Plum": "ม่วงเข้ม",

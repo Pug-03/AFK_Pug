@@ -88,6 +88,7 @@ struct ThemePalette {
 
     static let dark = RGB(0.055, 0.055, 0.063)
     static let brand = RGB(0.98, 0.63, 0.35)
+    static let defaultAccent = RGB(1, 1, 1)
     /// Minimum contrast for small text (WCAG AA).
     static let textContrast = 4.5
     /// Minimum contrast for dots and for the accent against the background.
@@ -202,14 +203,14 @@ enum Haptics {
     }
 }
 
-/// The user's appearance choices. Black and orange are the defaults.
+/// The user's appearance choices. Black and white are the defaults.
 @MainActor
 final class ThemeStore: ObservableObject {
     static let shared = ThemeStore()
 
     static let accents: [(name: String, hex: String)] = [
-        ("Orange", ThemePalette.brand.hex), ("Blue", "#4C9AFF"), ("Green", "#3CCB7F"),
-        ("Pink", "#F472B6"), ("Purple", "#A78BFA"), ("Red", "#F87171"),
+        ("White", ThemePalette.defaultAccent.hex), ("Orange", ThemePalette.brand.hex), ("Blue", "#4C9AFF"),
+        ("Green", "#3CCB7F"), ("Pink", "#F472B6"), ("Purple", "#A78BFA"),
     ]
 
     /// Backgrounds offered beside white and black.
@@ -258,7 +259,7 @@ final class ThemeStore: ObservableObject {
         AppearanceMode(rawValue: Engine.store.string(forKey: "appearance") ?? "") ?? .dark
     }
     nonisolated private static var storedAccent: RGB {
-        RGB(hex: Engine.store.string(forKey: "accentColor") ?? "") ?? ThemePalette.brand
+        RGB(hex: Engine.store.string(forKey: "accentColor") ?? "") ?? ThemePalette.defaultAccent
     }
     nonisolated private static var storedBackground: RGB {
         RGB(hex: Engine.store.string(forKey: "backgroundColor") ?? "") ?? RGB(0.11, 0.13, 0.20)

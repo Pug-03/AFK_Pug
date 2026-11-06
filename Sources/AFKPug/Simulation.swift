@@ -717,7 +717,8 @@ private final class Runner {
         configure(); boot()
         let dark = ThemeStore.loadPalette()
         check(dark.background == ThemePalette.dark && dark.isDark, "default is the black background")
-        check(dark.accentRGB == ThemePalette.brand, "default accent is the brand orange, unchanged")
+        check(dark.accentRGB == RGB(1, 1, 1), "default accent is white")
+        check(L10n.isThai == false, "English by default")
         check(dark.warnRGB == RGB(0.93, 0.36, 0.33), "status red is unchanged on black")
 
         var worst = (text: 99.0, sub: 99.0, faint: 99.0, warn: 99.0, mark: 99.0)
@@ -763,7 +764,7 @@ private final class Runner {
 
         Engine.store.set("nonsense", forKey: "appearance")
         Engine.store.set("not-a-color", forKey: "accentColor")
-        check(ThemeStore.loadPalette().background == ThemePalette.dark && ThemeStore.loadPalette().accentRGB == ThemePalette.brand,
+        check(ThemeStore.loadPalette().background == ThemePalette.dark && ThemeStore.loadPalette().accentRGB == ThemePalette.defaultAccent,
               "bad stored values fall back to the defaults")
         check(RGB(hex: "#GGGGGG") == nil && RGB(hex: "123") == nil && RGB(hex: "#4C9AFF")?.hex == "#4C9AFF", "hex parsing")
     }

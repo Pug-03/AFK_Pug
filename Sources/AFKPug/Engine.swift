@@ -188,7 +188,7 @@ final class Engine: ObservableObject {
         notifyAgents = bool("notifyAgents", true)
         graceMinutes = int("graceMinutes", 2)
         keepScreenMinutes = int("keepScreenMinutes", -1)
-        language = AppLanguage(rawValue: ud.string(forKey: "language") ?? "") ?? .system
+        language = AppLanguage(rawValue: ud.string(forKey: "language") ?? "") ?? .en
         detectOtherAgents = bool("detectOtherAgents", true)
         pauseChatApps = bool("pauseChatApps", false)
         lockOnClose = bool("lockOnClose", true)
