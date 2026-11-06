@@ -21,6 +21,7 @@
 - Reading audio and processes no longer blocks the main thread every few seconds, which could stutter animations.
 
 ### Changed
+- **Keep the screen on** moved to the home screen, because it changes from night to night.
 - A notification about an unanswered prompt under the lid says the Mac sleeps in about 15 minutes.
 - **Sleep now** is now **Allow sleep**, because it stops keeping the Mac awake and leaves the sleeping to macOS.
 - An agent dismissed with its × shows **Stopped watching**, not **Agents done**.

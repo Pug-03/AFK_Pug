@@ -610,6 +610,12 @@ private struct Modes: View {
 
             Rectangle().fill(Theme.line).frame(height: 1)
 
+            ModeRow(symbol: "sun.max", title: tr("Keep the screen on"), detail: tr("On the charger, lid open")) {
+                KeepScreenPicker(engine: engine)
+            }
+
+            Rectangle().fill(Theme.line).frame(height: 1)
+
             ModeRow(symbol: "laptopcomputer", title: tr("Lid-closed mode"),
                     detail: engine.setupDone ? tr("Screen off, work keeps running") : tr("Needs a one-time permission")) {
                 Toggle(tr("Lid-closed mode"), isOn: $engine.lidMode).toggleStyle(MiniSwitch()).labelsHidden()
@@ -840,6 +846,28 @@ struct FinishedRow: View {
         let when = elapsed < 60 ? tr("just now") : tr("%@ ago", Fmt.compact(elapsed))
         let name = AgentIntegrations.displayName(item.agent)
         return (item.failed ? tr("%@ stopped with an error", name) : name) + " · " + when
+    }
+}
+
+/// How long the screen stays on for agents. A PNG preview can't draw the menu's NSView.
+struct KeepScreenPicker: View {
+    @ObservedObject var themeStore = ThemeStore.shared
+    @ObservedObject var engine: Engine
+
+    private var options: [(minutes: Int, title: String)] {
+        [(-1, tr("Off")), (0, tr("While they work")), (30, tr("30 min after")), (60, tr("1 hour after"))]
+    }
+
+    var body: some View {
+        if Sim.enabled {
+            Text(options.first { $0.minutes == engine.keepScreenMinutes }?.title ?? tr("Off"))
+                .font(.system(size: 11.5)).foregroundStyle(Theme.sub)
+        } else {
+            Picker(tr("Keep the screen on"), selection: $engine.keepScreenMinutes) {
+                ForEach(options, id: \.minutes) { Text($0.title).tag($0.minutes) }
+            }
+            .labelsHidden().frame(width: 132)
+        }
     }
 }
 
