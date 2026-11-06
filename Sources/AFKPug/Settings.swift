@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     @ObservedObject var engine: Engine
     var back: () -> Void
     @State private var confirmRemove = false
@@ -111,6 +112,10 @@ struct SettingsView: View {
                             .padding(.leading, 30)
                     }
 
+                    Section(title: tr("Appearance")) {
+                        AppearanceRows()
+                    }
+
                     Section(title: tr("General")) {
                         Row(symbol: "power", title: tr("Open at login"), detail: loginDetail) {
                             Toggle(tr("Open at login"), isOn: Binding(get: { engine.launchAtLogin == .on },
@@ -202,6 +207,7 @@ struct SettingsView: View {
 
 /// A red text action that asks once inline before doing something destructive.
 private struct ConfirmButton: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     let title: String
     let confirm: String
     var busy: Bool
@@ -222,12 +228,13 @@ private struct ConfirmButton: View {
             }
         } else {
             Button(title) { armed = true }
-                .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.warn)
+                .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Theme.warn)
         }
     }
 }
 
 private struct Section<Content: View>: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     let title: String
     @ViewBuilder var content: Content
 
@@ -252,6 +259,7 @@ private struct Section<Content: View>: View {
 /// One agent from `AgentIntegrations.all`: connected / not installed / config
 /// path, Connect or Disconnect, and the last error inline.
 struct AgentConnectionRow: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     @ObservedObject var engine: Engine
     let item: AgentIntegration
     /// Onboarding only offers Connect and shows "Connected" once done.
@@ -294,6 +302,7 @@ struct AgentConnectionRow: View {
 
 /// Small secondary note under a control, aligned with the row text.
 struct Footnote: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     let text: String
     init(_ text: String) { self.text = text }
 
@@ -306,6 +315,7 @@ struct Footnote: View {
 
 /// One settings row: icon (18) + 12 + title / detail + trailing control.
 struct Row<Trailing: View>: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     let symbol: String
     let title: String
     let detail: String
@@ -345,6 +355,7 @@ struct ToggleRow: View {
 }
 
 struct PillButton: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     enum Style { case primary, soft, quiet }
     let title: String
     var symbol: String?
@@ -368,7 +379,7 @@ struct PillButton: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
-            .foregroundStyle(style == .primary ? Color.black : (style == .soft ? Theme.text : Theme.sub))
+            .foregroundStyle(style == .primary ? Theme.onInk : (style == .soft ? Theme.text : Theme.sub))
             .background(Capsule().fill(background))
             .overlay(Capsule().stroke(style == .soft ? Theme.line : .clear, lineWidth: 1))
             .lineLimit(1)
@@ -385,14 +396,15 @@ struct PillButton: View {
 
     private var background: Color {
         switch style {
-        case .primary: return Color.white.opacity(lit ? 1 : 0.9)
-        case .soft: return lit ? Theme.surfaceHover : Color.white.opacity(0.06)
+        case .primary: return Theme.ink.opacity(lit ? 1 : 0.9)
+        case .soft: return lit ? Theme.surfaceHover : Theme.ink.opacity(0.06)
         case .quiet: return lit ? Theme.surface : .clear
         }
     }
 }
 
 struct IconButton: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     let symbol: String
     var size: CGFloat = 28
     var label: String = ""

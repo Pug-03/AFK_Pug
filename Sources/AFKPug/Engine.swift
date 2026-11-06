@@ -40,7 +40,7 @@ struct ActivityItem: Identifiable {
 final class Engine: ObservableObject {
     static let shared = Engine()
     /// Simulation keeps its settings in a separate domain.
-    static let store: UserDefaults = Sim.enabled ? (UserDefaults(suiteName: "com.pug03.afkpug.sim") ?? .standard) : .standard
+    nonisolated(unsafe) static let store: UserDefaults = Sim.enabled ? (UserDefaults(suiteName: "com.pug03.afkpug.sim") ?? .standard) : .standard
     private let defaults = Engine.store
 
     // MARK: Settings (persisted)

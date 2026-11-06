@@ -1,30 +1,8 @@
 import SwiftUI
 import AppKit
 
-/// Dark, minimal palette and motion used across the popover.
-enum Theme {
-    static let bg = Color(red: 0.055, green: 0.055, blue: 0.063)
-    static let surface = Color.white.opacity(0.045)
-    static let surfaceHover = Color.white.opacity(0.08)
-    static let line = Color.white.opacity(0.07)
-    static let text = Color.white.opacity(0.94)
-    static let sub = Color.white.opacity(0.50)
-    /// ~4.8:1 on `bg`; small text (10–11 pt) uses `sub` instead.
-    static let faint = Color.white.opacity(0.47)
-    static let accent = Color(red: 0.98, green: 0.63, blue: 0.35)
-    static let live = Color(red: 0.40, green: 0.85, blue: 0.56)
-    /// An agent paused on its usage limit: still held, not working.
-    static let wait = Color(red: 0.96, green: 0.76, blue: 0.30)
-
-    /// Page slide and segmented selection.
-    static let smooth = Animation.smooth(duration: 0.3)
-    /// Gentle crossfade for state changes (colors, text swaps).
-    static let fade = Animation.easeInOut(duration: 0.2)
-    /// Hover feedback.
-    static let hover = Animation.easeOut(duration: 0.12)
-}
-
 struct RootView: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     @ObservedObject var engine: Engine
     @State var page: Page = .home
     /// Off for PNG previews: ImageRenderer can't draw an NSView and shows a placeholder.
@@ -57,7 +35,7 @@ struct RootView: View {
         .background(Theme.bg.ignoresSafeArea())
         .modifier(WindowBackground())
         .foregroundStyle(Theme.text)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.scheme)
         .tint(Theme.accent)
     }
 
@@ -142,6 +120,7 @@ struct HomeView: View {
 }
 
 private struct Header: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     @ObservedObject var engine: Engine
     var openSettings: () -> Void
 
@@ -171,7 +150,7 @@ private struct Header: View {
     }
 
     private var dotColor: Color {
-        if engine.trip != nil { return Palette.warn }
+        if engine.trip != nil { return Theme.warn }
         if allWaiting { return Theme.wait }
         return engine.isActive ? Theme.live : Theme.faint
     }
@@ -179,6 +158,7 @@ private struct Header: View {
 
 /// Static status dot. Color changes crossfade; nothing loops.
 struct LiveDot: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     let color: Color
 
     var body: some View {
@@ -190,6 +170,7 @@ struct LiveDot: View {
 // MARK: Timer
 
 private struct TimerBlock: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     @ObservedObject var engine: Engine
 
     /// What the big text shows outside a guard trip.
@@ -223,7 +204,7 @@ private struct TimerBlock: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(bigText(mode, at: date))
                     .font(.system(size: 46, weight: .light, design: .rounded).monospacedDigit())
-                    .foregroundStyle(mode == .idle ? Theme.faint : (mode == .trip ? Palette.warn : Theme.text))
+                    .foregroundStyle(mode == .idle ? Theme.faint : (mode == .trip ? Theme.warn : Theme.text))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     // Only animates inside an explicit transaction (picking a duration),
@@ -319,6 +300,7 @@ private struct TimerBlock: View {
 // MARK: Durations
 
 private struct Durations: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     @ObservedObject var engine: Engine
     @Namespace private var ns
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -344,6 +326,7 @@ private struct Durations: View {
     }
 
     private struct Segment: View {
+        @ObservedObject var themeStore = ThemeStore.shared
         let title: String
         let spoken: String
         let selected: Bool
@@ -363,7 +346,7 @@ private struct Durations: View {
                     .background {
                         if selected {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.white.opacity(0.1))
+                                .fill(Theme.ink.opacity(0.1))
                                 .matchedGeometryEffect(id: "sel", in: ns)
                         }
                     }
@@ -381,6 +364,7 @@ private struct Durations: View {
 // MARK: Main action
 
 private struct MainAction: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     @ObservedObject var engine: Engine
 
     var body: some View {
@@ -417,6 +401,7 @@ private struct MainAction: View {
 }
 
 private struct ActionButton: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     enum Style { case solid, outline, quiet }
     let title: String
     var style: Style
@@ -431,14 +416,14 @@ private struct ActionButton: View {
                 .lineLimit(1)
                 .frame(maxWidth: .infinity)
                 .frame(height: 40)
-                .foregroundStyle(style == .solid ? Color.black : Theme.text)
+                .foregroundStyle(style == .solid ? Theme.onInk : Theme.text)
                 .background(
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .fill(fill)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .stroke(style == .outline ? Color.white.opacity(lit ? 0.35 : 0.2) : .clear, lineWidth: 1)
+                        .stroke(style == .outline ? Theme.ink.opacity(lit ? 0.35 : 0.2) : .clear, lineWidth: 1)
                 )
                 .opacity(enabled ? 1 : 0.35)
                 .contentShape(Rectangle())
@@ -452,7 +437,7 @@ private struct ActionButton: View {
 
     private var fill: Color {
         switch style {
-        case .solid: return Color.white.opacity(lit ? 1 : 0.92)
+        case .solid: return Theme.ink.opacity(lit ? 1 : 0.92)
         case .outline: return lit ? Theme.surface : .clear
         case .quiet: return lit ? Theme.surfaceHover : Theme.surface
         }
@@ -468,6 +453,7 @@ struct MiniSwitch: ToggleStyle {
     }
 
     private struct Switch: View {
+        @ObservedObject var themeStore = ThemeStore.shared
         let configuration: ToggleStyleConfiguration
         @Environment(\.isEnabled) private var enabled
 
@@ -477,11 +463,11 @@ struct MiniSwitch: ToggleStyle {
                 configuration.isOn.toggle()
             } label: {
                 Capsule()
-                    .fill(on ? Theme.accent : Color.white.opacity(0.14))
+                    .fill(on ? Theme.accent : Theme.trackOff)
                     .frame(width: 30, height: 18)
                     .overlay(alignment: on ? .trailing : .leading) {
                         Circle()
-                            .fill(on ? Color.black.opacity(0.85) : Color.white.opacity(0.75))
+                            .fill(on ? Theme.onAccent : Theme.knobOff)
                             .frame(width: 14, height: 14)
                             .padding(2)
                     }
@@ -508,6 +494,7 @@ struct PressStyle: ButtonStyle {
 // MARK: Modes
 
 private struct Modes: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     @ObservedObject var engine: Engine
     @State private var showAllAgents = false
 
@@ -600,6 +587,7 @@ private struct Modes: View {
 }
 
 private struct ModeRow<Trailing: View>: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     let symbol: String
     let title: String
     let detail: String
@@ -628,17 +616,19 @@ private struct ModeRow<Trailing: View>: View {
 
 /// Inline warning under the control that failed.
 struct ErrorText: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     let text: String
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text).font(.system(size: 11)).foregroundStyle(Palette.warn)
+        Text(text).font(.system(size: 11)).foregroundStyle(Theme.warn)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 private struct AgentRow: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     let hold: AgentHold
     var release: () -> Void
     @State private var hover = false
@@ -677,7 +667,7 @@ private struct AgentRow: View {
 
     private var status: String {
         if hold.isUsageLimitWait {
-            return hold.expires.map { tr("waiting for limit · until %@", Fmt.time($0)) } ?? tr("waiting for limit")
+            return hold.expires.map { tr("limit · until %@", Fmt.time($0)) } ?? tr("waiting for limit")
         }
         if let end = hold.expires { return tr("until %@", Fmt.time(end)) }
         let elapsed = Clock.now().timeIntervalSince(hold.started)
@@ -687,6 +677,7 @@ private struct AgentRow: View {
 
 /// "+2 more" under the agent list: shows the hidden rows so they can be seen and released.
 private struct MoreButton: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     let title: String
     let action: () -> Void
     @State private var hover = false
@@ -707,6 +698,7 @@ private struct MoreButton: View {
 // MARK: Status bar
 
 private struct StatusBar: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     @ObservedObject var engine: Engine
     @State private var quitHover = false
 
@@ -758,13 +750,14 @@ private struct StatusBar: View {
             Image(systemName: symbol).font(.system(size: 9.5))
             Text(text).font(.system(size: 11).monospacedDigit()).lineLimit(1)
         }
-        .foregroundStyle(warn ? Palette.warn : Theme.sub)
+        .foregroundStyle(warn ? Theme.warn : Theme.sub)
     }
 }
 
 // MARK: Summary
 
 private struct SummaryCard: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     let summary: LidSummary
     var dismiss: () -> Void
 
@@ -789,6 +782,7 @@ private struct SummaryCard: View {
     }
 
     private struct Figure: View {
+        @ObservedObject var themeStore = ThemeStore.shared
         let value: String
         let label: String
         var body: some View {

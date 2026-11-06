@@ -35,8 +35,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         window.titleVisibility = .hidden
         window.title = tr("Welcome to AFK Pug")
         window.isMovableByWindowBackground = true
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = NSColor(Theme.bg)
+        applyTheme(to: window)
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
         window.isReleasedWhenClosed = false
@@ -46,6 +45,15 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         window.center()
         self.window = window
         present(window)
+    }
+
+    func applyTheme() {
+        if let window { applyTheme(to: window) }
+    }
+
+    private func applyTheme(to window: NSWindow) {
+        window.appearance = NSAppearance(named: Theme.palette.isDark ? .darkAqua : .aqua)
+        window.backgroundColor = NSColor(Theme.bg)
     }
 
     /// An LSUIElement app isn't active on its own, and `activate()` is only a
@@ -71,6 +79,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
 }
 
 struct OnboardingView: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     typealias Step = OnboardingWindow.Step
 
     @ObservedObject var engine: Engine
@@ -123,7 +132,7 @@ struct OnboardingView: View {
         .fixedSize(horizontal: false, vertical: true)
         .background(Theme.bg.ignoresSafeArea())
         .foregroundStyle(Theme.text)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.scheme)
         .tint(Theme.accent)
         .onAppear { engine.refreshIntegrations() }
     }
@@ -237,7 +246,7 @@ struct OnboardingView: View {
         HStack(spacing: 8) {
             HStack(spacing: 5) {
                 ForEach(Step.allCases, id: \.self) { s in
-                    Capsule().fill(s == step ? Theme.text : Color.white.opacity(0.18))
+                    Capsule().fill(s == step ? Theme.text : Theme.ink.opacity(0.18))
                         .frame(width: s == step ? 14 : 5, height: 5)
                 }
             }
@@ -282,6 +291,7 @@ struct OnboardingView: View {
 // MARK: - Pieces
 
 private struct Heading: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     let title: String
     let text: String
 
@@ -297,6 +307,7 @@ private struct Heading: View {
 }
 
 private struct Card<Content: View>: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -309,6 +320,7 @@ private struct Card<Content: View>: View {
 
 /// Green check + "Connected"/"Done" style label used instead of a button once done.
 struct DoneMark: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     var title: String = tr("Done")
 
     var body: some View {
@@ -324,6 +336,7 @@ struct DoneMark: View {
 
 /// A sketch of the right end of the menu bar with the icon picked out.
 private struct MenuBarHint: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     var body: some View {
         HStack(spacing: 16) {
             Spacer()
@@ -331,7 +344,7 @@ private struct MenuBarHint: View {
             Image(systemName: "battery.75percent")
             GlyphView(size: 16, color: Theme.text)
                 .frame(width: 30, height: 22)
-                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.white.opacity(0.14)))
+                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.ink.opacity(0.14)))
                 .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Theme.accent.opacity(0.9), lineWidth: 1.2))
             Image(systemName: "magnifyingglass")
             Text(Date.now.formatted(date: .omitted, time: .shortened)).font(.system(size: 12, weight: .medium).monospacedDigit())

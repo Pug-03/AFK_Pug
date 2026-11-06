@@ -75,6 +75,11 @@ enum Main {
             }
             return
         }
+        if let i = args.firstIndex(of: "--render-screen"), i + 2 < args.count {
+            var language = AppLanguage.en
+            if let l = args.firstIndex(of: "--lang"), l + 1 < args.count { language = AppLanguage(rawValue: args[l + 1]) ?? .en }
+            exit(MainActor.assumeIsolated { Screens.render(args[i + 1], to: args[i + 2], language: language) })
+        }
         if let i = args.firstIndex(of: "--simulate") {
             exit(MainActor.assumeIsolated { Simulation.main(Array(args[(i + 1)...])) })
         }
@@ -92,7 +97,7 @@ enum Main {
     @MainActor
     static func renderPreview(to path: String, settings: Bool) {
         let engine = Engine.shared
-        let view = RootView(engine: engine, page: settings ? .settings : .home, fitsWindow: false).environment(\.colorScheme, .dark)
+        let view = RootView(engine: engine, page: settings ? .settings : .home, fitsWindow: false).environment(\.colorScheme, Theme.scheme)
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
         write(renderer.nsImage, to: path)
@@ -102,13 +107,13 @@ enum Main {
     @MainActor
     static func renderOnboarding(to path: String, step: OnboardingWindow.Step) {
         Engine.shared.refreshIntegrations()
-        let view = OnboardingView(engine: Engine.shared, start: step).environment(\.colorScheme, .dark)
+        let view = OnboardingView(engine: Engine.shared, start: step).environment(\.colorScheme, Theme.scheme)
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
         write(renderer.nsImage, to: path)
     }
 
-    private static func write(_ image: NSImage?, to path: String) {
+    static func write(_ image: NSImage?, to path: String) {
         guard let image, let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [:]) else {
             print("render failed"); return

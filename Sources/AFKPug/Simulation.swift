@@ -59,6 +59,7 @@ enum Simulation {
         ("proc-detect-hooks", "[b6,7] process detection off only while a hook hold lives; run-* holds don't count; disconnect hands over"),
         ("config-edges", "[b8,9,13,14,15,16] plugin double hooks removed at boot, MCP dedupe, non-object hooks refused, parsed detection, uninstall keeps user config"),
         ("limit-formats", "[b10] usage-limit reset formats: 4.30pm, p.m., time zones, ISO, epoch, escaped quotes, fallbacks"),
+        ("theme", "Appearance: text stays legible on any background and accent, defaults keep the black look, bad values fall back"),
         ("ui-contract", "UI API: trip vs Sleep now / grace, cooldown, charger, trigger sublines, Idle, waits, Fmt hours, admin errors"),
     ]
     /// Old names of the review proofs, kept as aliases.
@@ -338,12 +339,54 @@ private final class Runner {
         case "limit-formats": limitFormats()
         case "ui-contract": uiContract()
         case "preview-states": previewStates()
+        case "theme": theme()
         default:
             if name.hasPrefix("stress-") { runStress() } else if name.hasPrefix("stress2-") { runStress2() } else { fail("no scenario") }
         }
         if name != "crash" { UserDefaults.standard.removePersistentDomain(forName: "com.pug03.afkpug.sim") }
         print(failures == 0 ? "  PASS" : "  FAILED (\(failures))")
         return failures == 0 ? 0 : 1
+    }
+
+    func theme() {
+        configure(); boot()
+        let dark = ThemeStore.loadPalette()
+        check(dark.background == ThemePalette.dark && dark.isDark, "default is the black background")
+        check(dark.accentRGB == ThemePalette.brand, "default accent is the brand orange, unchanged")
+        check(dark.warnRGB == RGB(0.93, 0.36, 0.33), "status red is unchanged on black")
+
+        var worst = (text: 99.0, sub: 99.0, faint: 99.0, warn: 99.0, mark: 99.0)
+        let steps = stride(from: 0.0, through: 1.0, by: 0.125).map { $0 }
+        for r in steps { for g in steps { for b in steps {
+            let bg = RGB(r, g, b)
+            for accent in ThemeStore.accents.compactMap({ RGB(hex: $0.hex) }) + [bg, RGB(0, 0, 0), RGB(1, 1, 1)] {
+                let p = ThemePalette(background: bg, accent: accent)
+                worst.text = min(worst.text, p.textRGB.contrast(with: bg))
+                worst.sub = min(worst.sub, p.subRGB.contrast(with: bg))
+                worst.faint = min(worst.faint, p.faintRGB.contrast(with: bg))
+                worst.warn = min(worst.warn, p.warnRGB.contrast(with: bg))
+                worst.mark = min(worst.mark, p.accentRGB.contrast(with: bg), p.liveRGB.contrast(with: bg), p.waitRGB.contrast(with: bg))
+            }
+        } } }
+        check(worst.text >= 4.5 && worst.sub >= 4.5 && worst.faint >= 4.5 && worst.warn >= 4.5,
+              "text at least 4.5:1 on every background (text \(worst.text), sub \(worst.sub), faint \(worst.faint), warn \(worst.warn))")
+        check(worst.mark >= ThemePalette.markContrast, "accent and dots stay visible, even an accent equal to the background (\(worst.mark))")
+
+        let store = ThemeStore.shared
+        store.mode = .light
+        check(Theme.palette.background == RGB(1, 1, 1) && !Theme.palette.isDark, "white background applies right away")
+        store.mode = .custom
+        store.backgroundHex = "#1B2A4A"
+        store.accentHex = "#3CCB7F"
+        check(Theme.palette.background.hex == "#1B2A4A" && Theme.palette.isDark, "custom background applies")
+        check(Theme.palette.accentRGB.hex == "#3CCB7F", "custom accent applies")
+        check(ThemeStore.loadPalette().background.hex == "#1B2A4A", "choices are saved")
+
+        Engine.store.set("nonsense", forKey: "appearance")
+        Engine.store.set("not-a-color", forKey: "accentColor")
+        check(ThemeStore.loadPalette().background == ThemePalette.dark && ThemeStore.loadPalette().accentRGB == ThemePalette.brand,
+              "bad stored values fall back to the defaults")
+        check(RGB(hex: "#GGGGGG") == nil && RGB(hex: "123") == nil && RGB(hex: "#4C9AFF")?.hex == "#4C9AFF", "hex parsing")
     }
 
     func manual() {

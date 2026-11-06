@@ -1,10 +1,6 @@
 import SwiftUI
 import AppKit
 
-enum Palette {
-    static let warn = Color(red: 0.93, green: 0.36, blue: 0.33)
-}
-
 /// The app's glyph, drawn in a 32 × 32 box: an open "A" at rest, with a crossbar while active.
 enum AppGlyph {
     static func path(active: Bool) -> Path {
@@ -53,6 +49,7 @@ struct GlyphView: View {
 
 /// The glyph on a quiet rounded tile, for the popover and onboarding.
 struct AppMark: View {
+    @ObservedObject var themeStore = ThemeStore.shared
     var size: CGFloat = 34
 
     var body: some View {
@@ -66,7 +63,7 @@ struct AppMark: View {
 struct AppIconView: View {
     var body: some View {
         RoundedRectangle(cornerRadius: 185, style: .continuous)
-            .fill(Theme.accent)
+            .fill(ThemePalette.brand.color)
             .frame(width: 824, height: 824)
             .overlay { GlyphView(size: 500, color: Color(red: 0.09, green: 0.09, blue: 0.10)) }
             .frame(width: 1024, height: 1024)
