@@ -3393,10 +3393,14 @@ extension Runner {
             ("month-day without a time, days away: released", "Weekly limit · resets \(fmt(now.addingTimeInterval(4 * 86400), "MMM d"))", nil),
             ("stale ISO a day old: released", "resets \(fmt(now.addingTimeInterval(-86400), "yyyy-MM-dd HH:mm", tz: "UTC")) UTC", nil),
         ]
+        // These count from when the hook ran. All the others name a fixed moment, so they're
+        // measured from `now`: the hooks before them take seconds, which must not count against them.
+        let countFromHook = ["in 2 hours", "30 min ago: Claude continues any moment", "unreadable time, no date: 30 min"]
         for (label, message, range) in cases {
             hk("start", "claude", cj("lf", "UserPromptSubmit"))
             hk("fail", "claude", limitFail("lf", message))
-            let left = exists("claude-lf") ? (expiresAt("claude-lf").map { $0 - nowS } ?? -1) : nil
+            let base = countFromHook.contains(label) ? nowS : now.timeIntervalSince1970
+            let left = exists("claude-lf") ? (expiresAt("claude-lf").map { $0 - base } ?? -1) : nil
             try? FileManager.default.removeItem(at: Paths.holds.appendingPathComponent("claude-lf"))
             if let range { check(left.map { range.contains($0) } == true, "\(label): '\(message)' (expires in \(left.map { Int($0) } ?? -1) s, want \(Int(range.lowerBound))...\(Int(range.upperBound)))") }
             else { check(left == nil, "\(label): '\(message)' (got \(left.map { "hold \(Int($0)) s" } ?? "no hold"))") }
