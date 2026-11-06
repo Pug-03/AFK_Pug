@@ -336,6 +336,8 @@ final class Engine: ObservableObject {
         log("xmark.circle", tr("Stopped watching %@", hold.logName))
         releasedByHand = true
         tick()
+        // A tick blocks the main thread for tens of ms: keep the next one out of the row's animation.
+        timer?.fireDate = Date().addingTimeInterval(2)
     }
 
     /// The admin dialog blocks, so it runs off the main thread; the UI shows "Working…".

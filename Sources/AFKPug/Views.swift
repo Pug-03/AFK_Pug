@@ -6,42 +6,64 @@ struct RootView: View {
     @ObservedObject var engine: Engine
     @State var page: Page = .home
     @State private var homeHeight: CGFloat = 520
+    /// What the window should be; follows the content on the same curve. 0 until first measured.
+    @State private var windowHeight: CGFloat = 0
+    @State private var measured: Measured?
     /// Off for PNG previews: ImageRenderer can't draw an NSView and shows a placeholder.
     var fitsWindow = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Page { case home, settings }
 
+    private struct Measured: Equatable {
+        let height: CGFloat
+        let holdIDs: [String]
+        let page: Page
+    }
+
     /// The window is exactly the content: home sizes itself and settings takes
     /// the same height, so changing page never resizes the window mid-slide. The
     /// dark background fills the whole window, safe areas included.
     var body: some View {
-        ZStack(alignment: .top) {
-            if page == .home {
-                HomeView(engine: engine, openSettings: { go(.settings) })
-                    .fixedSize(horizontal: false, vertical: true)
-                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { homeHeight = $0 }
-                    .transition(slide(from: .leading))
-            } else {
-                SettingsView(engine: engine, back: { go(.home) })
-                    .frame(height: homeHeight)
-                    .transition(slide(from: .trailing))
+        WindowHeightLayout(height: windowHeight) {
+            ZStack(alignment: .top) {
+                if page == .home {
+                    HomeView(engine: engine, openSettings: { go(.settings) })
+                        .fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { homeHeight = $0 }
+                        .transition(slide(from: .leading))
+                } else {
+                    SettingsView(engine: engine, back: { go(.home) })
+                        .frame(height: homeHeight)
+                        .transition(slide(from: .trailing))
+                }
+            }
+            .frame(width: 340, alignment: .top)
+            .fixedSize(horizontal: false, vertical: true)
+            .clipped()
+            .animation(listAnimation, value: holdIDs)
+            .onGeometryChange(for: Measured.self, of: { Measured(height: $0.size.height, holdIDs: holdIDs, page: page) }) { new in
+                guard fitsWindow else { return }
+                // Only the agent list and the page slide animate their content; anything else
+                // appears at once and the window must not lag behind it. Opening neither.
+                let animate = measured.map { $0.holdIDs != new.holdIDs || $0.page != new.page } ?? false
+                measured = new
+                var transaction = Transaction(animation: animate ? listAnimation : nil)
+                transaction.disablesAnimations = !animate
+                withTransaction(transaction) { windowHeight = new.height }
             }
         }
-        .frame(width: 340, alignment: .top)
-        .fixedSize(horizontal: false, vertical: true)
-        .clipped()
-        .background {
-            if fitsWindow { GeometryReader { WindowHeightFitter(height: $0.size.height) } }
-        }
-        // While the window is still taller than the content, keep the content at the top.
-        .frame(maxHeight: .infinity, alignment: .top)
+        .background { if fitsWindow { WindowHeightFitter() } }
         .background(Theme.bg.ignoresSafeArea())
         .modifier(WindowBackground())
         .foregroundStyle(Theme.text)
         .preferredColorScheme(Theme.scheme)
         .tint(Theme.accent)
     }
+
+    /// Agent rows coming and going: the rows below slide and the window follows.
+    private var listAnimation: Animation? { reduceMotion ? nil : Theme.smooth }
+    private var holdIDs: [String] { engine.holds.map(\.id) }
 
     private func go(_ target: Page) {
         withAnimation(reduceMotion ? Theme.fade : Theme.smooth) { page = target }
@@ -52,51 +74,73 @@ struct RootView: View {
     }
 }
 
-/// A MenuBarExtra window grows with its content but never shrinks: dismissing a
-/// row or card would leave the content centred with empty bands above and below.
-/// This trims the window to the measured height, keeping its top under the menu bar.
-private struct WindowHeightFitter: NSViewRepresentable {
-    let height: CGFloat
-
-    func makeNSView(context: Context) -> Probe { Probe() }
-
-    func updateNSView(_ view: Probe, context: Context) {
-        view.height = height
-        view.fit()
+/// Reports `height` as the root's size and interpolates it, so a change reaches the
+/// window frame by frame. The hosting view centres the root in the window and sizes the
+/// window up to it, so the root must always be exactly as tall as the window.
+private struct WindowHeightLayout: Layout, Animatable {
+    /// 0: not measured yet, use the content's own height.
+    var height: CGFloat
+    var animatableData: CGFloat {
+        get { height }
+        set { height = newValue }
     }
 
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let content = subviews.first?.sizeThatFits(.unspecified) ?? .zero
+        // Whole points: the hosting view rounds its minimum up, and would then resize the
+        // window itself if the root were a fraction taller than the window.
+        return CGSize(width: content.width, height: (height > 0 ? height : content.height).rounded())
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: .unspecified)
+    }
+}
+
+/// A MenuBarExtra window grows with its content but never shrinks. This keeps it at the
+/// root's height as that animates, and its top where it is: the content must not move.
+private struct WindowHeightFitter: NSViewRepresentable {
+    func makeNSView(context: Context) -> Probe { Probe() }
+    func updateNSView(_ view: Probe, context: Context) {}
+
     final class Probe: NSView {
-        var height: CGFloat = 0
         private var moveObserver: NSObjectProtocol?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if let moveObserver { NotificationCenter.default.removeObserver(moveObserver) }
             moveObserver = window.map { window in
-                // SwiftUI also re-anchors the window on its own (growth, reactivation).
+                // SwiftUI also re-anchors the window on its own (reactivation).
                 NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: window, queue: .main) { [weak self] _ in
                     self?.fit()
                 }
             }
+            DispatchQueue.main.async { [weak self] in self?.fit() }
+        }
+
+        /// Called mid-layout, on purpose: a resize made later shows one frame of the root
+        /// centred in the old window, and SwiftUI would grow the window first.
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
             fit()
         }
 
-        /// Deferred: this runs inside a SwiftUI update, which must not resize the window.
-        func fit() {
-            DispatchQueue.main.async { [weak self] in
-                guard let self, let window = self.window, self.height > 0 else { return }
-                var frame = window.frame
-                if abs(frame.height - self.height) > 0.5 {
-                    frame.origin.y += frame.height - self.height
-                    frame.size.height = self.height
-                    window.setFrame(frame, display: true)
-                }
-                // MenuBarExtraWindow.setFrame ignores the origin and hangs the window from
-                // the status item, which can sit above the screen when the menu bar hides.
-                if let top = window.screen?.visibleFrame.maxY, window.frame.maxY > top {
-                    window.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: top - 2))
-                }
-            }
+        private func fit() {
+            let height = bounds.height
+            guard let window, height > 0 else { return }
+            var frame = window.frame
+            // MenuBarExtraWindow hangs the window from the status item, which can sit
+            // above the screen when the menu bar hides.
+            var top = frame.maxY
+            if let limit = window.screen?.visibleFrame.maxY, top > limit { top = limit - 2 }
+            guard abs(frame.height - height) > 0.25 || abs(frame.maxY - top) > 0.25 else { return }
+            frame.size.height = height
+            frame.origin.y = top - height
+            // NSWindow's own setFrame: MenuBarExtraWindow overrides it to replace the origin,
+            // and correcting that afterwards would show the window moving.
+            let selector = #selector(NSWindow.setFrame(_:display:))
+            typealias SetFrame = @convention(c) (NSWindow, Selector, NSRect, Bool) -> Void
+            unsafeBitCast(class_getMethodImplementation(NSWindow.self, selector), to: SetFrame.self)(window, selector, frame, false)
         }
     }
 }
@@ -115,8 +159,8 @@ private struct WindowBackground: ViewModifier {
 
 // MARK: - Home
 
-/// No container-level implicit animations here: animating layout inside a
-/// MenuBarExtra window makes it jump.
+/// No container-level implicit animations here: RootView animates layout only when the
+/// agent list changes, and the window follows. Anything else must not animate its height.
 struct HomeView: View {
     @ObservedObject var engine: Engine
     var openSettings: () -> Void
@@ -535,6 +579,7 @@ private struct Modes: View {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(showAllAgents ? engine.holds : Array(engine.holds.prefix(3))) { hold in
                         AgentRow(hold: hold) { engine.release(hold) }
+                            .transition(.opacity.animation(Theme.hover))
                     }
                     if engine.holds.count > 3 {
                         MoreButton(title: showAllAgents ? tr("Show less") : tr("+%d more", engine.holds.count - 3)) {
