@@ -82,6 +82,10 @@ enum Screens {
             engine.start()
             skip(15 * 60, engine)
         case "working", "white", "custom":
+            task("claude-demo", cwd: "/Users/me/Code/billing-api", prompt: L10n.isThai ? "แก้เทสต์การชำระเงินที่พัง" : "Fix the failing payment tests",
+                 now: #"{"tool":"Edit","target":"/Users/me/Code/billing-api/checkout.ts"}"#)
+            task("codex-demo", cwd: "/Users/me/Code/website", prompt: L10n.isThai ? "ย้ายหน้าเว็บไป Astro" : "Move the site to Astro",
+                 now: #"{"waiting":1}"#)
             hold("claude-demo", agent: "claude")
             hold("codex-demo", agent: "codex")
             engine.tick()
@@ -102,6 +106,13 @@ enum Screens {
                                         peakThermal: .nominal, agentsFinished: 3, hadBattery: true)
         default: break
         }
+    }
+
+    private static func task(_ id: String, cwd: String, prompt: String, now: String) {
+        try? FileManager.default.createDirectory(at: Paths.tasks, withIntermediateDirectories: true)
+        let base = (try? JSONSerialization.data(withJSONObject: ["cwd": cwd, "prompt": prompt])) ?? Data()
+        try? base.write(to: Paths.tasks.appendingPathComponent(id))
+        try? now.write(to: Paths.tasks.appendingPathComponent(id + ".now"), atomically: true, encoding: .utf8)
     }
 
     private static func skip(_ seconds: TimeInterval, _ engine: Engine) {

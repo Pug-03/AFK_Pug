@@ -58,6 +58,8 @@ final class Engine: ObservableObject {
     /// Keep the screen on for agents: -1 off, 0 while they work, or minutes after they finish.
     @Published var keepScreenMinutes: Int { didSet { save(keepScreenMinutes, "keepScreenMinutes") } }
     @Published private(set) var keepingScreenOn = false
+    /// Turns that ended, newest first. Kept in memory for a day, never sent anywhere.
+    @Published private(set) var finished: [FinishedTask] = []
     @Published var language: AppLanguage { didSet { save(language.rawValue, "language"); L10n.language = language } }
     @Published var detectOtherAgents: Bool { didSet { save(detectOtherAgents, "detectOtherAgents"); tick() } }
     @Published var pauseChatApps: Bool { didSet { save(pauseChatApps, "pauseChatApps") } }
@@ -758,6 +760,7 @@ final class Engine: ObservableObject {
             log("bolt.fill", tr("%@ started working", hold.logName))
         }
         confirmFinished()
+        finished.removeAll { now.timeIntervalSince($0.at) > 24 * 3600 }
         flushHeldNotices()
         checkForUpdatesIfDue()
 
@@ -868,23 +871,30 @@ final class Engine: ObservableObject {
     private func confirmFinished(force: Bool = false) {
         guard !pendingDone.isEmpty else { return }
         var keep: [(agent: String, holdId: String?, at: Date)] = []
-        var finished: [String: Int] = [:]
+        var counts: [String: Int] = [:]
+        var projects: [String: [String]] = [:]
         var order: [String] = []
         for item in pendingDone {
             if let id = item.holdId, holds.contains(where: { $0.id == id }) { continue }   // resumed: drop it
             if !force, now.timeIntervalSince(item.at) < 10, now >= item.at { keep.append(item); continue }
             openSummary?.agentsFinished += 1
             log("checkmark.circle.fill", tr("%@ finished", AgentIntegrations.displayName(item.agent)))
-            if finished[item.agent] == nil { order.append(item.agent) }
-            finished[item.agent, default: 0] += 1
+            if counts[item.agent] == nil { order.append(item.agent) }
+            counts[item.agent, default: 0] += 1
+            let task = addFinished(agent: item.agent, holdId: item.holdId, failed: false)
+            if let project = task?.project, !(projects[item.agent, default: []].contains(project)) {
+                projects[item.agent, default: []].append(project)
+            }
         }
         pendingDone = keep
-        for agent in order { agentNotice(agent, .done, count: finished[agent] ?? 1) }
+        for agent in order {
+            agentNotice(agent, .done, count: counts[agent] ?? 1, detail: projects[agent]?.joined(separator: ", "))
+        }
     }
 
     /// Posts an agent notification, or holds it back if this agent + kind was already
     /// notified within the window (a burst of short turns is one notification).
-    private func agentNotice(_ agent: String, _ kind: AgentEvent.Kind, count: Int = 1) {
+    private func agentNotice(_ agent: String, _ kind: AgentEvent.Kind, count: Int = 1, detail: String? = nil) {
         guard notifyAgents else { return }
         let key = "\(agent)|\(kind.rawValue)"
         if let last = lastNotice[key], now.timeIntervalSince(last) < Engine.noticeWindow, now >= last {
@@ -892,8 +902,19 @@ final class Engine: ObservableObject {
             return
         }
         lastNotice[key] = now
-        postNotice(agent, kind, count: count)
+        postNotice(agent, kind, count: count, detail: detail)
     }
+
+    @discardableResult
+    private func addFinished(agent: String, holdId: String?, failed: Bool) -> AgentTask? {
+        let task = holdId.flatMap { HoldStore.takeTask($0) }
+        finished.insert(FinishedTask(id: UUID(), agent: agent, task: task, at: now, failed: failed), at: 0)
+        if finished.count > 20 { finished.removeLast(finished.count - 20) }
+        return task
+    }
+
+    func dismissFinished(_ item: FinishedTask) { finished.removeAll { $0.id == item.id } }
+    func clearFinished() { finished.removeAll() }
 
     /// Sends the summary of notifications held back once their window is over.
     private func flushHeldNotices() {
@@ -905,12 +926,12 @@ final class Engine: ObservableObject {
         }
     }
 
-    private func postNotice(_ agent: String, _ kind: AgentEvent.Kind, count: Int) {
+    private func postNotice(_ agent: String, _ kind: AgentEvent.Kind, count: Int, detail: String? = nil) {
         let name = AgentIntegrations.displayName(agent)
         switch kind {
         case .done:
-            if count > 1 { notify(tr("%@ finished %d tasks", name, count), tr("Your agents are done. AFK Pug will let the Mac sleep soon.")) }
-            else { notify(tr("%@ finished", name), tr("Your agent is done. AFK Pug will let the Mac sleep soon.")) }
+            if count > 1 { notify(tr("%@ finished %d tasks", name, count), detail: detail, tr("Your agents are done. AFK Pug will let the Mac sleep soon.")) }
+            else { notify(tr("%@ finished", name), detail: detail, tr("Your agent is done. AFK Pug will let the Mac sleep soon.")) }
         case .failed:
             if count > 1 { notify(tr("%@ stopped with an error %d times", name, count), tr("Your agent hit an error or a usage limit.")) }
             else { notify(tr("%@ stopped with an error", name), tr("Your agent hit an error or a usage limit.")) }
@@ -1105,7 +1126,12 @@ final class Engine: ObservableObject {
                 pendingDone.append((agent: event.agent, holdId: event.holdId, at: now))
             case .failed:
                 log("exclamationmark.triangle.fill", tr("%@ stopped with an error", name))
-                agentNotice(event.agent, .failed)
+                // A usage-limit wait keeps its hold and its task: it isn't over.
+                var project: String?
+                if !holds.contains(where: { $0.id == event.holdId }) {
+                    project = addFinished(agent: event.agent, holdId: event.holdId, failed: true)?.project
+                }
+                agentNotice(event.agent, .failed, detail: project)
             case .waiting:
                 log("hand.raised.fill", tr("%@ needs you", name))
                 agentNotice(event.agent, .waiting)
@@ -1202,15 +1228,17 @@ final class Engine: ObservableObject {
         if activity.count > 40 { activity.removeLast(activity.count - 40) }
     }
 
-    private func notify(_ title: String, _ body: String) {
+    /// `detail` (the project's name) only shows on this Mac and isn't sent to the phone.
+    private func notify(_ title: String, detail: String? = nil, _ body: String) {
         if Sim.enabled {
-            Sim.record("notify: \(title) | \(body)")
+            Sim.record("notify: \(title) | \(body)" + (detail.map { " [\($0)]" } ?? ""))
             PhoneNotifier.send(topic: phoneTopic, title: title, body: body)
             return
         }
         guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
         content.title = title
+        if let detail { content.subtitle = detail }
         content.body = body
         content.sound = .default
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))

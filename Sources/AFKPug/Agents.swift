@@ -8,6 +8,8 @@ enum Paths {
         : FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".afkpug")
     static let holds = root.appendingPathComponent("holds")
     static let events = root.appendingPathComponent("events")
+    /// What each session is working on (`<hold id>`, `<hold id>.now`), written by the hook.
+    static let tasks = root.appendingPathComponent("tasks")
     static let bin = root.appendingPathComponent("bin")
     static let state = root.appendingPathComponent("state")
     static let lidFlag = state.appendingPathComponent("lid-override")
@@ -49,6 +51,70 @@ enum Paths {
     }
 }
 
+/// What a session is working on, from its hook events. Only ever shown on this Mac.
+struct AgentTask: Equatable {
+    var cwd: String?
+    var prompt: String?
+    var tool: String?
+    var target: String?
+    var waiting = false
+
+    /// The folder's name.
+    var project: String? {
+        guard let cwd, !cwd.isEmpty, cwd != "/" else { return nil }
+        return URL(fileURLWithPath: cwd).lastPathComponent
+    }
+
+    /// The request on one line.
+    var promptLine: String? {
+        guard let prompt else { return nil }
+        let line = prompt.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return line.isEmpty ? nil : String(line.prefix(200))
+    }
+
+    /// "AFK Pug · fix the flicker": which job this is.
+    var title: String? {
+        let parts = [project, promptLine].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// The current step. A command shows its first two words only: the rest can hold secrets.
+    var activity: String? {
+        guard let tool else { return nil }
+        let name = tool.split(separator: "_", omittingEmptySubsequences: true).count > 2 && tool.hasPrefix("mcp__")
+            ? String(tool.components(separatedBy: "__").last ?? tool) : tool
+        let file = target.map { URL(fileURLWithPath: $0).lastPathComponent }.flatMap { $0.isEmpty ? nil : $0 }
+        switch name.lowercased() {
+        case "edit", "multiedit", "write", "notebookedit", "replace", "write_file", "edit_file", "apply_patch":
+            return file.map { tr("Editing %@", $0) } ?? tr("Editing files")
+        case "read", "read_file", "read_many_files":
+            return file.map { tr("Reading %@", $0) } ?? tr("Reading files")
+        case "bash", "shell", "run_shell_command", "exec_command", "local_shell":
+            let words = (target ?? "").split(whereSeparator: \.isWhitespace).prefix(2).joined(separator: " ")
+            return words.isEmpty ? tr("Running a command") : tr("Running %@", words)
+        case "grep", "glob", "ls", "search_file_content", "list_directory", "codebase_search":
+            return tr("Searching the code")
+        case "webfetch", "websearch", "web_fetch", "web_search", "google_web_search":
+            return tr("Reading the web")
+        case "task", "agent":
+            return tr("Running a helper agent")
+        case "todowrite", "write_todos", "update_plan":
+            return tr("Planning")
+        default:
+            return tr("Using %@", name)
+        }
+    }
+}
+
+/// A turn that ended, for the "Just finished" list.
+struct FinishedTask: Identifiable, Equatable {
+    let id: UUID
+    let agent: String
+    let task: AgentTask?
+    let at: Date
+    let failed: Bool
+}
+
 /// One "keep me awake" claim from an agent, the CLI, or `afkpug run`.
 struct AgentHold: Identifiable, Equatable {
     let id: String
@@ -56,6 +122,7 @@ struct AgentHold: Identifiable, Equatable {
     let started: Date
     let expires: Date?
     let reason: String?
+    var task: AgentTask? = nil
 
     /// The agent's name only ("Claude Code", "Codex", "Terminal hold"); the UI shows
     /// `reason` / `expires` separately.
@@ -146,14 +213,53 @@ enum HoldStore {
             }
             let reason = (json["reason"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             result.append(AgentHold(id: url.lastPathComponent, agent: json["agent"] as? String ?? "agent",
-                                    started: started, expires: expires, reason: reason))
+                                    started: started, expires: expires, reason: reason, task: readTask(url.lastPathComponent)))
         }
+        cleanTasks(liveHolds: Set(result.map(\.id)), now: now)
         // Same second (hooks fired together): by id, so the order is stable.
         return result.sorted { $0.started != $1.started ? $0.started < $1.started : $0.id < $1.id }
     }
 
     static func release(_ hold: AgentHold) {
         try? FileManager.default.removeItem(at: Paths.holds.appendingPathComponent(hold.id))
+        removeTask(hold.id)
+    }
+
+    static func readTask(_ id: String) -> AgentTask? {
+        func object(_ name: String) -> [String: Any]? {
+            (try? Data(contentsOf: Paths.tasks.appendingPathComponent(name)))
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        }
+        func text(_ value: Any?) -> String? { (value as? String).flatMap { $0.isEmpty ? nil : $0 } }
+        let base = object(id), now = object(id + ".now")
+        guard base != nil || now != nil else { return nil }
+        return AgentTask(cwd: text(base?["cwd"]), prompt: text(base?["prompt"]), tool: text(now?["tool"]),
+                         target: text(now?["target"]), waiting: now?["waiting"] != nil)
+    }
+
+    /// The task of a turn that ended; its files go away with it.
+    static func takeTask(_ id: String) -> AgentTask? {
+        defer { removeTask(id) }
+        return readTask(id)
+    }
+
+    private static func removeTask(_ id: String) {
+        try? FileManager.default.removeItem(at: Paths.tasks.appendingPathComponent(id))
+        try? FileManager.default.removeItem(at: Paths.tasks.appendingPathComponent(id + ".now"))
+    }
+
+    /// Prompts shouldn't linger: a session that ended without being reported goes after an hour.
+    private static func cleanTasks(liveHolds: Set<String>, now: Date) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: Paths.tasks, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        for url in files {
+            let name = url.lastPathComponent
+            let id = name.hasSuffix(".now") ? String(name.dropLast(4)) : name
+            guard !liveHolds.contains(id),
+                  let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                  abs(now.timeIntervalSince(modified)) > 3600 else { continue }
+            try? fm.removeItem(at: url)
+        }
     }
 
     /// Drops every hook hold of one agent (`holds/<agent>-*`), e.g. on disconnect.

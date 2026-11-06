@@ -63,7 +63,10 @@ struct RootView: View {
 
     /// Agent rows coming and going: the rows below slide and the window follows.
     private var listAnimation: Animation? { reduceMotion ? nil : Theme.smooth }
-    private var holdIDs: [String] { engine.holds.map(\.id) }
+    /// Everything that changes the list's height, and nothing else: new steps keep it still.
+    private var holdIDs: [String] {
+        engine.holds.map { "\($0.id)|\($0.task?.title != nil)|\($0.isHookHold)" } + engine.finished.prefix(3).map(\.id.uuidString)
+    }
 
     private func go(_ target: Page) {
         withAnimation(reduceMotion ? Theme.fade : Theme.smooth) { page = target }
@@ -590,6 +593,10 @@ private struct Modes: View {
                 }
                 .padding(.leading, 30).padding(.bottom, 8)
             }
+            if engine.agentMode, !engine.finished.isEmpty {
+                FinishedList(engine: engine)
+                    .padding(.leading, 30).padding(.bottom, 8)
+            }
             if engine.agentMode, needsAgents {
                 HStack(spacing: 8) {
                     Text(tr("Connect your agents to detect work automatically."))
@@ -706,9 +713,29 @@ private struct AgentRow: View {
     @State private var hover = false
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            nameLine
+            if let title = hold.task?.title {
+                Text(title)
+                    .font(.system(size: 11)).foregroundStyle(Theme.text)
+                    .lineLimit(1).truncationMode(.tail)
+                    .padding(.leading, 14)
+                    .help(hold.task?.promptLine ?? title)
+            }
+            if hold.isHookHold, !hold.isUsageLimitWait {
+                Text(hold.task?.waiting == true ? tr("Waiting for you") : (hold.task?.activity ?? tr("Starting")))
+                    .font(.system(size: 10.5)).foregroundStyle(hold.task?.waiting == true ? Theme.waitText : Theme.sub)
+                    .lineLimit(1).truncationMode(.middle)
+                    .padding(.leading, 14)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var nameLine: some View {
         HStack(spacing: 8) {
-            // Amber: paused on its usage limit, held until the reset.
-            LiveDot(color: hold.isUsageLimitWait ? Theme.wait : Theme.live)
+            // Amber: paused on its usage limit or waiting for you, held until it moves on.
+            LiveDot(color: hold.isUsageLimitWait || hold.task?.waiting == true ? Theme.wait : Theme.live)
             Text(hold.displayName).font(.system(size: 11.5, weight: .medium))
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -734,7 +761,6 @@ private struct AgentRow: View {
             .help(tr("Stop keeping awake for this one"))
             .accessibilityLabel(tr("Stop keeping awake for this one"))
         }
-        .padding(.vertical, 4)
     }
 
     private var status: String {
@@ -744,6 +770,76 @@ private struct AgentRow: View {
         if let end = hold.expires { return tr("until %@", Fmt.time(end)) }
         let elapsed = Clock.now().timeIntervalSince(hold.started)
         return elapsed < 60 ? tr("just started") : tr("working for %@", Fmt.compact(elapsed))
+    }
+}
+
+/// Turns that ended: which job, and when. Three by default, the rest behind "+N more".
+private struct FinishedList: View {
+    @ObservedObject var themeStore = ThemeStore.shared
+    @ObservedObject var engine: Engine
+    @State private var showAll = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(tr("Just finished")).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Theme.sub)
+                Spacer()
+                Button(tr("Clear")) { engine.clearFinished() }
+                    .buttonStyle(.plain).font(.system(size: 10.5)).foregroundStyle(Theme.sub)
+            }
+            ForEach(showAll ? engine.finished : Array(engine.finished.prefix(3))) { item in
+                FinishedRow(item: item) { engine.dismissFinished(item) }
+                    .transition(.opacity.animation(Theme.hover))
+            }
+            if engine.finished.count > 3 {
+                MoreButton(title: showAll ? tr("Show less") : tr("+%d more", engine.finished.count - 3)) { showAll.toggle() }
+                    .padding(.leading, 14)
+            }
+        }
+    }
+}
+
+struct FinishedRow: View {
+    @ObservedObject var themeStore = ThemeStore.shared
+    let item: FinishedTask
+    var dismiss: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: item.failed ? "exclamationmark.triangle.fill" : "checkmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(item.failed ? Theme.warn : Theme.live)
+                .frame(width: 8)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(item.task?.title ?? AgentIntegrations.displayName(item.agent))
+                    .font(.system(size: 11)).lineLimit(1).truncationMode(.tail)
+                    .help(item.task?.promptLine ?? AgentIntegrations.displayName(item.agent))
+                TimelineView(.periodic(from: .now, by: 30)) { _ in
+                    Text(detail).font(.system(size: 10.5)).foregroundStyle(Theme.sub).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 4)
+            Button(action: dismiss) {
+                Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(hover ? Theme.text : Theme.sub)
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(hover ? Theme.surfaceHover : .clear))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hover = $0 }
+            .help(tr("Remove from the list"))
+            .accessibilityLabel(tr("Remove from the list"))
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var detail: String {
+        let elapsed = Clock.now().timeIntervalSince(item.at)
+        let when = elapsed < 60 ? tr("just now") : tr("%@ ago", Fmt.compact(elapsed))
+        let name = AgentIntegrations.displayName(item.agent)
+        return (item.failed ? tr("%@ stopped with an error", name) : name) + " · " + when
     }
 }
 

@@ -64,6 +64,7 @@ enum Simulation {
         ("menu-bar", "Menu bar status: off by default, time left, agents, grace, nothing when a guard stopped it"),
         ("background-sampling", "Slow reads run off the main thread: the last value comes back at once, never two reads together"),
         ("keep-screen", "Screen stays on for agents: only when chosen, on the charger, lid open; ends with the wait, a guard, unplugging or the lid"),
+        ("agent-tasks", "Agent rows: project, request and current step from hooks; waiting shows; finished list; prompts stay local and don't linger"),
         ("theme", "Appearance: text stays legible on any background and accent, defaults keep the black look, bad values fall back"),
         ("ui-contract", "UI API: trip vs Sleep now / grace, cooldown, charger, trigger sublines, Idle, waits, Fmt hours, admin errors"),
     ]
@@ -346,6 +347,7 @@ private final class Runner {
         case "preview-states": previewStates()
         case "background-sampling": backgroundSampling()
         case "keep-screen": keepScreen()
+        case "agent-tasks": agentTasks()
         case "theme": theme()
         case "menu-bar": menuBar()
         case "updates": updates()
@@ -607,6 +609,108 @@ private final class Runner {
         dropHold("claude-a8")
         engine.shutdown()
         check(!engine.keepingScreenOn, "quitting releases the screen")
+    }
+
+    func agentTasks() {
+        configure(["phoneTopic": "secret-topic"]); boot()
+        func json(_ object: [String: Any]) -> String {
+            String(decoding: (try? JSONSerialization.data(withJSONObject: object)) ?? Data(), as: UTF8.self)
+        }
+        func event(_ action: String, _ name: String, session: String = "t1", _ extra: [String: Any] = [:]) {
+            var payload: [String: Any] = ["session_id": session, "hook_event_name": name, "cwd": "/Users/me/Code/AFK Pug"]
+            payload.merge(extra) { $1 }
+            script(Paths.hookScript, [action, "claude"], stdin: json(payload))
+        }
+        func row(_ session: String = "t1") -> AgentHold? { engine.holds.first { $0.id == "claude-\(session)" } }
+
+        let prompt = "แก้บั๊ก \"หน้าต่าง\" $(touch \(Sim.dir.path)/pwned) `id` 100%s\nบรรทัดสอง\\ท้าย"
+        step("prompt", expect: ["log: Claude Code started working"]) { event("start", "UserPromptSubmit", ["prompt": prompt]) }
+        check(row()?.task?.project == "AFK Pug", "project from the folder (\(row()?.task?.project ?? "-"))")
+        check(row()?.task?.prompt == prompt, "the request survives quotes, newlines, Thai and % (\(row()?.task?.prompt ?? "-"))")
+        check(row()?.task?.promptLine?.contains("\n") == false, "shown on one line")
+        check(!FileManager.default.fileExists(atPath: Sim.dir.appendingPathComponent("pwned").path), "nothing in a prompt is ever executed")
+        let mode = (try? FileManager.default.attributesOfItem(atPath: Paths.tasks.path))?[.posixPermissions] as? Int
+        check(mode == 0o700, "the folder is private to this user (\(String(mode ?? 0, radix: 8)))")
+
+        step("editing") { event("touch", "PreToolUse", ["tool_name": "Edit", "tool_input": ["file_path": "/Users/me/Code/AFK Pug/Views.swift"]]) }
+        check(row()?.task?.activity == tr("Editing %@", "Views.swift"), "current step names the file (\(row()?.task?.activity ?? "-"))")
+        check(row()?.task?.prompt == prompt, "the request is still there")
+        step("a tool with its own prompt") { event("touch", "PreToolUse", ["tool_name": "Task", "tool_input": ["prompt": "helper's prompt"]]) }
+        check(row()?.task?.prompt == prompt && row()?.task?.activity == tr("Running a helper agent"), "a tool's prompt isn't taken for the request")
+        step("a command") { event("touch", "PreToolUse", ["tool_name": "Bash", "tool_input": ["command": "curl -H 'Authorization: Bearer abc123' https://x"]]) }
+        check(row()?.task?.activity?.contains("abc123") == false && row()?.task?.activity == tr("Running %@", "curl -H"), "only a command's first two words show (\(row()?.task?.activity ?? "-"))")
+
+        let stored = (try? String(contentsOf: Paths.tasks.appendingPathComponent("claude-t1.now"), encoding: .utf8)) ?? ""
+        check(stored.contains("curl") && !stored.contains("abc123"), "the rest of a command is never written to disk (\(stored.prefix(60)))")
+        step("a command with quotes") { event("touch", "PreToolUse", ["tool_name": "Bash", "tool_input": ["command": "echo \"a b\" secret"]]) }
+        check(row()?.task?.activity != nil && row()?.task?.activity?.contains("secret") == false, "quotes in a command keep the file readable (\(row()?.task?.activity ?? "-"))")
+        step("permission prompt", expect: ["notify: Claude Code needs you"]) { event("notify", "Notification", ["notification_type": "permission_prompt"]) }
+        check(row()?.task?.waiting == true, "the row says it's waiting for you")
+        step("approved: the tool finishes") { event("touch", "PostToolUse", ["tool_name": "Bash", "tool_input": ["command": "swift build"]]) }
+        check(row()?.task?.waiting == false, "waiting clears when it moves on")
+
+        step("second session in another folder", expect: []) {
+            event("start", "UserPromptSubmit", session: "t2", ["prompt": "second job", "cwd": "/tmp/Other"])
+        }
+        check(row("t2")?.task?.project == "Other" && row()?.task?.project == "AFK Pug", "each row keeps its own job")
+
+        step("session 1 finishes", ticks: 7, expect: ["notify: Claude Code finished"]) { event("stop", "Stop") }
+        check(engine.finished.first?.task?.project == "AFK Pug" && engine.finished.first?.task?.prompt == prompt, "the finished list names the job")
+        check(!FileManager.default.fileExists(atPath: Paths.tasks.appendingPathComponent("claude-t1").path), "its files are gone once it's listed")
+        let lines = readLog().filter { $0.contains("ntfy") }
+        check(!lines.isEmpty && !lines.contains { $0.contains("แก้บั๊ก") || $0.contains("AFK Pug ·") || $0.contains("[AFK Pug]") || $0.contains("Views.swift") },
+              "phone messages carry no request, folder or file")
+        check(readLog().contains { $0.contains("notify: Claude Code finished") && $0.contains("[AFK Pug]") }, "the Mac notification names the project")
+        step("session 2 fails", ticks: 2, expect: ["Claude Code stopped with an error"]) {
+            event("fail", "StopFailure", session: "t2", ["error": "server_error", "last_assistant_message": "API Error: 500"])
+        }
+        check(engine.finished.first?.failed == true && engine.finished.first?.task?.project == "Other", "a failed job is listed as failed")
+        if let first = engine.finished.first { engine.dismissFinished(first) }
+        check(engine.finished.count == 1, "one can be removed")
+
+        step("resumed within 10 s: not finished", ticks: 1) {
+            event("start", "UserPromptSubmit", session: "t3", ["prompt": "third"])
+            engine.tick()
+            event("stop", "Stop", session: "t3")
+            engine.tick()
+            event("start", "UserPromptSubmit", session: "t3", ["prompt": "third again"])
+        }
+        step("settles", ticks: 7, forbid: ["Claude Code finished"])
+        check(engine.finished.count == 1 && row("t3")?.task?.prompt == "third again", "a turn that picks up again isn't listed, and shows the new request")
+        if let hold = row("t3") {
+            step("× forgets the job", ticks: 2) { engine.release(hold) }
+        }
+        check(engine.finished.count == 1 && HoldStore.readTask("claude-t3") == nil, "a dismissed agent isn't called finished, and its request is deleted")
+
+        step("Esc: back at the prompt") {
+            event("start", "UserPromptSubmit", session: "t4", ["prompt": "fourth"])
+            event("notify", "Notification", session: "t4", ["notification_type": "idle_prompt"])
+        }
+        check(HoldStore.readTask("claude-t4") == nil, "an interrupted turn leaves nothing behind")
+
+        // From a file: the hook stops reading at 64 KB, which would break a pipe here.
+        let huge = Sim.dir.appendingPathComponent("huge.json")
+        try? (#"{"session_id":"t5","hook_event_name":"UserPromptSubmit","prompt":""# + String(repeating: "x", count: 200_000) + #""}"#)
+            .write(to: huge, atomically: true, encoding: .utf8)
+        step("a huge prompt", ticks: 1) { shell("\"\(Paths.hookScript.path)\" start claude < \"\(huge.path)\"") }
+        check(row("t5") != nil, "a prompt too big to read still keeps the Mac awake")
+        check(row("t5")?.task?.prompt == nil, "and just isn't shown")
+
+        // Left behind by a session that died: goes after an hour, a live session's stays.
+        Paths.ensure()
+        try? FileManager.default.createDirectory(at: Paths.tasks, withIntermediateDirectories: true)
+        let orphan = Paths.tasks.appendingPathComponent("claude-orphan")
+        try? #"{"cwd":"/x","prompt":"old"}"#.write(to: orphan, atomically: true, encoding: .utf8)
+        step("old session is present", ticks: 1)
+        check(FileManager.default.fileExists(atPath: orphan.path), "kept while it's recent")
+        hold("claude-live")
+        try? #"{"cwd":"/y","prompt":"live"}"#.write(to: Paths.tasks.appendingPathComponent("claude-live"), atomically: true, encoding: .utf8)
+        step("an hour on", ticks: 1, every: 3700) {}
+        check(!FileManager.default.fileExists(atPath: orphan.path), "an old request doesn't linger")
+        dropHold("claude-live")
+
+        engine.clearFinished()
+        check(engine.finished.isEmpty, "the list can be cleared")
     }
 
     func theme() {

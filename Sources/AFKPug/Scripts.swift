@@ -55,6 +55,34 @@ enum Scripts {
     ended="$root/holds/.ended-$agent-$sid"
     now=$(date +%s)
     event() { : > "$root/events/$now$$-$agent-$1@$sid"; }
+    # What the agent is doing, for the app's list. Values stay JSON-escaped, so the files
+    # are valid JSON. Private to this user, and nothing here leaves the Mac.
+    tasks="$root/tasks"; task="$tasks/$agent-$sid"
+    raw() {
+      printf '%s' "$input" | LC_ALL=C grep -oE '"'"$1"'"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"' | head -n 1 |
+        LC_ALL=C sed -E 's/^"[^"]*"[[:space:]]*:[[:space:]]*"//; s/"$//'
+    }
+    # save_task [prompt]: the folder, and the prompt only when this event is the prompt
+    # (a tool's input can have a "prompt" of its own).
+    save_task() {
+      cwd=$(raw cwd)
+      [ -z "$cwd" ] && cwd=$(printf '%s' "$input" | LC_ALL=C grep -oE '"workspace_roots"[[:space:]]*:[[:space:]]*\[[[:space:]]*"([^"\\]|\\.)*"' | head -n 1 | LC_ALL=C sed -E 's/.*\[[[:space:]]*"//; s/"$//')
+      p=""; [ "$1" = prompt ] && p=$(raw prompt)
+      (umask 077; mkdir -p "$tasks" && printf '{"cwd":"%s","prompt":"%s"}\n' "$cwd" "$p" > "$task.$$.tmp" && mv -f "$task.$$.tmp" "$task") 2>/dev/null
+      rm -f "$task.now"
+    }
+    write_now() { (umask 077; mkdir -p "$tasks" && printf '%s\n' "$1" > "$task.$$.tmp.now" && mv -f "$task.$$.tmp.now" "$task.now") 2>/dev/null; }
+    save_now() {
+      [ -f "$task" ] || save_task
+      tool=$(raw tool_name); [ -z "$tool" ] && return
+      target=$(raw file_path); [ -z "$target" ] && target=$(raw path)
+      # A command's first two words only: the rest can hold secrets. A space can't split an escape.
+      [ -z "$target" ] && target=$(raw command | LC_ALL=C sed -E 's/^[[:space:]]*([^[:space:]]+([[:space:]]+[^[:space:]]+)?).*/\1/')
+      write_now "{\"tool\":\"$tool\",\"target\":\"$target\"}"
+    }
+    drop_task() { rm -f "$task" "$task.now"; }
+    # Kept for the app's "finished" list; it deletes them, or they age out after an hour.
+    keep_task() { [ -f "$task" ] && touch "$task"; }
     # create [expires] [reason]
     create() {
       rm -f "$ended"
@@ -157,20 +185,20 @@ enum Scripts {
       echo "$at"
     }
     case "$action" in
-      start) create ;;
+      start) save_task prompt; create ;;
       touch)
         # postToolUseFailure from an interrupt: the user stopped the agent.
         printf '%s' "$input" | LC_ALL=C grep -Eq '"is_interrupt"[[:space:]]*:[[:space:]]*true' && exit 0
         # A usage-limit hold (fixed expiry) turns back into a normal one when work resumes.
-        if [ -f "$hold" ] && LC_ALL=C grep -q '"expires":0,' "$hold"; then touch "$hold"; exit 0; fi
+        if [ -f "$hold" ] && LC_ALL=C grep -q '"expires":0,' "$hold"; then save_now; touch "$hold"; exit 0; fi
         if recently_ended; then
           case "$(field hook_event_name)" in PreToolUse|BeforeTool|preToolUse) ;; *) exit 0 ;; esac
         fi
-        create ;;
+        save_now; create ;;
       stop)
         [ "$agent" = cursor ] && case "$(field status)" in
-          aborted) rm -f "$hold"; mark_ended; exit 0 ;;                       # Cursor: user stopped it
-          error) claim && event failed; mark_ended; exit 0 ;;
+          aborted) rm -f "$hold"; drop_task; mark_ended; exit 0 ;;            # Cursor: user stopped it
+          error) claim && { keep_task; event failed; }; mark_ended; exit 0 ;;
         esac
         # Background shells / builds still running: the session isn't done. Mark the
         # hold so idle_prompt (Claude back at its prompt) doesn't drop it.
@@ -184,19 +212,20 @@ enum Scripts {
           fi
         elif claim; then
           mark_ended
+          keep_task
           # Another Stop hook is continuing the turn: no "finished" yet.
           printf '%s' "$input" | LC_ALL=C grep -q '"stop_hook_active"[[:space:]]*:[[:space:]]*true' || event done
         fi ;;
       notify)
         case "$(field notification_type)" in
-          permission_prompt|elicitation_dialog|elicitation_url_dialog) [ -f "$hold" ] && event waiting ;;
+          permission_prompt|elicitation_dialog|elicitation_url_dialog) [ -f "$hold" ] && { event waiting; write_now '{"waiting":1}'; } ;;
           # Back at the prompt (e.g. after Esc). Not a usage-limit wait (Claude continues
           # on its own) or background tasks: those end by expiry / the 15 min and 6 h rules.
-          idle_prompt) [ -f "$hold" ] && ! LC_ALL=C grep -Eq '"expires":[1-9]|"bg":1' "$hold" && rm -f "$hold" ;;
+          idle_prompt) [ -f "$hold" ] && ! LC_ALL=C grep -Eq '"expires":[1-9]|"bg":1' "$hold" && { rm -f "$hold"; drop_task; } ;;
           quota_auto_resume_fired) create ;;   # usage limit reset: Claude continues the task
           quota_auto_resume_stale|quota_auto_resume_disabled) rm -f "$hold" ;;   # not continuing
         esac ;;
-      wait) [ -f "$hold" ] && event waiting ;;
+      wait) [ -f "$hold" ] && { event waiting; write_now '{"waiting":1}'; } ;;
       fail)
         # StopFailure. A claude.ai usage limit: Claude Code waits and continues the
         # task after the reset, so stay awake until then (at most 6 h). A plain
@@ -223,9 +252,10 @@ enum Scripts {
         if [ -n "$until" ]; then
           create "$until" "usage limit"; event failed
         elif claim; then
+          keep_task
           event failed
         fi ;;
-      end) rm -f "$hold"; mark_ended ;;
+      end) rm -f "$hold"; drop_task; mark_ended ;;
     esac
     exit 0
     """#

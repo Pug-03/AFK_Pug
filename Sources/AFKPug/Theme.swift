@@ -84,7 +84,7 @@ struct ThemePalette {
     let accentRGB: RGB
     let isDark: Bool
     let ink: Color, onInk: Color, onAccent: Color, knobOff: Color
-    let textRGB: RGB, subRGB: RGB, faintRGB: RGB, warnRGB: RGB, liveRGB: RGB, waitRGB: RGB
+    let textRGB: RGB, subRGB: RGB, faintRGB: RGB, warnRGB: RGB, liveRGB: RGB, waitRGB: RGB, liveTextRGB: RGB, waitTextRGB: RGB
 
     static let dark = RGB(0.055, 0.055, 0.063)
     static let brand = RGB(0.98, 0.63, 0.35)
@@ -122,6 +122,8 @@ struct ThemePalette {
         warnRGB = legible(RGB(0.93, 0.36, 0.33), target: Self.textContrast)
         liveRGB = legible(RGB(0.40, 0.85, 0.56), target: Self.markContrast)
         waitRGB = legible(RGB(0.96, 0.76, 0.30), target: Self.markContrast)
+        liveTextRGB = legible(RGB(0.40, 0.85, 0.56), target: Self.textContrast)
+        waitTextRGB = legible(RGB(0.96, 0.76, 0.30), target: Self.textContrast)
         accentRGB = legible(accent, target: Self.markContrast)
         onAccent = accentRGB.contrast(with: RGB(0, 0, 0)) >= accentRGB.contrast(with: RGB(1, 1, 1)) ? Color.black.opacity(0.85) : .white
     }
@@ -151,6 +153,9 @@ enum Theme {
     /// An agent paused on its usage limit: still held, not working.
     static var wait: Color { palette.waitRGB.color }
     static var warn: Color { palette.warnRGB.color }
+    /// `live` and `wait` for words: dots only need to be seen, text has to be read.
+    static var liveText: Color { palette.liveTextRGB.color }
+    static var waitText: Color { palette.waitTextRGB.color }
     static var scheme: ColorScheme { palette.isDark ? .dark : .light }
 
     /// Page slide and segmented selection.
