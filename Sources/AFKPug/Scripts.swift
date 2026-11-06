@@ -178,6 +178,10 @@ enum Scripts {
       fi
       # Calendar days, not 86400 s steps: right across a DST change.
       at=$(at_day "$(d -j -v+${n}d +%Y-%m-%d)") || return
+      # Just after midnight, a clock time from the last hour is still yesterday's.
+      if [ -z "$wd" ]; then
+        y=$(at_day "$(d -j -v-1d +%Y-%m-%d)") && [ "$y" -ge $((now - 3600)) ] && { echo "$y"; return; }
+      fi
       if [ "$at" -lt $((now - 3600)) ]; then
         if [ -n "$wd" ]; then n=$((n + 7)); else n=$((n + 1)); fi
         at=$(at_day "$(d -j -v+${n}d +%Y-%m-%d)") || return

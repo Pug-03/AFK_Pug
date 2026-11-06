@@ -15,6 +15,7 @@
 ### Fixed
 - Phone messages now leave before a closed Mac goes to sleep.
 - A finished agent is reported even when the Mac sleeps right away.
+- A usage limit that reset just before midnight no longer lets the Mac sleep just after it.
 - The window stays still when you change pages, and its top stays on screen when a row goes away.
 - Agent rows fade and slide when they come and go, and the window follows on the same curve instead of jumping.
 - Reading audio and processes no longer blocks the main thread every few seconds, which could stutter animations.
