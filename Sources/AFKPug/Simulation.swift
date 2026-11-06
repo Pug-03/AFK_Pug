@@ -2501,7 +2501,7 @@ extension Runner {
         let days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
         let cases: [(String, String, ClosedRange<TimeInterval>?)] = [
             ("weekly limit 3 days away: released", failure("rate_limit", "You've hit your weekly limit · resets \(days[(wd - 1 + 3) % 7]) 12:00am"), nil),
-            ("weekly limit later today", failure("rate_limit", "You've hit your weekly limit · resets \(days[wd - 1]) \(clock(Date().addingTimeInterval(3 * 3600)))"), (3 * 3600 - 60)...(3 * 3600 + 180)),
+            ("weekly limit later today", failure("rate_limit", "You've hit your weekly limit · resets \(days[Calendar(identifier: .gregorian).component(.weekday, from: Date().addingTimeInterval(3 * 3600)) - 1]) \(clock(Date().addingTimeInterval(3 * 3600)))"), (3 * 3600 - 60)...(3 * 3600 + 180)),
             ("time already passed today = tomorrow (>6 h): released", failure("rate_limit", "You've hit your session limit · resets \(clock(Date().addingTimeInterval(-2 * 3600)))"), nil),
             ("throttle, not a usage limit: released", failure("rate_limit", "API Error: Server is temporarily limiting requests (not your usage limit)"), nil),
             ("rate limit without a reset time: 30 min", failure("rate_limit", "API Error: Rate limit reached", details: "429 Too Many Requests"), (1790)...(1810)),
