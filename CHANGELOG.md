@@ -6,6 +6,8 @@
 - Update check once a day, with a card and one-click install. The download is checked before it's installed, and the check can be turned off.
 - Optional time left or agent count beside the A in the menu bar.
 - Early battery warning, 5 points above the floor.
+- Liquid Glass cards on macOS 26, rolling timer digits and light trackpad taps.
+- Demo animation in the README.
 
 ### Fixed
 - Phone messages now leave before a closed Mac goes to sleep.

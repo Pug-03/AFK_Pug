@@ -43,6 +43,12 @@ You ask Claude Code to refactor a module, close your MacBook and walk to lunch. 
 
 **AFK Pug is a small menu bar app that keeps your MacBook working with the lid closed**, with no external display, on battery or on power. It knows when your AI agents are really working, turns the screen off to save battery, and lets the Mac sleep as soon as the work is done.
 
+<p align="center">
+  <img src="docs/demo-en.gif" width="640" alt="Animation: an agent works, the lid closes while the work continues, and a summary waits when the lid opens">
+  <br>
+  <sub>An animation made from the app's screens, not a screen recording.</sub>
+</p>
+
 - **Works with the lid closed:** no monitor or dongle needed
 - **Follows your agents:** Claude Code, Codex, Gemini CLI, Cursor and more
 - **Waits out a Claude usage limit:** stays awake until the reset, so the task can continue
@@ -548,6 +554,7 @@ swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bi
 swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate stress   # 69 adversarial scenarios
 scripts/screenshots.sh               # renders the app screens into docs/screens/
 node scripts/guide-illustrations.mjs # draws the install pictures into docs/guide/
+node scripts/demo-gif.mjs            # makes the demo animation (needs ffmpeg)
 scripts/build.sh --zip               # packs dist/AFK-Pug.zip for a GitHub release
 ```
 
