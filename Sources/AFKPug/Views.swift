@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Dark, minimal palette and motion used across the popover.
 enum Theme {
@@ -48,6 +49,7 @@ struct RootView: View {
         .frame(width: 340, alignment: .top)
         .fixedSize(horizontal: false, vertical: true)
         .clipped()
+        .background(GeometryReader { WindowHeightFitter(height: $0.size.height) })
         .background(Theme.bg.ignoresSafeArea())
         .modifier(WindowBackground())
         .foregroundStyle(Theme.text)
@@ -61,6 +63,41 @@ struct RootView: View {
 
     private func slide(from edge: Edge) -> AnyTransition {
         reduceMotion ? .opacity : .move(edge: edge).combined(with: .opacity)
+    }
+}
+
+/// A MenuBarExtra window grows with its content but never shrinks: dismissing a
+/// row or card would leave the content centred with empty bands above and below.
+/// This trims the window to the measured height, keeping its top under the menu bar.
+private struct WindowHeightFitter: NSViewRepresentable {
+    let height: CGFloat
+
+    func makeNSView(context: Context) -> Probe { Probe() }
+
+    func updateNSView(_ view: Probe, context: Context) {
+        view.height = height
+        view.fit()
+    }
+
+    final class Probe: NSView {
+        var height: CGFloat = 0
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            fit()
+        }
+
+        /// Deferred: this runs inside a SwiftUI update, which must not resize the window.
+        func fit() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let window = self.window, self.height > 0 else { return }
+                var frame = window.frame
+                guard abs(frame.height - self.height) > 0.5 else { return }
+                frame.origin.y += frame.height - self.height
+                frame.size.height = self.height
+                window.setFrame(frame, display: true)
+            }
+        }
     }
 }
 
