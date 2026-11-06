@@ -283,7 +283,7 @@ Click the A in the menu bar. The big line at the top always tells you why the Ma
 
 **What it means:** the last agent finished. AFK Pug waits in case you send another prompt: 2 minutes by default, or off, 5 or 15 in Settings.
 
-**What to do:** nothing. Press **Sleep now** if you don't want to wait.
+**What to do:** nothing. Press **Allow sleep** if you don't want to wait.
 
 </td>
 </tr>
@@ -295,7 +295,7 @@ Click the A in the menu bar. The big line at the top always tells you why the Ma
 
 **What it means:** YouTube, Spotify or Apple Music is playing, so the Mac stays awake with the sound on. Short gaps between tracks are ignored. With the lid closed, audio only counts if it was already playing when you closed it, so an idle browser tab can't keep a Mac in a bag awake.
 
-**What to do:** nothing. **Sleep now** lets the Mac sleep, and music stays ignored until it stops and starts again.
+**What to do:** nothing. **Allow sleep** stops keeping the Mac awake, so it sleeps when macOS decides, and music stays ignored until it stops and starts again.
 
 </td>
 </tr>

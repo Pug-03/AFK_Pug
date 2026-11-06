@@ -1030,7 +1030,7 @@ private final class Runner {
         configure(); boot()
         step("music playing", expect: ["idle assertion ON"]) { Sim.set("audio", "playing") }
         check(engine.canSleepNow && engine.musicApps == ["Music"], "Sleep now offered, Music shown")
-        step("Sleep now", expect: ["log: Sleeping now", "idle assertion OFF"]) { engine.sleepNow() }
+        step("Sleep now", expect: ["log: Sleep allowed", "idle assertion OFF"]) { engine.sleepNow() }
         step("music keeps playing: stays snoozed", ticks: 30, forbid: ["idle assertion ON"])
         step("music stops for a while", ticks: 20) { Sim.set("audio", "silent") }
         step("music again: awake again", expect: ["idle assertion ON"]) { Sim.set("audio", "playing") }
@@ -1039,7 +1039,17 @@ private final class Runner {
         check(engine.canSleepNow, "grace can be cut short")
         step("Sleep now during grace", expect: ["idle assertion OFF"]) { engine.sleepNow() }
         check(!engine.isActive, "asleep-able right away")
-        step("Go AFK, then Sleep now", expect: ["idle assertion ON", "log: Sleeping now", "idle assertion OFF"]) { engine.start(); engine.tick(); engine.sleepNow() }
+        step("hold again", ticks: 2) { hold("claude-g2") }
+        if let dismissed = engine.holds.first {
+            step("user dismisses the agent", expect: ["log: Stopped watching"]) { engine.release(dismissed) }
+        }
+        check(engine.graceActive && engine.headline == tr("Stopped watching"), "a dismissed agent isn't reported as done (got \(engine.headline))")
+        step("Allow sleep", expect: ["idle assertion OFF"]) { engine.sleepNow() }
+        step("hold once more", ticks: 2) { hold("claude-g3") }
+        step("this one finishes", ticks: 2) { dropHold("claude-g3") }
+        check(engine.graceActive && engine.headline == tr("Agents done"), "a finished agent is still reported as done (got \(engine.headline))")
+        step("Allow sleep again", expect: ["idle assertion OFF"]) { engine.sleepNow() }
+        step("Go AFK, then Sleep now", expect: ["idle assertion ON", "log: Sleep allowed", "idle assertion OFF"]) { engine.start(); engine.tick(); engine.sleepNow() }
         check(!engine.manualOn, "manual session ended")
     }
 

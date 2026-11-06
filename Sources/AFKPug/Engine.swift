@@ -321,6 +321,9 @@ final class Engine: ObservableObject {
         }
     }
 
+    /// The last agent was dismissed with its × rather than finishing, so don't say it's done.
+    private var releasedByHand = false
+
     func release(_ hold: AgentHold) {
         if hold.id.hasPrefix("proc-"), let pid = Int32(hold.id.dropFirst(5)) {
             // Ignored until that process exits; drop it from the list right away.
@@ -330,6 +333,8 @@ final class Engine: ObservableObject {
             procNames[pid] = nil
         }
         HoldStore.release(hold)
+        log("xmark.circle", tr("Stopped watching %@", hold.logName))
+        releasedByHand = true
         tick()
     }
 
@@ -383,7 +388,7 @@ final class Engine: ObservableObject {
         }
     }
 
-    /// Something besides agents is keeping the Mac awake, so "Sleep now" makes sense.
+    /// Something besides agents is keeping the Mac awake, so "Allow sleep" makes sense.
     /// Never during a guard trip: the Mac is already allowed to sleep.
     var canSleepNow: Bool { trip == nil && (manualOn || triggerReason != nil || graceActive) }
 
@@ -398,7 +403,7 @@ final class Engine: ObservableObject {
         if musicPlaying { snoozeMusic = true }
         if battery.onAC { snoozeCharger = true }
         snoozeApp = Triggers.runningApp(from: autoApps)
-        log("moon.zzz.fill", tr("Sleeping now"))
+        log("moon.zzz.fill", tr("Sleep allowed"))
         tick()
     }
 
@@ -676,7 +681,7 @@ final class Engine: ObservableObject {
         if let reason = triggerReason, holds.isEmpty { return tr("Awake: %@", reason) }
         if !holds.isEmpty, waitingAgents == holds.count { return tr("Waiting for the usage limit") }
         if !holds.isEmpty { return holds.count == 1 ? tr("Watching 1 agent") : tr("Watching %d agents", holds.count) }
-        if graceActive { return tr("Agents done") }
+        if graceActive { return tr(releasedByHand ? "Stopped watching" : "Agents done") }
         return tr("Idle")
     }
 
@@ -734,6 +739,7 @@ final class Engine: ObservableObject {
         firstTick = false
         if agentMode, !previous.isEmpty, holds.isEmpty { holdsEndedAt = now }
         if !holds.isEmpty || !agentMode { holdsEndedAt = nil }
+        if !holds.isEmpty { releasedByHand = false }
         let newGrace = holdsEndedAt.map { $0.addingTimeInterval(TimeInterval(max(0, graceMinutes) * 60)) }
         if newGrace != graceUntil { graceUntil = newGrace }
         if let g = graceUntil, g <= now { holdsEndedAt = nil; graceUntil = nil }
@@ -763,7 +769,7 @@ final class Engine: ObservableObject {
         // closed: an idle audio stream must not keep a Mac in a bag awake.
         let newApps = musicOn ? AudioWatcher.playingApps() : []
         if newApps != musicApps { musicApps = newApps }
-        // "Sleep now" snoozes a trigger until its condition goes away.
+        // "Allow sleep" snoozes a trigger until its condition goes away.
         if snoozeMusic, !musicOn { snoozeMusic = false }
         if snoozeCharger, !battery.onAC { snoozeCharger = false }
         let app = Triggers.runningApp(from: autoApps)

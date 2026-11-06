@@ -86,10 +86,16 @@ private struct WindowHeightFitter: NSViewRepresentable {
             DispatchQueue.main.async { [weak self] in
                 guard let self, let window = self.window, self.height > 0 else { return }
                 var frame = window.frame
-                guard abs(frame.height - self.height) > 0.5 else { return }
-                frame.origin.y += frame.height - self.height
-                frame.size.height = self.height
-                window.setFrame(frame, display: true)
+                if abs(frame.height - self.height) > 0.5 {
+                    frame.origin.y += frame.height - self.height
+                    frame.size.height = self.height
+                    window.setFrame(frame, display: true)
+                }
+                // MenuBarExtraWindow.setFrame ignores the origin and hangs the window from
+                // the status item, which can sit above the screen when the menu bar hides.
+                if let top = window.screen?.visibleFrame.maxY, window.frame.maxY > top {
+                    window.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: top - 2))
+                }
             }
         }
     }
@@ -401,9 +407,9 @@ private struct MainAction: View {
                     .disabled(engine.trip != nil)
                     .keyboardShortcut(.defaultAction)
                 if engine.canSleepNow, engine.trip == nil {
-                    ActionButton(title: tr("Sleep now"), style: .outline) { engine.sleepNow() }
+                    ActionButton(title: tr("Allow sleep"), style: .outline) { engine.sleepNow() }
                         .frame(width: 118)
-                        .help(tr("Let the Mac sleep now; music or the charger won't keep it awake until they stop and start again"))
+                        .help(tr("Stop keeping the Mac awake. It sleeps when macOS decides; music or the charger won't keep it awake until they stop and start again"))
                 }
             }
         }
