@@ -5,24 +5,26 @@ struct RootView: View {
     @ObservedObject var themeStore = ThemeStore.shared
     @ObservedObject var engine: Engine
     @State var page: Page = .home
+    @State private var homeHeight: CGFloat = 520
     /// Off for PNG previews: ImageRenderer can't draw an NSView and shows a placeholder.
     var fitsWindow = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Page { case home, settings }
 
-    /// The window is exactly the content: home sizes itself, settings has a
-    /// fixed height (one resize on page change, never a grey margin). The dark
-    /// background fills the whole window, safe areas included.
+    /// The window is exactly the content: home sizes itself and settings takes
+    /// the same height, so changing page never resizes the window mid-slide. The
+    /// dark background fills the whole window, safe areas included.
     var body: some View {
         ZStack(alignment: .top) {
             if page == .home {
                 HomeView(engine: engine, openSettings: { go(.settings) })
                     .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { homeHeight = $0 }
                     .transition(slide(from: .leading))
             } else {
                 SettingsView(engine: engine, back: { go(.home) })
-                    .frame(height: 520)
+                    .frame(height: homeHeight)
                     .transition(slide(from: .trailing))
             }
         }
@@ -32,6 +34,8 @@ struct RootView: View {
         .background {
             if fitsWindow { GeometryReader { WindowHeightFitter(height: $0.size.height) } }
         }
+        // While the window is still taller than the content, keep the content at the top.
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.bg.ignoresSafeArea())
         .modifier(WindowBackground())
         .foregroundStyle(Theme.text)
@@ -63,9 +67,17 @@ private struct WindowHeightFitter: NSViewRepresentable {
 
     final class Probe: NSView {
         var height: CGFloat = 0
+        private var moveObserver: NSObjectProtocol?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            if let moveObserver { NotificationCenter.default.removeObserver(moveObserver) }
+            moveObserver = window.map { window in
+                // SwiftUI also re-anchors the window on its own (growth, reactivation).
+                NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: window, queue: .main) { [weak self] _ in
+                    self?.fit()
+                }
+            }
             fit()
         }
 

@@ -13,6 +13,7 @@
 ### Fixed
 - Phone messages now leave before a closed Mac goes to sleep.
 - A finished agent is reported even when the Mac sleeps right away.
+- The window stays still when you change pages, and its top stays on screen when a row goes away.
 
 ### Changed
 - A notification about an unanswered prompt under the lid says the Mac sleeps in about 15 minutes.
