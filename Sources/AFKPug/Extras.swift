@@ -243,16 +243,32 @@ enum HotKey {
 // MARK: - Phone notifications (ntfy)
 
 enum PhoneNotifier {
+    private static let inFlight = DispatchGroup()
+    nonisolated(unsafe) private static var simInFlight = 0
+
+    /// Waits until messages have left, for callers about to put the Mac to sleep.
+    static func flush(timeout: TimeInterval) {
+        if Sim.enabled {
+            if simInFlight > 0 { Sim.record("phone: waited for delivery") }
+            simInFlight = 0
+            return
+        }
+        _ = inFlight.wait(timeout: .now() + timeout)
+    }
+
     static func send(topic: String, title: String, body: String) {
         let topic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !topic.isEmpty, let url = URL(string: "https://ntfy.sh/") else { return }
-        if Sim.enabled { Sim.record("ntfy \(topic): \(title) | \(body)"); return }
+        if Sim.enabled { Sim.record("ntfy \(topic): \(title) | \(body)"); simInFlight += 1; return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let payload: [String: Any] = ["topic": topic, "title": title, "message": body, "tags": ["bell"]]
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        URLSession.shared.dataTask(with: request).resume()
+        request.timeoutInterval = 10
+        inFlight.enter()
+        // URLSession's own queue: the callback still runs while flush() blocks the main thread.
+        URLSession.shared.dataTask(with: request) { _, _, _ in inFlight.leave() }.resume()
     }
 }
 

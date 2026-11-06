@@ -143,6 +143,9 @@ final class Engine: ObservableObject {
     private var acSince: Date?
     private var coolSince: Date?
     private var lastBatteryNotice = Date.distantPast
+    /// One early warning per discharge, this many points above the floor.
+    static let batteryWarningMargin = 5
+    private var lowBatteryWarned = false
     private var lastThermalNotice = Date.distantPast
     private var lastTickTime: Date?
     /// "finished" events waiting 10 s to make sure the agent really stopped. One per
@@ -693,6 +696,9 @@ final class Engine: ObservableObject {
             if closed != lidClosed { lidClosed = closed; lidChanged(closed) }
         }
         let wasActiveBefore = isActive
+        // About to sleep with the lid shut: nothing can report after this tick.
+        let goingToSleep = isActive && lidClosed && !wantLid
+        if goingToSleep { confirmFinished(force: true) }
         // Restore first, while the Mac is surely still awake, then drop the override.
         var sleepAfter = false
         if lidEngaged, !(lidClosed && wantLid) {
@@ -700,6 +706,8 @@ final class Engine: ObservableObject {
             sleepAfter = lidClosed
         }
         lastWantLid = wantLid
+        // Dropping the override can put a closed Mac to sleep at once: send messages first.
+        if goingToSleep { PhoneNotifier.flush(timeout: 4) }
         apply(active: want, wantLid: wantLid)
         if lidEngaged, !lidOverrideOn {
             // The override could not be re-applied; macOS will sleep on its own.
@@ -716,14 +724,14 @@ final class Engine: ObservableObject {
     /// Report "finished" only if the session didn't pick the work up again within 10 s
     /// (its hold `<agent>-<sid>` is back). Another session of the same agent working
     /// doesn't hide it.
-    private func confirmFinished() {
+    private func confirmFinished(force: Bool = false) {
         guard !pendingDone.isEmpty else { return }
         var keep: [(agent: String, holdId: String?, at: Date)] = []
         var finished: [String: Int] = [:]
         var order: [String] = []
         for item in pendingDone {
             if let id = item.holdId, holds.contains(where: { $0.id == id }) { continue }   // resumed: drop it
-            if now.timeIntervalSince(item.at) < 10, now >= item.at { keep.append(item); continue }
+            if !force, now.timeIntervalSince(item.at) < 10, now >= item.at { keep.append(item); continue }
             openSummary?.agentsFinished += 1
             log("checkmark.circle.fill", tr("%@ finished", AgentIntegrations.displayName(item.agent)))
             if finished[item.agent] == nil { order.append(item.agent) }
@@ -766,8 +774,10 @@ final class Engine: ObservableObject {
             if count > 1 { notify(tr("%@ stopped with an error %d times", name, count), tr("Your agent hit an error or a usage limit.")) }
             else { notify(tr("%@ stopped with an error", name), tr("Your agent hit an error or a usage limit.")) }
         case .waiting:
-            if count > 1 { notify(tr("%@ needs you (%d requests)", name, count), tr("Your agent is waiting for your input.")) }
-            else { notify(tr("%@ needs you", name), tr("Your agent is waiting for your input.")) }
+            let body = lidClosed ? tr("Your agent is waiting for your input. If it stays idle, the Mac sleeps in about 15 minutes.")
+                                 : tr("Your agent is waiting for your input.")
+            if count > 1 { notify(tr("%@ needs you (%d requests)", name, count), body) }
+            else { notify(tr("%@ needs you", name), body) }
         }
     }
 
@@ -843,6 +853,7 @@ final class Engine: ObservableObject {
     private func updateGuards() {
         acSince = battery.onAC ? (acSince ?? now) : nil
         coolSince = thermal.rawValue <= ProcessInfo.ThermalState.fair.rawValue ? (coolSince ?? now) : nil
+        if battery.onAC || battery.percent > batteryFloor + Engine.batteryWarningMargin + 1 { lowBatteryWarned = false }
         if let current = trip {
             switch current {
             case .battery:
@@ -872,6 +883,10 @@ final class Engine: ObservableObject {
                 lastThermalNotice = now
                 notify(tr("Too hot"), tr("AFK Pug stopped so your Mac can cool down."))
             }
+        } else if battery.hasBattery, !battery.onAC, battery.percent <= batteryFloor + Engine.batteryWarningMargin, !lowBatteryWarned {
+            lowBatteryWarned = true
+            log("battery.25percent", tr("Battery at %d%%. AFK Pug stops at %d%%", battery.percent, batteryFloor))
+            notify(tr("Battery getting low"), tr("AFK Pug stops at %d%%. Plug in to keep going.", batteryFloor))
         }
     }
 

@@ -59,6 +59,7 @@ enum Simulation {
         ("proc-detect-hooks", "[b6,7] process detection off only while a hook hold lives; run-* holds don't count; disconnect hands over"),
         ("config-edges", "[b8,9,13,14,15,16] plugin double hooks removed at boot, MCP dedupe, non-object hooks refused, parsed detection, uninstall keeps user config"),
         ("limit-formats", "[b10] usage-limit reset formats: 4.30pm, p.m., time zones, ISO, epoch, escaped quotes, fallbacks"),
+        ("away-notices", "Away: phone messages leave before sleep, finish isn't lost at grace 0, early battery warning, an unanswered prompt ends"),
         ("theme", "Appearance: text stays legible on any background and accent, defaults keep the black look, bad values fall back"),
         ("ui-contract", "UI API: trip vs Sleep now / grace, cooldown, charger, trigger sublines, Idle, waits, Fmt hours, admin errors"),
     ]
@@ -340,12 +341,51 @@ private final class Runner {
         case "ui-contract": uiContract()
         case "preview-states": previewStates()
         case "theme": theme()
+        case "away-notices": awayNotices()
         default:
             if name.hasPrefix("stress-") { runStress() } else if name.hasPrefix("stress2-") { runStress2() } else { fail("no scenario") }
         }
         if name != "crash" { UserDefaults.standard.removePersistentDomain(forName: "com.pug03.afkpug.sim") }
         print(failures == 0 ? "  PASS" : "  FAILED (\(failures))")
         return failures == 0 ? 0 : 1
+    }
+
+    func awayNotices() {
+        // A guard trip under the lid: the message goes out before the override drops.
+        configure(["phoneTopic": "t", "batteryFloor": 15]); boot()
+        step("agent working, lid closed", expect: Self.closeActions) { hold("claude-s1"); Sim.set("lid", "closed") }
+        step("battery 20%: early warning, keeps working", expect: ["notify: Battery getting low", "ntfy t: Battery getting low"],
+             forbid: ["pmset sleepnow", "disablesleep 0"]) { Sim.set("battery", "20 battery") }
+        step("warned once per discharge", ticks: 5, forbid: ["Battery getting low"]) { Sim.set("battery", "18 battery") }
+        step("battery 14%: message, delivery, then sleep",
+             expect: ["ntfy t: Battery low", "phone: waited for delivery", "disablesleep 0", "pmset sleepnow"]) { Sim.set("battery", "14 battery") }
+        check(engine.trip != nil, "battery guard tripped")
+        removeAllHolds()
+        step("recharged", ticks: 20, every: 2) { Sim.set("battery", "80 ac") }
+        check(engine.trip == nil, "trip cleared")
+        Sim.set("lid", "open")
+        step("back on battery, grace runs out", ticks: 10, every: 30) { Sim.set("battery", "60 battery") }
+        check(!engine.isActive, "idle again")
+
+        // Grace 0: the Mac sleeps on the tick the hold ends, so "finished" can't wait 10 s.
+        engine.graceMinutes = 0
+        hk("start", "claude", cj("g0", "UserPromptSubmit"))
+        step("agent working, lid closed", expect: ["disablesleep 1"]) { Sim.set("lid", "closed") }
+        hk("stop", "claude", cj("g0", "Stop"))
+        step("agent stops", expect: ["notify: Claude Code finished", "ntfy t: Claude Code finished", "phone: waited for delivery", "disablesleep 0", "pmset sleepnow"]) {}
+        Sim.set("lid", "open")
+        step("lid open", ticks: 2) {}
+
+        // A permission prompt nobody answers under the lid: told, then the wait ends.
+        engine.graceMinutes = 2
+        hk("start", "claude", cj("w1", "UserPromptSubmit"))
+        step("agent working, lid closed", expect: ["disablesleep 1"]) { Sim.set("lid", "closed") }
+        hk("notify", "claude", #"{"session_id":"w1","hook_event_name":"Notification","notification_type":"permission_prompt","message":"Allow?"}"#)
+        step("permission prompt", expect: ["about 15 minutes"], forbid: ["pmset sleepnow"]) {}
+        check(exists("claude-w1"), "still held while waiting")
+        step("14 minutes on: still awake", ticks: 7, every: 120, forbid: ["pmset sleepnow"]) {}
+        step("nobody answered: hold ends, grace, then sleep", ticks: 10, every: 30, expect: ["pmset sleepnow"]) {}
+        check(!exists("claude-w1"), "unanswered prompt no longer keeps the Mac awake")
     }
 
     func theme() {
