@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/icon.png" width="128" alt="AFK Pug app icon">
+  <img src="docs/icon.png" width="120" alt="AFK Pug app icon">
 </p>
 
 <h1 align="center">AFK Pug</h1>
@@ -9,74 +9,129 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Pug-03/AFK_Pug/releases/latest"><img alt="Download for Mac" src="https://img.shields.io/badge/Download-for%20Mac-F9A15A?style=for-the-badge&logo=apple&logoColor=white"></a>
+</p>
+
+<p align="center">
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple&logoColor=white">
   <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple%20Silicon-M1%2B-111111">
-  <img alt="Swift 5.10+" src="https://img.shields.io/badge/Swift-5.10%2B-F05138?logo=swift&logoColor=white">
-  <img alt="SwiftUI" src="https://img.shields.io/badge/UI-SwiftUI-0A84FF">
   <img alt="Thai and English" src="https://img.shields.io/badge/lang-ไทย%20%C2%B7%20English-F9A15A">
 </p>
 
 <p align="center">
+  <a href="#what-it-does">What it does</a> ·
+  <a href="#installation-guide">Installation guide</a> ·
+  <a href="#what-youll-see-and-what-to-do">What you'll see</a> ·
   <a href="#features">Features</a> ·
-  <a href="#install">Install</a> ·
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#works-with-your-agents">Agents</a> ·
+  <a href="#settings">Settings</a> ·
   <a href="#safety">Safety</a> ·
-  <a href="#faq">FAQ</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
   <a href="README.th.md">ภาษาไทย</a>
+</p>
+
+<p align="center">
+  <img src="docs/guide/hero-en.png" width="860" alt="Three AFK Pug screens: ready with Agent mode on, watching two agents, and the summary after you come back">
 </p>
 
 ---
 
-You ask Claude Code to refactor a module, close your MacBook, and walk to lunch. When you come back, nothing happened: the Mac went to sleep the moment the lid shut.
+## What it does
 
-**AFK Pug** is a tiny menu bar app that keeps your MacBook awake with the lid closed, with no external display, on battery or power. It knows when your AI agents are actually working, turns the screen off so the battery lasts, and lets the Mac sleep again as soon as the work is done.
+You ask Claude Code to refactor a module, close your MacBook and walk to lunch. When you come back, nothing has happened: the Mac went to sleep the moment the lid shut.
+
+**AFK Pug is a small menu bar app that keeps your MacBook working with the lid closed**, with no external display, on battery or on power. It knows when your AI agents are really working, turns the screen off to save battery, and lets the Mac sleep as soon as the work is done.
+
+- **Works with the lid closed:** no monitor or dongle needed
+- **Follows your agents:** Claude Code, Codex, Gemini CLI, Cursor and more
+- **Waits out a Claude usage limit:** stays awake until the reset, so the task can continue
+- **Easy on the battery:** screen off, sound muted, Low Power Mode, all restored when you open the lid
+- **Keeps music playing:** a track that's already on stays on
+- **Has hard limits:** stops at low battery or critical heat, and restores normal sleep even if the app crashes
+- **Looks how you like:** white, black or any background, with your own accent color
+- **Stays on your Mac:** no account and no telemetry
+
+---
+
+## Installation guide
+
+Most people need **Before you start**, **A** and **C**. It takes about two minutes.
+
+| Part | What it covers | Who needs it |
+|---|---|---|
+| [Before you start](#before-you-start) | your Mac and macOS version | everyone |
+| [A. Download the app](#a-download-the-app) | download, move to Applications, first open | everyone |
+| [B. Build it yourself](#b-build-it-yourself) | from the source code | developers |
+| [C. The welcome window](#c-the-welcome-window) | permission and connecting your agents | everyone |
+| [D. Find the menu bar icon](#d-find-the-menu-bar-icon) | where AFK Pug lives | everyone |
+| [E. Claude Code plugin](#e-claude-code-plugin-optional) | hooks without editing your settings file | optional |
+| [Update or uninstall](#update-or-uninstall) | newer versions, removing it | later |
+
+### Before you start
+
+Open the Apple menu and choose **About This Mac**. You need:
+
+- **Chip:** Apple M1 or newer. Intel Macs aren't supported.
+- **macOS:** 14 Sonoma or newer.
+
+If you use Amphetamine or a similar app, quit it so the two don't fight over sleep.
+
+### A. Download the app
+
+**A1. Download.** Open the [latest release](https://github.com/Pug-03/AFK_Pug/releases/latest), scroll to **Assets** and click **`AFK-Pug.zip`** **(1)**.
 
 <p align="center">
-  <img src="docs/screenshot-en.png" width="340" alt="AFK Pug popover in English">
-  &nbsp;&nbsp;
-  <img src="docs/screenshot-th.png" width="340" alt="AFK Pug popover in Thai">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/guide/download-dark.png">
+    <img src="docs/guide/download-light.png" width="720" alt="GitHub release page with AFK-Pug.zip highlighted as step 1">
+  </picture>
 </p>
 
-## Features
+**A2. Move it to Applications.** Open **Downloads** and double-click the zip if it wasn't unpacked for you. Drag **AFK Pug** into **Applications** **(2)**. It has to be there: agent hooks and the Claude Code plugin look for it in that folder.
 
-### Stay awake, lid closed
-- **One click.** Pick 30m, 1h, 2h, 4h, 8h or ∞ and press **Go AFK**. Add 30 minutes or stop at any time.
-- **No monitor, no dongle.** Works with the lid closed on battery or on power.
-- **Shortcut.** <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>A</kbd> starts or stops AFK from any app.
-- **Sleep now.** When music, the charger or the grace period is keeping the Mac awake, one click lets it sleep; those triggers stay quiet until they stop and start again.
-- **Opens at login** (on by default), so agent mode keeps working after a restart. Turn it off in Settings → General.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/guide/drag-dark.png">
+    <img src="docs/guide/drag-light.png" width="720" alt="Dragging AFK Pug into the Applications folder, step 2">
+  </picture>
+</p>
 
-### Knows when your agents work
-- **Agent mode.** Awake only while Claude Code, Codex, Gemini CLI, Cursor (or another agent) is working. An idle session at the prompt doesn't count, so the Mac sleeps normally.
-- **Grace period.** Off, 2, 5 or 15 minutes after the last agent finishes, in case you send another prompt.
-- **Waits out a usage limit.** If Claude Code stops on a claude.ai usage limit that resets within 6 hours, AFK Pug stays awake until the reset, so Claude can continue the task on its own (see [Usage limits](#usage-limits)).
-- **Smart about Claude Code.** Background tasks still running after Claude's reply keep the Mac awake. An interrupted turn (Esc) or an API error lets it sleep. A "finished" notification only fires once the agent has really stopped.
-- **Notifications.** Tells you when an agent finishes, needs a permission or hits an error. Optional push to your phone through [ntfy](https://ntfy.sh).
+**A3. Open it the first time.** Double-click AFK Pug in Applications. macOS stops it, because the app isn't signed with a paid Apple Developer ID yet. Press **Done** **(3)**, not *Move to Trash*.
 
-### Easy on the battery
-When the lid closes, AFK Pug:
-- turns the built-in screen off (and keeps it off, since Apple Silicon can leave it lit under the lid),
-- mutes sound, unless music is playing,
-- turns on Low Power Mode on battery,
-- can pause chat apps such as Slack, Discord and LINE,
-- locks the screen so nobody can use your Mac while you're away.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/guide/blocked-dark.png">
+    <img src="docs/guide/blocked-light.png" width="480" alt="macOS dialog saying AFK Pug was not opened, with Done highlighted as step 3">
+  </picture>
+</p>
 
-Everything is put back when you open the lid, along with a short **"While you were away"** summary: time closed, battery used, agent turns finished and peak temperature.
+**A4. Allow it.** Open **System Settings → Privacy & Security** **(4)**, scroll down to **Security** and press **Open Anyway** **(5)**. Confirm with your password or Touch ID, then press **Open Anyway** once more. You only do this once.
 
-### Music keeps playing
-YouTube, Spotify or Apple Music playing? AFK Pug notices the audio (and shows which app), keeps the Mac awake with the sound on, and ignores short gaps between tracks. With the lid closed, audio only counts if it was already playing when you closed it, so an idle browser tab can't keep a Mac in a bag awake.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/guide/anyway-dark.png">
+    <img src="docs/guide/anyway-light.png" width="720" alt="System Settings: Privacy and Security (4) and Open Anyway (5)">
+  </picture>
+</p>
 
-### Starts by itself
-- when the charger is connected,
-- while apps you choose are open (names as shown in the Dock, for example `Xcode, Docker Desktop, OBS`).
+The welcome window opens next. Go to [C. The welcome window](#c-the-welcome-window).
 
-### Speaks your language
-Thai and English, switchable in Settings. Follows your macOS language by default.
+<details>
+<summary><b>On macOS 14 Sonoma, or no Open Anyway button?</b></summary>
+<br>
 
-## Install
+On macOS 14 the dialog's wording is different, but the button in **Privacy & Security** works the same way. You can also Control-click the app in Applications, choose **Open**, then press **Open** again.
 
-AFK Pug isn't on the App Store yet. Build it from source:
+Open Anyway only appears for about an hour after the blocked attempt, so open the app again if it's missing. If you trust this download and still have no button, run this in Terminal:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/AFK Pug.app"
+```
+
+</details>
+
+### B. Build it yourself
+
+Needs Xcode, or the Swift 5.10+ toolchain from `xcode-select --install`. Check with `swift --version`.
 
 ```sh
 git clone https://github.com/Pug-03/AFK_Pug.git
@@ -84,17 +139,45 @@ cd AFK_Pug
 scripts/build.sh --install   # builds, copies to /Applications and launches
 ```
 
-Requirements: an Apple Silicon MacBook, macOS 14 or later, and Xcode or the Swift 5.10+ toolchain.
+You don't need A3 or A4: macOS only blocks apps that were downloaded.
 
-The app is ad-hoc signed. If macOS blocks it the first time, open **System Settings → Privacy & Security** and choose **Open Anyway**.
+### C. The welcome window
 
-On first launch a 4-step welcome window opens: what AFK Pug does, the one-time lid-closed permission, connecting your agents, and Agent mode with **Open at login** (on by default). Skip it any time; it's in **Settings → General → Show welcome again**.
+The welcome window opens by itself on first launch. Every step can be skipped. To open it later: **Settings → General → Show welcome again**.
 
-**Upgrading from 0.1?** The permission rule changed, so lid-closed mode asks you to press **Set up** (and enter your password) once more.
+| Step | What to do |
+|---|---|
+| **1. Meet AFK Pug** | press **Continue** |
+| **2. Lid-closed mode** | press **Allow** and enter your password. Asked once, and it only permits [these commands](#safety) |
+| **3. Connect your agents** | press **Connect** next to each agent you use. Installed agents show the button |
+| **4. You're all set** | keep **Agent mode** and **Open at login** on, then press **Done** |
 
-### Claude Code plugin (optional)
+<p align="center">
+  <img src="docs/screens/en/welcome-1.png" width="270" alt="Welcome step 1: Meet AFK Pug">
+  <img src="docs/screens/en/welcome-2.png" width="270" alt="Welcome step 2: Allow lid-closed mode">
+  <img src="docs/screens/en/welcome-3.png" width="270" alt="Welcome step 3: Connect your agents">
+</p>
 
-Instead of letting the app edit `~/.claude/settings.json`, you can add the hooks and the MCP server as a Claude Code plugin. Install the app first, in `/Applications` (the plugin calls `/Applications/AFK Pug.app` and the scripts the app installs in `~/.afkpug/bin`), then in Claude Code:
+> **Codex users:** Codex only runs new hooks after you trust them. Open Codex and type `/hooks`. Until then, AFK Pug detects Codex from its running process.
+
+**Try it:** start a task in your agent and close the lid. That's all.
+
+### D. Find the menu bar icon
+
+AFK Pug has no Dock icon. It lives in the menu bar at the top right of your screen, as the letter **A** **(1)**. Click it to open the app. While the Mac is being kept awake, the A gains a crossbar.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/guide/menubar-dark.png">
+    <img src="docs/guide/menubar-light.png" width="720" alt="The menu bar of a MacBook with a notch, with the A icon highlighted as step 1">
+  </picture>
+</p>
+
+Can't see it? See [The A icon is missing](#the-a-icon-is-missing).
+
+### E. Claude Code plugin (optional)
+
+Instead of letting the app edit `~/.claude/settings.json`, you can add the hooks and the MCP server as a Claude Code plugin. Install the app in `/Applications` first, then in Claude Code:
 
 ```
 /plugin marketplace add Pug-03/AFK_Pug
@@ -103,30 +186,190 @@ Instead of letting the app edit `~/.claude/settings.json`, you can add the hooks
 
 Remove it with `/plugin uninstall afk-pug`. With the plugin installed, Settings shows Claude Code as connected and the MCP row as provided by the plugin.
 
-## Quick start
+### Update or uninstall
 
-1. Follow the welcome window: press **Allow** for lid-closed mode (your password, once) and **Connect** next to your agents. Later, the same buttons are in the popover (click the A icon in the menu bar) and in Settings → Agents.
-2. Keep **Agent mode** on.
-3. Start a task in your agent and close the lid.
+**Update:**
 
-If you use Amphetamine or a similar app, quit it so the two don't fight over sleep.
+| You installed it… | To update |
+|---|---|
+| **by downloading** (A) | Click the A, press **Quit**, download the newer zip and replace the app in Applications. Your settings stay. Repeat A3 and A4 if macOS asks |
+| **by building it** (B) | In the `AFK_Pug` folder: `git pull`, then `scripts/build.sh --install` |
 
-## Works with your agents
+To hear about new versions, click **Watch → Custom → Releases** on the [GitHub page](https://github.com/Pug-03/AFK_Pug).
+
+**Uninstall:** **Settings → Uninstall AFK Pug…** removes the hooks from all four agents, the MCP registration, the watchdog, the login item, the lid-closed permission and `~/.afkpug`, restores normal sleep and quits. Then delete the app from Applications.
+
+Your original config files stay beside the originals as `<file>.afkpug-backup`, for example `~/.claude/settings.json.afkpug-backup`. The Claude Code plugin is removed separately, with `/plugin uninstall afk-pug`.
+
+---
+
+## What you'll see, and what to do
+
+Click the A in the menu bar. The big line at the top always tells you why the Mac is awake, or that it isn't.
+
+<table>
+<tr><td colspan="2"><h3>Ready</h3></td></tr>
+<tr>
+<td width="250" valign="top"><img src="docs/screens/en/idle.png" width="230" alt="Idle home screen"></td>
+<td valign="top">
+
+**What it means:** nothing is keeping the Mac awake, so it sleeps normally. With **Agent mode** on, AFK Pug starts by itself when an agent works.
+
+**What to do:** nothing. To keep the Mac awake without an agent, pick a time and press **Go AFK**.
+
+</td>
+</tr>
+
+<tr><td colspan="2"><h3>Finish setup</h3></td></tr>
+<tr>
+<td valign="top"><img src="docs/screens/en/setup.png" width="230" alt="Home screen with Connect and Set up buttons"></td>
+<td valign="top">
+
+**What it means:** you skipped a welcome step. Without the permission, the Mac still sleeps when the lid closes. Without a connection, agents are only found through process detection.
+
+**What to do:** press **Set up** for the lid and **Connect** for your agents.
+
+</td>
+</tr>
+
+<tr><td colspan="2"><h3>Timer running</h3></td></tr>
+<tr>
+<td valign="top"><img src="docs/screens/en/timer.png" width="230" alt="Timer counting down with Stop and +30m"></td>
+<td valign="top">
+
+**What it means:** you pressed **Go AFK**. The Mac stays awake until the timer ends, lid open or closed.
+
+**What to do:** close the lid if you like. Press **+30m** for more time or **Stop** to end it. <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>A</kbd> starts or stops it from any app.
+
+</td>
+</tr>
+
+<tr><td colspan="2"><h3>Agents working</h3></td></tr>
+<tr>
+<td valign="top"><img src="docs/screens/en/working.png" width="230" alt="Two agents listed as working"></td>
+<td valign="top">
+
+**What it means:** each agent that's working has a green dot. An idle session waiting at the prompt doesn't count, and background tasks still running after a reply do.
+
+**What to do:** close the lid and go. The **×** stops keeping the Mac awake for that one agent, without stopping the agent itself.
+
+</td>
+</tr>
+
+<tr><td colspan="2"><h3>Waiting for a usage limit</h3></td></tr>
+<tr>
+<td valign="top"><img src="docs/screens/en/limit.png" width="230" alt="Claude Code waiting for a usage limit, amber dot"></td>
+<td valign="top">
+
+**What it means:** Claude Code stopped on a claude.ai usage limit that resets within 6 hours. The amber dot shows the time. The Mac stays awake until shortly after the reset, so Claude can continue by itself.
+
+**What to do:** nothing, or press **×** to let the Mac sleep. With no reset time in the error it waits 30 minutes. A weekly limit, a plain rate limit or any other API error lets the Mac sleep.
+
+</td>
+</tr>
+
+<tr><td colspan="2"><h3>Agents done, waiting a moment</h3></td></tr>
+<tr>
+<td valign="top"><img src="docs/screens/en/grace.png" width="230" alt="Grace countdown after agents finish"></td>
+<td valign="top">
+
+**What it means:** the last agent finished. AFK Pug waits in case you send another prompt: 2 minutes by default, or off, 5 or 15 in Settings.
+
+**What to do:** nothing. Press **Sleep now** if you don't want to wait.
+
+</td>
+</tr>
+
+<tr><td colspan="2"><h3>Music playing</h3></td></tr>
+<tr>
+<td valign="top"><img src="docs/screens/en/music.png" width="230" alt="Awake because music is playing"></td>
+<td valign="top">
+
+**What it means:** YouTube, Spotify or Apple Music is playing, so the Mac stays awake with the sound on. Short gaps between tracks are ignored. With the lid closed, audio only counts if it was already playing when you closed it, so an idle browser tab can't keep a Mac in a bag awake.
+
+**What to do:** nothing. **Sleep now** lets the Mac sleep, and music stays ignored until it stops and starts again.
+
+</td>
+</tr>
+
+<tr><td colspan="2"><h3>Coming back</h3></td></tr>
+<tr>
+<td valign="top"><img src="docs/screens/en/away.png" width="230" alt="While you were away summary"></td>
+<td valign="top">
+
+**What it means:** you opened the lid. Screen, sound and Low Power Mode are back as they were, and the card shows how long the lid was closed, the battery used, agent turns finished and peak heat.
+
+**What to do:** read it and press **×**.
+
+</td>
+</tr>
+
+<tr><td colspan="2"><h3>Stopped by a safety guard</h3></td></tr>
+<tr>
+<td valign="top"><img src="docs/screens/en/battery.png" width="230" alt="Stopped at 12 percent battery"></td>
+<td valign="top">
+
+**What it means:** the battery reached your floor (15% by default), or the Mac got critically hot. AFK Pug lets the Mac sleep to protect it, even with an agent still running.
+
+**What to do:** plug in the charger, or let the Mac cool down. See [Safety](#safety).
+
+</td>
+</tr>
+</table>
+
+---
+
+## Features
+
+### Make it yours
+
+Choose the look under **Settings → Appearance**. **Background** can match your Mac, or be white, black or any color you pick. **Accent color** sets the switches and the app mark, with six presets and a picker for anything else.
+
+Text color follows the background and is raised until it's readable, so no combination can leave you with an unreadable app. Green, amber and red keep their meaning: working, waiting and warning.
+
+<p align="center">
+  <img src="docs/screens/en/working.png" width="250" alt="Black background with an orange accent">
+  <img src="docs/screens/en/white.png" width="250" alt="White background with a blue accent">
+  <img src="docs/screens/en/custom.png" width="250" alt="Navy background with a green accent">
+</p>
+
+### When the lid closes
+
+AFK Pug does this for you, and puts it all back when you open the lid:
+
+| Action | Default | Why |
+|---|---|---|
+| Turn the built-in screen off | on | Apple Silicon can leave it lit under the lid, so it's repeated while the lid stays closed |
+| Mute sound | on | skipped while music is playing |
+| Low Power Mode on battery | on | also turns on if the Mac gets hot |
+| Lock the screen | on | nobody can use your Mac while you're away |
+| Pause chat apps | off | Slack, Discord, LINE and others. A chat app in a call is never paused |
+
+### Starts by itself
+
+Both are off by default. Turn them on under **Settings → Start automatically**:
+
+- **When the charger is connected**
+- **While these apps are open:** names as shown in the Dock, such as `Xcode, Docker Desktop, OBS`
+
+### Notifications on your Mac and phone
+
+You're told when an agent finishes, needs a permission or hits an error. A "finished" notification only fires once the agent has really stopped.
+
+For your phone, install the free [ntfy](https://ntfy.sh) app, subscribe to a topic name only you know, and enter the same name under **Settings → Phone notifications**. Press **Test** to check it.
+
+### Works with your agents
 
 | Agent | How AFK Pug knows it's working |
 |---|---|
-| Claude Code | Lifecycle hooks in `~/.claude/settings.json` (`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `StopFailure`, `Notification`, `SessionEnd`), or the [plugin](#claude-code-plugin-optional). A hold with no activity for 15 minutes is dropped, unless Claude's process is still busy |
-| Codex | Native hooks in `~/.codex/hooks.json`. Codex runs new hooks only after you trust them: open Codex and type `/hooks`. Until then, process detection covers it |
+| Claude Code | Lifecycle hooks in `~/.claude/settings.json`, or the [plugin](#e-claude-code-plugin-optional). A hold with no activity for 15 minutes is dropped, unless Claude's process is still busy |
+| Codex | Native hooks in `~/.codex/hooks.json`, after you trust them with `/hooks` |
 | Gemini CLI | Native hooks in `~/.gemini/settings.json` |
 | Cursor (app agent and `cursor-agent`) | Native hooks in `~/.cursor/hooks.json` (observational events only, so nothing you approve changes) |
-| Aider, OpenCode, Amp, Goose, Qwen Code | Process detection (**Settings → Agents → Detect other agents**): counts as working while the process tree uses CPU. Also covers Codex, Gemini CLI and Cursor Agent while their hooks aren't connected |
-| Anything else | The `afkpug` command line tool |
+| Aider, OpenCode, Amp, Goose, Qwen Code | Process detection (**Settings → Agents → Detect other agents**): counts as working while the process tree uses CPU |
+| Anything else | The [`afkpug` command](#command-line) |
 
-Connect each agent with one click in the welcome window or **Settings → Agents**. AFK Pug edits only its own entries, writes through symlinks, keeps your very first version of each file as `<file>.afkpug-backup`, and refuses read-only files.
-
-### Usage limits
-
-When Claude Code stops on a claude.ai usage limit, the `StopFailure` hook reads the reset time from the error. If it's within 6 hours, the agent stays listed as *waiting for limit · until 17:53* (amber dot) and the Mac stays awake until shortly after the reset, so Claude Code can continue the task by itself. With no reset time given, it waits 30 minutes. A limit further away (such as a weekly one), a plain rate limit or any other API error lets the Mac sleep. You can release the wait with the × next to it.
+AFK Pug edits only its own entries, writes through symlinks, keeps your very first version of each file as `<file>.afkpug-backup`, and refuses read-only files.
 
 ### Command line
 
@@ -156,7 +399,7 @@ open "afkpug://sleep-now"
 
 ### Let the agent ask (MCP)
 
-Under **Settings → Agents → Let agents keep the Mac awake**, AFK Pug registers an MCP server with Claude Code. The agent then gets three tools:
+Under **Settings → Agents → Let agents keep the Mac awake**, AFK Pug registers an MCP server with Claude Code. It's useful when a build or deploy keeps running after the agent's reply. The [plugin](#e-claude-code-plugin-optional) includes this server.
 
 | Tool | What it does |
 |---|---|
@@ -164,20 +407,115 @@ Under **Settings → Agents → Let agents keep the Mac awake**, AFK Pug registe
 | `release_mac_awake` | Drop the holds this session created |
 | `afk_status` | List what's keeping the Mac awake |
 
-Useful when a build or deploy keeps running after the agent's reply. The [plugin](#claude-code-plugin-optional) includes this server, so there's nothing to connect when you use it.
+---
+
+## Settings
+
+Press the gear at the top right of the app.
+
+| Section | Setting | Default |
+|---|---|---|
+| **When the lid closes** | Turn the screen off · Mute sound · Low Power Mode on battery · Lock the screen | on |
+| | Pause chat apps | off |
+| | Only when plugged in: on battery, closing the lid sleeps as usual | off |
+| **Safety** | Stop at battery, from 5% to 50% | 15% |
+| **Agents** | Notify me | on |
+| | Wait before sleeping: off, 2, 5 or 15 minutes | 2 min |
+| | Connect or disconnect Claude Code, Codex, Gemini CLI, Cursor | set by you |
+| | Detect other agents | on |
+| | Let agents keep the Mac awake (MCP) | not connected |
+| **Phone notifications** | ntfy topic name | empty |
+| **Start automatically** | When the charger is connected · While these apps are open | off |
+| **Appearance** | Background: match Mac, white, black or custom | black |
+| | Accent color: six presets or custom | orange |
+| **General** | Open at login | on |
+| | Show welcome again | |
+| | <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>A</kbd> starts or stops AFK | on |
+| | Language: Thai, English or match macOS | match macOS |
+| **Activity** | What AFK Pug did recently | |
+| **For developers** | Command line and URL commands | |
+
+---
 
 ## Safety
 
-A closed MacBook that keeps working sheds heat more slowly, so AFK Pug has several guards:
+A closed MacBook sheds heat more slowly, so AFK Pug has several guards:
 
 - **Battery floor.** Stops at 15% on battery (adjustable from 5% to 50%) and lets the Mac sleep.
 - **Heat.** Turns on Low Power Mode when the Mac gets hot and always stops at critical temperature. This guard can't be turned off.
 - **Crash-safe.** If the app quits or crashes, a launchd watchdog restores normal lid sleep within 30 seconds and resumes any paused apps. The next launch checks again.
 - **Narrow permission.** The one-time setup adds a sudoers rule for exactly six commands: `pmset -a disablesleep 0|1`, and `pmset -b|-c lowpowermode 0|1` for the current power source only, so your own Low Power Mode settings are kept. Remove it any time from Settings.
 
-Keep the Mac on a hard, ventilated surface. Don't put it in a bag while it's awake.
+> [!WARNING]
+> Keep the Mac on a hard, ventilated surface. Don't put it in a bag while it's awake.
 
-## How it works
+## Privacy
+
+Everything stays on your Mac. There's no account and no telemetry. The only network request is the optional phone notification, which goes to the ntfy topic you enter.
+
+---
+
+## Troubleshooting
+
+### The A icon is missing
+
+On a MacBook with a notch, macOS hides menu bar icons when there isn't room, and doesn't tell you. Quit a few other menu bar apps, or hold <kbd>⌘</kbd> and drag other icons out of the bar. If AFK Pug isn't running at all, open it from Applications.
+
+<details>
+<summary><b>The Mac still sleeps when I close the lid</b></summary>
+<br>
+
+Open the app and check **Lid-closed mode**. If it says *Needs a one-time permission*, press **Set up**. Then check that something is keeping the Mac awake: an agent, a timer or music. With nothing to do, sleeping is correct. **Only when plugged in** also lets it sleep on battery.
+
+</details>
+
+<details>
+<summary><b>AFK Pug doesn't notice my agent</b></summary>
+<br>
+
+Check **Settings → Agents** and press **Connect**. For Codex, also open Codex and type `/hooks` to trust the hooks. Other agents need **Detect other agents** on, and only count while they use CPU.
+
+</details>
+
+<details>
+<summary><b>It asks for the lid permission again after an update</b></summary>
+<br>
+
+Upgrading from 0.1 changed the permission rule, so press <b>Set up</b> once more. The rule still only permits the commands listed under <a href="#safety">Safety</a>.
+
+</details>
+
+<details>
+<summary><b>Does the internet stay connected with the lid closed?</b></summary>
+<br>
+
+The Mac doesn't go to sleep, so Wi-Fi normally stays connected and downloads, SSH and syncs keep going. A weak connection, such as a phone hotspot, can still drop on its own.
+
+</details>
+
+<details>
+<summary><b>How is this different from Amphetamine?</b></summary>
+<br>
+
+Amphetamine keeps the Mac awake for a set time. AFK Pug also turns the screen off and mutes sound when the lid closes, knows whether your agents are working, and lets the Mac sleep as soon as they're done.
+
+</details>
+
+<details>
+<summary><b>What if I forget to turn it off?</b></summary>
+<br>
+
+Timers end on their own, agent mode ends when the work does, and quitting the app restores normal sleep. If the app crashes, the watchdog restores it within 30 seconds.
+
+</details>
+
+---
+
+## Development
+
+<details>
+<summary><b>How it works</b></summary>
+<br>
 
 | Situation | Mechanism |
 |---|---|
@@ -189,56 +527,29 @@ Keep the Mac on a hard, ventilated surface. Don't put it in a bag while it's awa
 
 `caffeinate` alone isn't enough: closing a MacBook lid triggers a separate sleep path that idle-sleep assertions don't block.
 
-## FAQ
-
-<details>
-<summary><b>Does the internet stay connected with the lid closed?</b></summary>
-<br>
-The Mac doesn't go to sleep, so Wi-Fi normally stays connected and downloads, SSH and syncs keep going. A weak connection, such as a phone hotspot, can still drop on its own.
 </details>
 
 <details>
-<summary><b>How is this different from Amphetamine?</b></summary>
+<summary><b>Build, test and render</b></summary>
 <br>
-Amphetamine keeps the Mac awake for a set time. AFK Pug also turns the screen off and mutes sound when the lid closes, knows whether your agents are working, and lets the Mac sleep as soon as they're done.
-</details>
-
-<details>
-<summary><b>What if I forget to turn it off?</b></summary>
-<br>
-Timers end on their own, agent mode ends when the work does, and quitting the app restores normal sleep. If the app crashes, the watchdog restores it within 30 seconds.
-</details>
-
-<details>
-<summary><b>Does it send any data anywhere?</b></summary>
-<br>
-No. Everything stays on your Mac. The only network request is the optional phone notification, which goes to the ntfy topic you enter.
-</details>
-
-## Uninstall
-
-**Settings → Uninstall AFK Pug…** removes the hooks from all four agents (Claude Code, Codex, Gemini CLI, Cursor), the MCP registration, the watchdog, the login item, the lid-closed permission and `~/.afkpug`, restores normal sleep, and quits. Then delete the app.
-
-Your original config files are kept next to them as backups: `~/.claude/settings.json.afkpug-backup`, `~/.codex/hooks.json.afkpug-backup`, `~/.gemini/settings.json.afkpug-backup` and `~/.cursor/hooks.json.afkpug-backup` (only for files that existed before). The Claude Code plugin is removed separately, in Claude Code: `/plugin uninstall afk-pug`.
-
-## Testing
 
 A headless simulator drives the engine with fake lid, battery, heat, audio and process input. Nothing real runs: every power command is logged instead.
 
 ```sh
-swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate all      # 48 scenarios
+swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate all      # 49 scenarios
 swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate stress   # 69 adversarial scenarios
+scripts/screenshots.sh               # renders the app screens into docs/screens/
+node scripts/guide-illustrations.mjs # draws the install pictures into docs/guide/
+scripts/build.sh --zip               # packs dist/AFK-Pug.zip for a GitHub release
 ```
 
 Run `swift build` first: `--show-bin-path` only prints the folder, it doesn't build.
 
-## Roadmap
+</details>
 
-- [ ] Signed and notarized release download, Homebrew cask, auto-update (needs an Apple Developer ID)
-- [ ] Privileged helper (SMAppService) instead of a sudoers rule (needs signing)
-- [ ] PushPug integration
-
-## Project layout
+<details>
+<summary><b>Project layout</b></summary>
+<br>
 
 ```
 Sources/AFKPug/
@@ -251,12 +562,22 @@ Sources/AFKPug/
 ├── Extras.swift        process detection, chat pause, lock, hotkey, ntfy, MCP, audio
 ├── Scripts.swift       hook, CLI and watchdog shell scripts
 ├── Views.swift         home screen
+├── Theme.swift         background and accent colors, legible text
 ├── Settings.swift      settings screen and shared controls
 ├── Onboarding.swift    first-run welcome window
 ├── Brand.swift         app mark and app icon
 ├── L10n.swift          Thai and English strings
+├── Screens.swift       README screenshots from fake sensors
 └── Simulation.swift    headless test scenarios
 ```
+
+</details>
+
+### Roadmap
+
+- [ ] Signed and notarized download, Homebrew cask, auto-update (needs an Apple Developer ID)
+- [ ] Privileged helper (SMAppService) instead of a sudoers rule (needs signing)
+- [ ] PushPug integration
 
 ## Credits
 

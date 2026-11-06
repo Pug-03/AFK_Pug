@@ -1,5 +1,6 @@
 #!/bin/bash
-# Builds "dist/AFK Pug.app" (ad-hoc signed). Usage: scripts/build.sh [--install]
+# Builds "dist/AFK Pug.app" (ad-hoc signed). Usage: scripts/build.sh [--install | --zip]
+# --zip also packs dist/AFK-Pug.zip, the file attached to GitHub releases.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -12,7 +13,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/AFKPug"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
-# App icon, rendered from the SwiftUI pug
+# App icon, rendered from the SwiftUI mark
 ICONSET="$(mktemp -d)/AppIcon.iconset"
 mkdir -p "$ICONSET"
 "$BIN" --render-icon "$ICONSET/base.png" >/dev/null
@@ -25,6 +26,12 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
 codesign --force --deep --sign - "$APP"
 echo "Built $APP"
+
+if [[ "${1:-}" == "--zip" ]]; then
+  rm -f dist/AFK-Pug.zip
+  ditto -c -k --keepParent "$APP" dist/AFK-Pug.zip
+  echo "Packed dist/AFK-Pug.zip"
+fi
 
 if [[ "${1:-}" == "--install" ]]; then
   # Quit politely (restores everything); never touch Claude's AFKPug --mcp servers.
