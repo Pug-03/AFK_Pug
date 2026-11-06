@@ -13,8 +13,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Pug-03/AFK_Pug/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Pug-03/AFK_Pug/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple&logoColor=white">
   <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple%20Silicon-M1%2B-111111">
+  <img alt="MIT" src="https://img.shields.io/badge/license-MIT-F9A15A">
   <img alt="ไทยและอังกฤษ" src="https://img.shields.io/badge/lang-ไทย%20%C2%B7%20English-F9A15A">
 </p>
 
@@ -555,4 +557,4 @@ Amphetamine ทำให้เครื่องตื่นตามเวล�
 
 รายละเอียดวิธีทำงาน การทดสอบ และโครงสร้างโปรเจกต์อยู่ที่[ส่วน Development ใน README ภาษาอังกฤษ](README.md#development)
 
-ผลงานของ [Pug-03](https://github.com/Pug-03) ผู้สร้าง [PushPug](https://github.com/Pug-03/PushPug)
+ผลงานของ [Pug-03](https://github.com/Pug-03) ผู้สร้าง [PushPug](https://github.com/Pug-03/PushPug) · [สัญญาอนุญาต MIT](LICENSE) · [ประวัติการเปลี่ยนแปลง](CHANGELOG.md)

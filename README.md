@@ -13,8 +13,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Pug-03/AFK_Pug/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Pug-03/AFK_Pug/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple&logoColor=white">
   <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple%20Silicon-M1%2B-111111">
+  <img alt="MIT" src="https://img.shields.io/badge/license-MIT-F9A15A">
   <img alt="Thai and English" src="https://img.shields.io/badge/lang-ไทย%20%C2%B7%20English-F9A15A">
 </p>
 
@@ -588,4 +590,4 @@ Sources/AFKPug/
 
 ## Credits
 
-Made by [Pug-03](https://github.com/Pug-03), who also made [PushPug](https://github.com/Pug-03/PushPug).
+Made by [Pug-03](https://github.com/Pug-03), who also made [PushPug](https://github.com/Pug-03/PushPug). [MIT License](LICENSE) · [Changelog](CHANGELOG.md)
