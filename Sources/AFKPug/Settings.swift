@@ -126,7 +126,18 @@ struct SettingsView: View {
                         Row(symbol: "hand.wave", title: tr("Show welcome again"), detail: tr("Set up lid-closed mode and agents step by step")) {
                             PillButton(title: tr("Open"), style: .soft) { OnboardingWindow.shared.show() }
                         }
-                        ToggleRow(symbol: "command", title: tr("⌥⌘A starts or stops AFK"),
+                        ToggleRow(symbol: "arrow.down.circle", title: tr("Check for updates"),
+                              detail: tr("Once a day, asks GitHub for the latest version. Nothing about you is sent."), isOn: $engine.checkUpdates)
+                    Row(symbol: "info.circle", title: tr("Version %@", Updater.currentVersion), detail: engine.update == nil ? (engine.updateMessage ?? "") : "") {
+                        if let update = engine.update {
+                            PillButton(title: tr("Update to %@", update.version), style: .primary) { engine.installUpdate() }
+                                .disabled(engine.updateWorking)
+                        } else {
+                            PillButton(title: engine.updateWorking ? tr("Working…") : tr("Check now"), style: .soft) { engine.checkForUpdatesNow() }
+                                .disabled(engine.updateWorking)
+                        }
+                    }
+                    ToggleRow(symbol: "command", title: tr("⌥⌘A starts or stops AFK"),
                                   detail: tr("Works from any app"), isOn: $engine.hotkeyEnabled)
                         Row(symbol: "globe", title: tr("Language"), detail: "") {
                             Picker(tr("Language"), selection: $engine.language) {

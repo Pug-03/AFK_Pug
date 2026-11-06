@@ -112,6 +112,9 @@ struct HomeView: View {
             if let summary = engine.summary {
                 SummaryCard(summary: summary) { engine.summary = nil }
             }
+            if let update = engine.update {
+                UpdateCard(update: update, engine: engine)
+            }
             Modes(engine: engine)
             StatusBar(engine: engine)
         }
@@ -755,6 +758,32 @@ private struct StatusBar: View {
 }
 
 // MARK: Summary
+
+private struct UpdateCard: View {
+    @ObservedObject var themeStore = ThemeStore.shared
+    let update: AvailableUpdate
+    @ObservedObject var engine: Engine
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.circle").font(.system(size: 13)).foregroundStyle(Theme.accent).accessibilityHidden(true)
+                Text(tr("AFK Pug %@ is available", update.version)).font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1).minimumScaleFactor(0.85)
+                Spacer(minLength: 4)
+                let titles = [tr("Update"), tr("Working…")]
+                PillButton(title: engine.updateWorking ? tr("Working…") : tr("Update"), style: engine.updateWorking ? .soft : .primary, reserve: titles) {
+                    engine.installUpdate()
+                }
+                .disabled(engine.updateWorking)
+                IconButton(symbol: "xmark", label: tr("Dismiss")) { engine.dismissUpdate() }
+            }
+            if let message = engine.updateMessage { ErrorText(message) }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
+    }
+}
 
 private struct SummaryCard: View {
     @ObservedObject var themeStore = ThemeStore.shared

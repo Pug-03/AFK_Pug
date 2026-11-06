@@ -192,10 +192,10 @@ Remove it with `/plugin uninstall afk-pug`. With the plugin installed, Settings 
 
 | You installed it… | To update |
 |---|---|
-| **by downloading** (A) | Click the A, press **Quit**, download the newer zip and replace the app in Applications. Your settings stay. Repeat A3 and A4 if macOS asks |
+| **by downloading** (A) | AFK Pug checks once a day and shows a card when there's a new version. Press **Update**: it downloads the new version, checks it, quits and reopens. Your settings stay. To look right away: **Settings → General → Check now** |
 | **by building it** (B) | In the `AFK_Pug` folder: `git pull`, then `scripts/build.sh --install` |
 
-To hear about new versions, click **Watch → Custom → Releases** on the [GitHub page](https://github.com/Pug-03/AFK_Pug).
+On 0.5.0 or older, or if the app isn't in Applications, download the newer zip from [Releases](https://github.com/Pug-03/AFK_Pug/releases/latest) and replace the app by hand.
 
 **Uninstall:** **Settings → Uninstall AFK Pug…** removes the hooks from all four agents, the MCP registration, the watchdog, the login item, the lid-closed permission and `~/.afkpug`, restores normal sleep and quits. Then delete the app from Applications.
 
@@ -429,6 +429,7 @@ Press the gear at the top right of the app.
 | **Appearance** | Background: match Mac, white, black or custom | black |
 | | Accent color: six presets or custom | orange |
 | **General** | Open at login | on |
+| | Check for updates: once a day | on |
 | | Show welcome again | |
 | | <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>A</kbd> starts or stops AFK | on |
 | | Language: Thai, English or match macOS | match macOS |
@@ -451,7 +452,7 @@ A closed MacBook sheds heat more slowly, so AFK Pug has several guards:
 
 ## Privacy
 
-Everything stays on your Mac. There's no account and no telemetry. The only network request is the optional phone notification, which goes to the ntfy topic you enter.
+Everything stays on your Mac. There's no account and no telemetry. AFK Pug only goes online for two things: the optional phone notification, sent to the ntfy topic you enter, and the update check, which asks GitHub for the latest release once a day and sends nothing about you. Turn it off under **Settings → General → Check for updates**. Update files are checked against GitHub's checksum, this app's ID and version, and their code signature before they're installed.
 
 ---
 
@@ -559,6 +560,7 @@ Sources/AFKPug/
 ├── Sensors.swift       lid, battery and thermal state
 ├── Agents.swift        holds, events, Claude Code hooks, watchdog, uninstaller
 ├── Integrations.swift  Codex, Gemini CLI and Cursor hooks, careful config file editing
+├── Updater.swift       checks for, verifies and installs new versions
 ├── Extras.swift        process detection, chat pause, lock, hotkey, ntfy, MCP, audio
 ├── Scripts.swift       hook, CLI and watchdog shell scripts
 ├── Views.swift         home screen

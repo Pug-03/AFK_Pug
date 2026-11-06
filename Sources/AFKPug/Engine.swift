@@ -64,9 +64,14 @@ final class Engine: ObservableObject {
     @Published var autoOnPower: Bool { didSet { save(autoOnPower, "autoOnPower"); tick() } }
     @Published var autoApps: String { didSet { save(autoApps, "autoApps") } }
     @Published var keepMusic: Bool { didSet { save(keepMusic, "keepMusic"); tick() } }
+    @Published var checkUpdates: Bool { didSet { save(checkUpdates, "checkUpdates") } }
 
     // MARK: Live state
 
+    /// A newer release the user hasn't dismissed.
+    @Published private(set) var update: AvailableUpdate?
+    @Published private(set) var updateWorking = false
+    @Published private(set) var updateMessage: String?
     @Published private(set) var manualOn = false
     @Published private(set) var manualStart: Date?
     @Published private(set) var manualEnd: Date?
@@ -183,6 +188,7 @@ final class Engine: ObservableObject {
         autoOnPower = bool("autoOnPower", false)
         autoApps = ud.string(forKey: "autoApps") ?? ""
         keepMusic = bool("keepMusic", true)
+        checkUpdates = bool("checkUpdates", true)
         L10n.language = language
     }
 
@@ -442,6 +448,85 @@ final class Engine: ObservableObject {
         }
     }
 
+    // MARK: Updates
+
+    /// At most once a day, and not while the Mac is working under the lid.
+    private func checkForUpdatesIfDue() {
+        guard checkUpdates, !lidClosed, !updateWorking else { return }
+        let last = Engine.store.double(forKey: "lastUpdateCheck")
+        let sinceLast = now.timeIntervalSince1970 - last
+        guard sinceLast >= Updater.checkEvery || sinceLast < 0 else { return }
+        if Sim.enabled, Sim.value("latest-release") == nil { return }
+        Engine.store.set(now.timeIntervalSince1970, forKey: "lastUpdateCheck")
+        Updater.fetchLatest { [weak self] latest in self?.received(latest, manual: false) }
+    }
+
+    func checkForUpdatesNow() {
+        guard !updateWorking else { return }
+        updateWorking = true
+        updateMessage = nil
+        Engine.store.set(now.timeIntervalSince1970, forKey: "lastUpdateCheck")
+        Engine.store.removeObject(forKey: "dismissedUpdate")
+        Updater.fetchLatest { [weak self] latest in
+            self?.updateWorking = false
+            self?.received(latest, manual: true)
+        }
+    }
+
+    private func received(_ latest: AvailableUpdate?, manual: Bool) {
+        guard let latest else {
+            if manual { updateMessage = tr("Couldn't check for updates.") }
+            return
+        }
+        guard Updater.isNewer(latest.version, than: Updater.currentVersion) else {
+            update = nil
+            if manual { updateMessage = tr("You're on the latest version.") }
+            return
+        }
+        guard Engine.store.string(forKey: "dismissedUpdate") != latest.version else { return }
+        if latest != update {
+            update = latest
+            log("arrow.down.circle", tr("AFK Pug %@ is available", latest.version))
+        }
+    }
+
+    func dismissUpdate() {
+        if let update { Engine.store.set(update.version, forKey: "dismissedUpdate") }
+        update = nil
+        updateMessage = nil
+    }
+
+    /// Installs in place when it can: quits (restoring everything) and reopens the new
+    /// version. Anywhere else, the release page opens instead.
+    func installUpdate() {
+        guard let update, !updateWorking else { return }
+        guard update.zip != nil, let target = Updater.installTarget else {
+            NSWorkspace.shared.open(update.page)
+            return
+        }
+        updateWorking = true
+        updateMessage = nil
+        let pid = getpid()
+        Updater.download(update) { [weak self] downloaded in
+            let result = downloaded.flatMap { Updater.prepare(zip: $0, for: update) }.flatMap { app in
+                Updater.launchSwap(app: app, target: target, waitingFor: pid) ? Result<Void, Updater.Failure>.success(()) : .failure(.cantLaunch)
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.updateWorking = false
+                    switch result {
+                    case .success:
+                        Sim.record("update: quitting to install \(update.version)")
+                        if !Sim.enabled { NSApp.terminate(nil) }
+                    case .failure(let failure):
+                        self.updateMessage = failure.message
+                    }
+                }
+            }
+        }
+    }
+
     /// Runs `claude` (twice) off the main thread.
     func connectMCP() {
         guard !mcpBusy else { return }
@@ -653,6 +738,7 @@ final class Engine: ObservableObject {
         }
         confirmFinished()
         flushHeldNotices()
+        checkForUpdatesIfDue()
 
         // Manual timer
         if manualOn, let end = manualEnd, now >= end {

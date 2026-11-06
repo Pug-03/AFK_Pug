@@ -60,6 +60,7 @@ enum Simulation {
         ("config-edges", "[b8,9,13,14,15,16] plugin double hooks removed at boot, MCP dedupe, non-object hooks refused, parsed detection, uninstall keeps user config"),
         ("limit-formats", "[b10] usage-limit reset formats: 4.30pm, p.m., time zones, ISO, epoch, escaped quotes, fallbacks"),
         ("away-notices", "Away: phone messages leave before sleep, finish isn't lost at grace 0, early battery warning, an unanswered prompt ends"),
+        ("updates", "Updates: version compare, release parsing, once a day, dismiss, safety checks, real swap of the app"),
         ("theme", "Appearance: text stays legible on any background and accent, defaults keep the black look, bad values fall back"),
         ("ui-contract", "UI API: trip vs Sleep now / grace, cooldown, charger, trigger sublines, Idle, waits, Fmt hours, admin errors"),
     ]
@@ -341,6 +342,7 @@ private final class Runner {
         case "ui-contract": uiContract()
         case "preview-states": previewStates()
         case "theme": theme()
+        case "updates": updates()
         case "away-notices": awayNotices()
         default:
             if name.hasPrefix("stress-") { runStress() } else if name.hasPrefix("stress2-") { runStress2() } else { fail("no scenario") }
@@ -386,6 +388,92 @@ private final class Runner {
         step("14 minutes on: still awake", ticks: 7, every: 120, forbid: ["pmset sleepnow"]) {}
         step("nobody answered: hold ends, grace, then sleep", ticks: 10, every: 30, expect: ["pmset sleepnow"]) {}
         check(!exists("claude-w1"), "unanswered prompt no longer keeps the Mac awake")
+    }
+
+    func updates() {
+        func release(_ tag: String, zip: String = "https://github.com/Pug-03/AFK_Pug/releases/download/v1/AFK-Pug.zip", extra: String = "") -> String {
+            #"{"tag_name":"\#(tag)","html_url":"https://github.com/Pug-03/AFK_Pug/releases/tag/\#(tag)","assets":[{"name":"AFK-Pug.zip","browser_download_url":"\#(zip)"}]\#(extra)}"#
+        }
+        check(Updater.isNewer("0.10.0", than: "0.9.9"), "0.10.0 beats 0.9.9 (numbers, not text)")
+        check(Updater.isNewer("v1.0", than: "0.9") && !Updater.isNewer("1.0", than: "1.0.0") && !Updater.isNewer("0.5.0", than: "0.5.0"), "tags and equal versions")
+        check(!Updater.isNewer("nightly", than: "0.5.0") && !Updater.isNewer("1.0.0-beta", than: "0.5.0") && !Updater.isNewer("1..0", than: "0.5.0"), "unreadable versions never win")
+        let parsed = Updater.parse(Data(release("v2.0.0").utf8))
+        check(parsed?.version == "2.0.0" && parsed?.zip != nil, "reads a release")
+        check(Updater.parse(Data(release("v2.0.0", zip: "https://evil.example/AFK-Pug.zip").utf8))?.zip == nil, "a download outside github.com is ignored")
+        check(Updater.parse(Data(release("v2.0.0", zip: "https://github.com/someone/else/releases/download/v1/AFK-Pug.zip").utf8))?.zip == nil, "a download from another repository is ignored")
+        check(Updater.parse(Data(release("v2", extra: #","draft":true"#).utf8)) == nil && Updater.parse(Data(release("v2", extra: #","prerelease":true"#).utf8)) == nil, "drafts and prereleases are skipped")
+        check(Updater.parse(Data("not json".utf8)) == nil, "garbage is ignored")
+
+        configure(); Sim.set("app-version", "0.5.0"); Sim.set("latest-release", release("v0.5.0"))
+        boot()
+        step("same version", ticks: 1) {}
+        check(engine.update == nil, "no card on the latest version")
+        Sim.set("latest-release", release("v0.6.0"))
+        step("released an hour later", ticks: 1, every: 3600) {}
+        check(engine.update == nil, "checks once a day only")
+        step("a day later", ticks: 1, every: 86400, expect: ["log: AFK Pug 0.6.0 is available"]) {}
+        check(engine.update?.version == "0.6.0", "new version found")
+        engine.dismissUpdate()
+        check(engine.update == nil, "dismissed")
+        step("next day", ticks: 1, every: 86400) {}
+        check(engine.update == nil, "a dismissed version stays dismissed")
+        Sim.set("latest-release", release("v0.7.0"))
+        step("next version", ticks: 1, every: 86400) {}
+        check(engine.update?.version == "0.7.0", "a newer version shows again")
+        Sim.set("latest-release", release("v0.8.0")); Sim.set("lid", "closed")
+        step("lid closed", ticks: 1, every: 86400) {}
+        check(engine.update?.version == "0.7.0", "no check with the lid closed")
+        Sim.set("lid", "open")
+        engine.checkUpdates = false
+        step("off", ticks: 1, every: 86400) {}
+        check(engine.update?.version == "0.7.0", "no check when turned off")
+
+        // The real unpack, checks and swap, on a fake app in the sandbox.
+        let fm = FileManager.default
+        func zip(_ name: String, version: String, id: String = "com.pug03.afkpug", sign: Bool = true) -> URL {
+            let folder = Sim.dir.appendingPathComponent("fixture-\(name)")
+            let app = folder.appendingPathComponent("AFK Pug.app")
+            try? fm.createDirectory(at: app.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+            try? fm.copyItem(atPath: "/bin/echo", toPath: app.appendingPathComponent("Contents/MacOS/AFKPug").path)
+            let plist: NSDictionary = ["CFBundleIdentifier": id, "CFBundleShortVersionString": version, "CFBundleExecutable": "AFKPug"]
+            plist.write(to: app.appendingPathComponent("Contents/Info.plist"), atomically: true)
+            if sign { _ = sh(["-c", #""$0" "$@""#, "/usr/bin/codesign", "--force", "--sign", "-", app.path], stdin: "") }
+            let out = Sim.dir.appendingPathComponent("\(name).zip")
+            _ = sh(["-c", #""$0" "$@""#, "/usr/bin/ditto", "-c", "-k", "--keepParent", app.path, out.path], stdin: "")
+            return out
+        }
+        let page = URL(string: "https://github.com/Pug-03/AFK_Pug")!
+        let target = AvailableUpdate(version: "0.9.0", page: page, zip: page, sha256: nil)
+        check(Updater.prepare(zip: zip("other", version: "0.9.0", id: "com.other.app"), for: target) == .failure(.notOurApp), "another app is refused")
+        check(Updater.prepare(zip: zip("old", version: "0.1.0"), for: target) == .failure(.wrongVersion), "the wrong version is refused")
+        check(Updater.prepare(zip: zip("unsigned", version: "0.9.0", sign: false), for: target) == .failure(.badSignature), "an unsigned app is refused")
+        let good = zip("good", version: "0.9.0")
+        let badSum = AvailableUpdate(version: "0.9.0", page: page, zip: page, sha256: String(repeating: "0", count: 64))
+        check(Updater.prepare(zip: good, for: badSum) == .failure(.checksum), "a wrong checksum is refused")
+        let garbage = Sim.dir.appendingPathComponent("garbage.zip")
+        try? "nope".write(to: garbage, atomically: true, encoding: .utf8)
+        check(Updater.prepare(zip: garbage, for: target) == .failure(.unpack), "a broken zip is refused")
+
+        guard case .success(let newApp) = Updater.prepare(zip: good, for: target) else { fail("good zip refused"); return }
+        check(fm.fileExists(atPath: newApp.path), "a good app is unpacked and accepted")
+        let installed = Sim.dir.appendingPathComponent("Applications/AFK Pug.app")
+        try? fm.createDirectory(at: installed.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+        try? "old".write(to: installed.appendingPathComponent("Contents/old-marker"), atomically: true, encoding: .utf8)
+        let sleeper = Process()
+        sleeper.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        sleeper.arguments = ["1"]
+        try? sleeper.run()
+        check(Updater.launchSwap(app: newApp, target: installed, waitingFor: sleeper.processIdentifier), "swap started")
+        check(fm.fileExists(atPath: installed.appendingPathComponent("Contents/old-marker").path), "the app isn't touched while it's still running")
+        sleeper.waitUntilExit()
+        var version: String?
+        for _ in 0..<60 where version != "0.9.0" {
+            Thread.sleep(forTimeInterval: 0.25)
+            version = NSDictionary(contentsOf: installed.appendingPathComponent("Contents/Info.plist"))?["CFBundleShortVersionString"] as? String
+        }
+        check(version == "0.9.0", "the app is replaced after it quits")
+        let leftovers = (try? fm.contentsOfDirectory(atPath: installed.deletingLastPathComponent().path))?.filter { $0.contains("previous") } ?? []
+        check(leftovers.isEmpty && !fm.fileExists(atPath: newApp.path), "nothing left behind")
     }
 
     func theme() {
