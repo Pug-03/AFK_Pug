@@ -725,6 +725,9 @@ final class Engine: ObservableObject {
 
     // MARK: Loop
 
+    /// A tick blocks the main thread for tens of ms: keep the next one out of an animation.
+    func postponeTick() { timer?.fireDate = Date().addingTimeInterval(2) }
+
     func tick() {
         // After uninstall nothing may run again (it would recreate files and re-arm).
         guard !uninstalledAll else { return }

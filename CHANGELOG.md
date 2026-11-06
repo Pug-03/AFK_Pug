@@ -17,11 +17,13 @@
 - Phone messages now leave before a closed Mac goes to sleep.
 - A finished agent is reported even when the Mac sleeps right away.
 - A usage limit that reset just before midnight no longer lets the Mac sleep just after it.
+- The home screen scrolls if it would be taller than the screen, and pickers stay readable when the app's look differs from macOS.
 - The window stays still when you change pages, and its top stays on screen when a row goes away.
 - Agent rows fade and slide when they come and go, and the window follows on the same curve instead of jumping.
 - Reading audio and processes no longer blocks the main thread every few seconds, which could stutter animations.
 
 ### Changed
+- The panel is wider, and unfolds from the menu bar with a spring when it opens.
 - New app icon: a white A on black.
 - **Keep the screen on** moved to the home screen, because it changes from night to night.
 - New installs start in English with a black background and white accent. White replaces red among the accent presets.

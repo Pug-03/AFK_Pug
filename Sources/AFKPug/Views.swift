@@ -8,12 +8,19 @@ struct RootView: View {
     @State private var homeHeight: CGFloat = 520
     /// What the window should be; follows the content on the same curve. 0 until first measured.
     @State private var windowHeight: CGFloat = 0
+    /// 1 when open. The panel unfolds from the menu bar each time it opens.
+    @State private var unfold: CGFloat = RootView.folded
+    private static let folded: CGFloat = 0.28
+    /// Lively on purpose: it overshoots a little, then settles.
+    private static let unfoldAnimation = Animation.spring(response: 0.48, dampingFraction: 0.66)
     @State private var measured: Measured?
     /// Off for PNG previews: ImageRenderer can't draw an NSView and shows a placeholder.
     var fitsWindow = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Page { case home, settings }
+    static let width: CGFloat = 400
+    private static var maxHeight: CGFloat { max(320, (NSScreen.main?.visibleFrame.height ?? 800) - 8) }
 
     private struct Measured: Equatable {
         let height: CGFloat
@@ -25,20 +32,18 @@ struct RootView: View {
     /// the same height, so changing page never resizes the window mid-slide. The
     /// dark background fills the whole window, safe areas included.
     var body: some View {
-        WindowHeightLayout(height: windowHeight) {
+        WindowHeightLayout(height: windowHeight, unfold: fitsWindow && !reduceMotion ? unfold : 1) {
             ZStack(alignment: .top) {
                 if page == .home {
-                    HomeView(engine: engine, openSettings: { go(.settings) })
-                        .fixedSize(horizontal: false, vertical: true)
-                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { homeHeight = $0 }
+                    homePage
                         .transition(slide(from: .leading))
                 } else {
                     SettingsView(engine: engine, back: { go(.home) })
-                        .frame(height: homeHeight)
+                        .frame(height: min(homeHeight, Self.maxHeight))
                         .transition(slide(from: .trailing))
                 }
             }
-            .frame(width: 340, alignment: .top)
+            .frame(width: Self.width, alignment: .top)
             .fixedSize(horizontal: false, vertical: true)
             .clipped()
             .animation(listAnimation, value: holdIDs)
@@ -52,13 +57,43 @@ struct RootView: View {
                 transaction.disablesAnimations = !animate
                 withTransaction(transaction) { windowHeight = new.height }
             }
+            .opacity(fitsWindow && !reduceMotion && unfold < 1 ? 0 : 1)
+            .scaleEffect(fitsWindow && !reduceMotion && unfold < 1 ? 0.94 : 1, anchor: .top)
         }
-        .background { if fitsWindow { WindowHeightFitter() } }
+        .clipped()
+        .background {
+            if fitsWindow {
+                WindowHeightFitter(opened: {
+                    engine.postponeTick()
+                    withAnimation(Self.unfoldAnimation) { unfold = 1 }
+                }, closed: {
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { unfold = Self.folded }
+                })
+            }
+        }
         .background(Theme.bg.ignoresSafeArea())
         .modifier(WindowBackground())
         .foregroundStyle(Theme.text)
         .preferredColorScheme(Theme.scheme)
         .tint(Theme.accent)
+    }
+
+    /// Scrolls only when it's taller than the screen, or the bottom couldn't be reached.
+    /// Everyday use keeps the plain view, whose row animations are measured. PNG previews
+    /// can't draw a scroll view, and never need one.
+    @ViewBuilder private var homePage: some View {
+        let home = HomeView(engine: engine, openSettings: { go(.settings) })
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self, of: \.size.height) { homeHeight = $0 }
+        if fitsWindow, homeHeight > Self.maxHeight {
+            ScrollView(.vertical) { home }
+                .scrollIndicators(.hidden)
+                .frame(height: Self.maxHeight)
+        } else {
+            home
+        }
     }
 
     /// Agent rows coming and going: the rows below slide and the window follows.
@@ -83,16 +118,18 @@ struct RootView: View {
 private struct WindowHeightLayout: Layout, Animatable {
     /// 0: not measured yet, use the content's own height.
     var height: CGFloat
-    var animatableData: CGFloat {
-        get { height }
-        set { height = newValue }
+    /// A fraction of `height`, for the panel unfolding. Above 1 while it overshoots.
+    var unfold: CGFloat = 1
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(height, unfold) }
+        set { (height, unfold) = (newValue.first, newValue.second) }
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let content = subviews.first?.sizeThatFits(.unspecified) ?? .zero
         // Whole points: the hosting view rounds its minimum up, and would then resize the
         // window itself if the root were a fraction taller than the window.
-        return CGSize(width: content.width, height: (height > 0 ? height : content.height).rounded())
+        return CGSize(width: content.width, height: ((height > 0 ? height : content.height) * unfold).rounded())
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -103,11 +140,24 @@ private struct WindowHeightLayout: Layout, Animatable {
 /// A MenuBarExtra window grows with its content but never shrinks. This keeps it at the
 /// root's height as that animates, and its top where it is: the content must not move.
 private struct WindowHeightFitter: NSViewRepresentable {
+    var opened: () -> Void = {}
+    var closed: () -> Void = {}
+
     func makeNSView(context: Context) -> Probe { Probe() }
-    func updateNSView(_ view: Probe, context: Context) {}
+    func updateNSView(_ view: Probe, context: Context) {
+        view.opened = opened
+        view.closed = closed
+        view.applyTheme()
+    }
 
     final class Probe: NSView {
         private var moveObserver: NSObjectProtocol?
+        private var keyObservers: [NSObjectProtocol] = []
+        /// Hidden, so the next time it becomes key the panel is really opening
+        /// (a menu or another window taking focus for a moment doesn't count).
+        private var isClosed = true
+        var opened: () -> Void = {}
+        var closed: () -> Void = {}
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -118,7 +168,40 @@ private struct WindowHeightFitter: NSViewRepresentable {
                     self?.fit()
                 }
             }
+            observeKey()
+            applyTheme()
             DispatchQueue.main.async { [weak self] in self?.fit() }
+        }
+
+        /// AppKit controls (the pickers) follow the window, not SwiftUI's color scheme.
+        func applyTheme() {
+            window?.appearance = NSAppearance(named: Theme.palette.isDark ? .darkAqua : .aqua)
+        }
+
+        private func observeKey() {
+            keyObservers.forEach(NotificationCenter.default.removeObserver)
+            keyObservers = []
+            guard let window else { return }
+            keyObservers.append(NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.isClosed else { return }
+                    self.isClosed = false
+                    self.opened()
+                }
+            })
+            // Not on losing key: the panel can already have lost it (⌘-Tab, the welcome window)
+            // when it orders out. Being shown also counts, so it can never stay folded and blank.
+            keyObservers.append(NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let window = self.window, window.isVisible == self.isClosed else { return }
+                    self.isClosed.toggle()
+                    self.isClosed ? self.closed() : self.opened()
+                }
+            })
+            if window.isKeyWindow, isClosed {
+                isClosed = false
+                DispatchQueue.main.async { [weak self] in self?.opened() }
+            }
         }
 
         /// Called mid-layout, on purpose: a resize made later shows one frame of the root
