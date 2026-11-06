@@ -391,8 +391,6 @@ private struct Durations: View {
         }
         .padding(3)
         .cardBackground(radius: 11)
-        // Agents, grace or a trigger are in charge: picking a time would do nothing visible.
-        .opacity(!engine.manualOn && engine.isActive ? 0.45 : 1)
         .help(engine.manualOn ? tr("Picking a time restarts the countdown") : "")
         .accessibilityElement(children: .contain)
         .accessibilityLabel(tr("Duration"))
@@ -411,7 +409,7 @@ private struct Durations: View {
             Button(action: action) {
                 Text(title)
                     .font(.system(size: 12, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(selected || hover ? Theme.text : Theme.sub)
+                    .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                     .frame(maxWidth: .infinity)

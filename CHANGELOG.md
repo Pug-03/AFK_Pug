@@ -22,6 +22,7 @@
 
 ### Changed
 - **Keep the screen on** moved to the home screen, because it changes from night to night.
+- The duration picker no longer dims while an agent works.
 - A notification about an unanswered prompt under the lid says the Mac sleeps in about 15 minutes.
 - **Sleep now** is now **Allow sleep**, because it stops keeping the Mac awake and leaves the sleeping to macOS.
 - An agent dismissed with its × shows **Stopped watching**, not **Agents done**.
