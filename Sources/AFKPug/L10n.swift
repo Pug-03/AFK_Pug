@@ -197,6 +197,8 @@ private let thaiV3: [String: String] = [
     "Allow it in System Settings → General → Login Items": "อนุญาตใน System Settings → General → Login Items",
     "Could not change Open at Login: %@": "ตั้งค่าเปิดตอนเปิดเครื่องไม่สำเร็จ: %@",
     "Language": "ภาษา",
+    "Show status in the menu bar": "แสดงสถานะบน menu bar",
+    "Time left or agents working, beside the A": "เวลาที่เหลือหรือจำนวน agent ข้างตัว A",
     "AFK Pug %@ is available": "AFK Pug %@ พร้อมอัปเดต",
     "Update": "อัปเดต",
     "Dismiss": "ปิด",

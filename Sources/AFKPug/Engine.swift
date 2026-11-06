@@ -65,6 +65,9 @@ final class Engine: ObservableObject {
     @Published var autoApps: String { didSet { save(autoApps, "autoApps") } }
     @Published var keepMusic: Bool { didSet { save(keepMusic, "keepMusic"); tick() } }
     @Published var checkUpdates: Bool { didSet { save(checkUpdates, "checkUpdates") } }
+    @Published var menuBarStatus: Bool { didSet { save(menuBarStatus, "menuBarStatus"); updateMenuBarText() } }
+    /// Beside the icon: time left or agents working. Minute resolution, so it rarely redraws.
+    @Published private(set) var menuBarText: String?
 
     // MARK: Live state
 
@@ -189,6 +192,7 @@ final class Engine: ObservableObject {
         autoApps = ud.string(forKey: "autoApps") ?? ""
         keepMusic = bool("keepMusic", true)
         checkUpdates = bool("checkUpdates", true)
+        menuBarStatus = bool("menuBarStatus", false)
         L10n.language = language
     }
 
@@ -805,6 +809,21 @@ final class Engine: ObservableObject {
         // Still shut: work is done (or a guard tripped), so sleep now.
         if sleepAfter { PowerControl.sleepNow() }
         updateLidSession()
+        updateMenuBarText()
+    }
+
+    private func updateMenuBarText() {
+        var text: String?
+        if menuBarStatus, trip == nil {
+            if manualOn {
+                text = manualEnd.map { Fmt.hoursMinutes($0.timeIntervalSince(now)) }
+            } else if agentMode, !holds.isEmpty {
+                text = "\(holds.count)"
+            } else if graceActive, let until = graceUntil {
+                text = Fmt.hoursMinutes(until.timeIntervalSince(now))
+            }
+        }
+        if text != menuBarText { menuBarText = text }
     }
 
     /// Report "finished" only if the session didn't pick the work up again within 10 s
@@ -1168,6 +1187,12 @@ enum Fmt {
         let s = Int(t.rounded(.up))
         let h = s / 3600, m = (s % 3600) / 60, sec = s % 60
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
+    }
+
+    /// "1:45" or "0:05", rounded up, so it never reads 0:00 while time is left.
+    static func hoursMinutes(_ t: TimeInterval) -> String {
+        let total = Int((max(0, t) / 60).rounded(.up))
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 
     static func minutes(_ m: Int) -> String {

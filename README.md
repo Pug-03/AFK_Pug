@@ -345,6 +345,10 @@ AFK Pug does this for you, and puts it all back when you open the lid:
 | Lock the screen | on | nobody can use your Mac while you're away |
 | Pause chat apps | off | Slack, Discord, LINE and others. A chat app in a call is never paused |
 
+### See it at a glance
+
+Turn on **Settings → General → Show status in the menu bar** to see the time left (`1:45`) or how many agents are working (`2`) beside the A. It's off by default, because a MacBook with a notch has little room up there.
+
 ### Starts by itself
 
 Both are off by default. Turn them on under **Settings → Start automatically**:
@@ -429,6 +433,7 @@ Press the gear at the top right of the app.
 | **Appearance** | Background: match Mac, white, black or custom | black |
 | | Accent color: six presets or custom | orange |
 | **General** | Open at login | on |
+| | Show status in the menu bar | off |
 | | Check for updates: once a day | on |
 | | Show welcome again | |
 | | <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>A</kbd> starts or stops AFK | on |

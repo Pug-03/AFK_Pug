@@ -61,6 +61,7 @@ enum Simulation {
         ("limit-formats", "[b10] usage-limit reset formats: 4.30pm, p.m., time zones, ISO, epoch, escaped quotes, fallbacks"),
         ("away-notices", "Away: phone messages leave before sleep, finish isn't lost at grace 0, early battery warning, an unanswered prompt ends"),
         ("updates", "Updates: version compare, release parsing, once a day, dismiss, safety checks, real swap of the app"),
+        ("menu-bar", "Menu bar status: off by default, time left, agents, grace, nothing when a guard stopped it"),
         ("theme", "Appearance: text stays legible on any background and accent, defaults keep the black look, bad values fall back"),
         ("ui-contract", "UI API: trip vs Sleep now / grace, cooldown, charger, trigger sublines, Idle, waits, Fmt hours, admin errors"),
     ]
@@ -342,6 +343,7 @@ private final class Runner {
         case "ui-contract": uiContract()
         case "preview-states": previewStates()
         case "theme": theme()
+        case "menu-bar": menuBar()
         case "updates": updates()
         case "away-notices": awayNotices()
         default:
@@ -474,6 +476,30 @@ private final class Runner {
         check(version == "0.9.0", "the app is replaced after it quits")
         let leftovers = (try? fm.contentsOfDirectory(atPath: installed.deletingLastPathComponent().path))?.filter { $0.contains("previous") } ?? []
         check(leftovers.isEmpty && !fm.fileExists(atPath: newApp.path), "nothing left behind")
+    }
+
+    func menuBar() {
+        configure(["graceMinutes": 2, "selectedMinutes": 120]); boot()
+        step("Go AFK") { engine.start() }
+        check(engine.menuBarText == nil, "off by default")
+        engine.menuBarStatus = true
+        check(engine.menuBarText == "2:00", "shows the time left right away (\(engine.menuBarText ?? "-"))")
+        step("15 minutes on", ticks: 1, every: 15 * 60) {}
+        check(engine.menuBarText == "1:45", "counts down (\(engine.menuBarText ?? "-"))")
+        step("Stop") { engine.stop() }
+        check(engine.menuBarText == nil, "nothing when idle")
+        step("until you stop") { engine.choose(minutes: 0); engine.start() }
+        check(engine.menuBarText == nil, "no time to show without an end")
+        step("Stop") { engine.stop() }
+        step("two agents") { hold("claude-a"); hold("codex-b") }
+        check(engine.menuBarText == "2", "agents working (\(engine.menuBarText ?? "-"))")
+        step("they finish") { dropHold("claude-a"); dropHold("codex-b") }
+        check(engine.menuBarText == "0:02", "grace time left (\(engine.menuBarText ?? "-"))")
+        step("battery guard", ticks: 1) { hold("claude-a"); Sim.set("battery", "10 battery") }
+        check(engine.trip != nil && engine.menuBarText == nil, "nothing once a guard stopped it")
+        engine.menuBarStatus = false
+        check(engine.menuBarText == nil, "turned off")
+        check(Fmt.hoursMinutes(1) == "0:01" && Fmt.hoursMinutes(-5) == "0:00" && Fmt.hoursMinutes(3660) == "1:01", "formatting")
     }
 
     func theme() {

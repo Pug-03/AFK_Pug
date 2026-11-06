@@ -35,15 +35,22 @@ struct AFKPugApp: App {
     }
 }
 
-/// Menu bar icon. Re-renders only when `Engine.isActive` actually flips.
+/// Menu bar icon and optional status. Re-renders only when one of them actually changes.
 private struct MenuBarLabel: View {
     @State private var active = Engine.shared.isActive
+    @State private var status = Engine.shared.menuBarText
 
     var body: some View {
-        Image(nsImage: AppGlyph.menuImage(active: active))
-            .onReceive(Engine.shared.$isActive.removeDuplicates()) { value in
-                if value != active { active = value }
-            }
+        HStack(spacing: 4) {
+            Image(nsImage: AppGlyph.menuImage(active: active))
+            if let status { Text(status).monospacedDigit() }
+        }
+        .onReceive(Engine.shared.$isActive.removeDuplicates()) { value in
+            if value != active { active = value }
+        }
+        .onReceive(Engine.shared.$menuBarText.removeDuplicates()) { value in
+            if value != status { status = value }
+        }
     }
 }
 

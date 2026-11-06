@@ -126,7 +126,9 @@ struct SettingsView: View {
                         Row(symbol: "hand.wave", title: tr("Show welcome again"), detail: tr("Set up lid-closed mode and agents step by step")) {
                             PillButton(title: tr("Open"), style: .soft) { OnboardingWindow.shared.show() }
                         }
-                        ToggleRow(symbol: "arrow.down.circle", title: tr("Check for updates"),
+                        ToggleRow(symbol: "menubar.rectangle", title: tr("Show status in the menu bar"),
+                              detail: tr("Time left or agents working, beside the A"), isOn: $engine.menuBarStatus)
+                    ToggleRow(symbol: "arrow.down.circle", title: tr("Check for updates"),
                               detail: tr("Once a day, asks GitHub for the latest version. Nothing about you is sent."), isOn: $engine.checkUpdates)
                     Row(symbol: "info.circle", title: tr("Version %@", Updater.currentVersion), detail: engine.update == nil ? (engine.updateMessage ?? "") : "") {
                         if let update = engine.update {
