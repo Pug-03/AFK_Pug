@@ -1066,7 +1066,7 @@ private final class Runner {
         }
         let errors = reply.split(separator: "\n").filter { $0.contains("\"isError\":true") }.count
         check(errors == 3, "1e300, -5 and \"nan\" are tool errors the model can fix (got \(errors))")
-        check(spans == ["r3": 90 * 60], "only the valid 90 min call made a hold (got \(spans))")
+        check(spans == ["r3": 90.0 * 60], "only the valid 90 min call made a hold (got \(spans))")
     }
 
     /// Events written while the app wasn't running are dropped at launch, fresh ones kept.
