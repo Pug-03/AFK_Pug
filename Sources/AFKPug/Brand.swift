@@ -55,7 +55,7 @@ struct AppMark: View {
     var body: some View {
         GlyphView(size: size * 0.6, color: Theme.accent)
             .frame(width: size, height: size)
-            .background(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous).fill(Theme.surface))
+            .cardBackground(radius: size * 0.28)
     }
 }
 

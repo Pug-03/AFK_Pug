@@ -314,7 +314,7 @@ private struct Card<Content: View>: View {
         VStack(alignment: .leading, spacing: 14) { content }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
+            .cardBackground(radius: 12)
     }
 }
 
@@ -353,7 +353,7 @@ private struct MenuBarHint: View {
         .foregroundStyle(Theme.faint)
         .padding(.horizontal, 14)
         .frame(height: 34)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.surface))
+        .cardBackground(radius: 10)
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.line, lineWidth: 1))
         .accessibilityHidden(true)
     }

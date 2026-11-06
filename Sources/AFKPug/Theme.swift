@@ -140,6 +140,42 @@ enum Theme {
     static let hover = Animation.easeOut(duration: 0.12)
 }
 
+/// A quiet card or tile: Liquid Glass on macOS 26, a flat fill before that and in
+/// PNG previews, which can't draw glass. The glass sits on the app's solid
+/// background, so text keeps the contrast the palette guarantees.
+struct CardBackground: ViewModifier {
+    @ObservedObject var themeStore = ThemeStore.shared
+    let radius: CGFloat
+
+    func body(content: Content) -> some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *), !Sim.enabled {
+            content.glassEffect(.regular, in: .rect(cornerRadius: radius, style: .continuous))
+        } else {
+            flat(content)
+        }
+        #else
+        flat(content)
+        #endif
+    }
+
+    private func flat(_ content: Content) -> some View {
+        content.background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Theme.surface))
+    }
+}
+
+extension View {
+    func cardBackground(radius: CGFloat = 12) -> some View { modifier(CardBackground(radius: radius)) }
+}
+
+/// A light tap on Force Touch trackpads, for controls that change state.
+enum Haptics {
+    static func tap() {
+        guard !Sim.enabled else { return }
+        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+    }
+}
+
 /// The user's appearance choices. Black and orange are the defaults.
 @MainActor
 final class ThemeStore: ObservableObject {
@@ -227,6 +263,7 @@ struct AppearanceRows: View {
         HStack(spacing: 9) {
             ForEach(ThemeStore.accents, id: \.hex) { accent in
                 Button {
+                    Haptics.tap()
                     store.accentHex = accent.hex
                 } label: {
                     Circle()

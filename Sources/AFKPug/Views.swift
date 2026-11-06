@@ -173,6 +173,7 @@ struct LiveDot: View {
 // MARK: Timer
 
 private struct TimerBlock: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var themeStore = ThemeStore.shared
     @ObservedObject var engine: Engine
 
@@ -204,16 +205,17 @@ private struct TimerBlock: View {
             // Clock.now() is the timeline date in the app, and the shifted clock in the simulator.
             let date = Clock.now()
             let mode = mode
+            let big = bigText(mode, at: date)
             VStack(alignment: .leading, spacing: 8) {
-                Text(bigText(mode, at: date))
+                Text(big)
                     .font(.system(size: 46, weight: .light, design: .rounded).monospacedDigit())
                     .foregroundStyle(mode == .idle ? Theme.faint : (mode == .trip ? Theme.warn : Theme.text))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
-                    // Only animates inside an explicit transaction (picking a duration),
-                    // never on the per-second redraw.
+                    // Digits roll as they change. The font is monospaced and the height
+                    // fixed, so this can't resize the window.
                     .contentTransition(.numericText(countsDown: true))
-                    .animation(Theme.fade, value: engine.manualOn)
+                    .animation(reduceMotion ? nil : Theme.fade, value: big)
                 Text(subline(mode, at: date))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.sub)
@@ -315,12 +317,13 @@ private struct Durations: View {
                 Segment(title: Fmt.minutes(m), spoken: m == 0 ? tr("Until you stop") : Fmt.minutes(m),
                         selected: engine.selectedMinutes == m, ns: ns) {
                     guard engine.selectedMinutes != m else { return }
+                    Haptics.tap()
                     if reduceMotion { engine.choose(minutes: m) } else { withAnimation(Theme.smooth) { engine.choose(minutes: m) } }
                 }
             }
         }
         .padding(3)
-        .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Theme.surface))
+        .cardBackground(radius: 11)
         // Agents, grace or a trigger are in charge: picking a time would do nothing visible.
         .opacity(!engine.manualOn && engine.isActive ? 0.45 : 1)
         .help(engine.manualOn ? tr("Picking a time restarts the countdown") : "")
@@ -463,6 +466,7 @@ struct MiniSwitch: ToggleStyle {
         var body: some View {
             let on = configuration.isOn
             Button {
+                Haptics.tap()
                 configuration.isOn.toggle()
             } label: {
                 Capsule()
@@ -781,7 +785,7 @@ private struct UpdateCard: View {
             if let message = engine.updateMessage { ErrorText(message) }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
+        .cardBackground(radius: 12)
     }
 }
 
@@ -807,7 +811,7 @@ private struct SummaryCard: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
+        .cardBackground(radius: 12)
     }
 
     private struct Figure: View {

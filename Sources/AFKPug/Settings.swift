@@ -262,7 +262,7 @@ private struct Section<Content: View>: View {
             VStack(alignment: .leading, spacing: 14) { content }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
+                .cardBackground(radius: 12)
         }
     }
 }
