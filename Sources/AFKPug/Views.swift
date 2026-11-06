@@ -371,7 +371,7 @@ private struct TimerBlock: View {
 
 // MARK: Durations
 
-private struct Durations: View {
+struct Durations: View {
     @ObservedObject var themeStore = ThemeStore.shared
     @ObservedObject var engine: Engine
     @Namespace private var ns
@@ -471,7 +471,7 @@ private struct MainAction: View {
     }
 }
 
-private struct ActionButton: View {
+struct ActionButton: View {
     @ObservedObject var themeStore = ThemeStore.shared
     enum Style { case solid, outline, quiet }
     let title: String
@@ -620,7 +620,7 @@ private struct Modes: View {
             }
             if engine.lidMode, !engine.setupDone {
                 HStack(spacing: 8) {
-                    Text(tr("Asks for your password once. Only allows turning lid sleep on and off."))
+                    Text(tr("Asks for your password once. Only allows turning lid sleep and Low Power Mode on and off."))
                         .font(.system(size: 11)).foregroundStyle(Theme.sub)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
@@ -710,7 +710,7 @@ struct ErrorText: View {
     }
 }
 
-private struct AgentRow: View {
+struct AgentRow: View {
     @ObservedObject var themeStore = ThemeStore.shared
     let hold: AgentHold
     var release: () -> Void

@@ -403,6 +403,7 @@ private struct ColorEditor: View {
                     .font(.system(size: 11.5, design: .monospaced))
                     .labelsHidden()
                     .frame(width: 86)
+                    .onExitCommand { typed = hex }
                     .onChange(of: typed) { _, text in
                         let code = text.trimmingCharacters(in: .whitespaces)
                         if let rgb = RGB(hex: code), rgb.hex != hex { hex = rgb.hex }

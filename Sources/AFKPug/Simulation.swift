@@ -3532,7 +3532,7 @@ extension Runner {
 
     func s2OnboardingChild(fresh: Bool) {
         configure()
-        Engine.store.set(!fresh, forKey: "onboardingDone")
+        Engine.store.set(fresh ? 0 : Engine.onboardingVersion, forKey: "onboardingVersion")
         baseline = snapshot()
         boot()
         check(engine.showOnboarding == fresh, "onboarding shown: \(fresh)")

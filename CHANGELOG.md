@@ -8,6 +8,7 @@
 - Early battery warning, 5 points above the floor.
 - Liquid Glass cards on macOS 26, rolling timer digits and light trackpad taps.
 - Demo animation in the README.
+- A first-run tutorial: choose a language, then learn the app one part at a time.
 - Each agent row shows its project, request and current step, and says when it's waiting for you. A **Just finished** list shows which jobs ended. Requests stay on your Mac and aren't sent to your phone.
 - Keep the screen on for agents: while they work, or 30 minutes or an hour after they finish. Only on the charger with the lid open.
 - Colors are picked right in Settings: swatches for the background and accent, plus a color pad and hex field.
@@ -23,6 +24,7 @@
 ### Changed
 - **Keep the screen on** moved to the home screen, because it changes from night to night.
 - New installs start in English with a black background and white accent. White replaces red among the accent presets.
+- The welcome opens once more after this update, and after a reinstall from a new version.
 - The duration picker no longer dims while an agent works.
 - A notification about an unanswered prompt under the lid says the Mac sleeps in about 15 minutes.
 - **Sleep now** is now **Allow sleep**, because it stops keeping the Mac awake and leaves the sleeping to macOS.

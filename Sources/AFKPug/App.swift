@@ -110,7 +110,7 @@ enum Main {
         write(renderer.nsImage, to: path)
     }
 
-    /// Renders one onboarding step (--step 1...4) to a PNG for design review.
+    /// Renders one onboarding step (--step 1...10) to a PNG for design review.
     @MainActor
     static func renderOnboarding(to path: String, step: OnboardingWindow.Step) {
         Engine.shared.refreshIntegrations()

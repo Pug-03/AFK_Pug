@@ -9,11 +9,12 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     static let shared = OnboardingWindow()
     private var window: NSWindow?
 
-    enum Step: Int, CaseIterable { case welcome, lid, agents, finish }
+    /// Choose a language, set up the two things that need a yes, then one part of the app at a time.
+    enum Step: Int, CaseIterable { case language, welcome, lid, agents, tourAgents, tourTimer, tourLid, tourScreen, tourLook, finish }
 
     /// Opens the welcome at `step`. If it's already open, it only comes to the
     /// front: the step the user is on is kept.
-    func show(step: Step = .welcome) {
+    func show(step: Step = .language) {
         let engine = Engine.shared
         engine.refreshIntegrations()
         if let window, window.isVisible {
@@ -24,6 +25,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
             .id(UUID()) // fresh step state each time it opens
         if let window {
             (window.contentViewController as? NSHostingController<AnyView>)?.rootView = AnyView(root)
+            refreshTitle()
             present(window)
             return
         }
@@ -46,6 +48,9 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         self.window = window
         present(window)
     }
+
+    /// VoiceOver and Mission Control read the title, even though it's hidden.
+    func refreshTitle() { window?.title = tr("Welcome to AFK Pug") }
 
     func applyTheme() {
         if let window { applyTheme(to: window) }
@@ -72,6 +77,12 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
 
     func close() { window?.close() }
 
+    /// Growing keeps the top where it is, which can push a low window off the screen.
+    func windowDidResize(_ notification: Notification) {
+        guard let window, let visible = window.screen?.visibleFrame, window.frame.minY < visible.minY else { return }
+        window.setFrameOrigin(NSPoint(x: window.frame.minX, y: min(visible.minY, visible.maxY - window.frame.height)))
+    }
+
     /// Closing the window any way (Done, Skip, Esc, the close button) counts as seen.
     func windowWillClose(_ notification: Notification) {
         if Engine.shared.showOnboarding { Engine.shared.finishOnboarding() }
@@ -91,7 +102,7 @@ struct OnboardingView: View {
     /// (four agents with a note and an error in English don't fit in 500).
     static let size = CGSize(width: 460, height: 500)
 
-    init(engine: Engine, start: Step = .welcome, close: @escaping () -> Void = {}) {
+    init(engine: Engine, start: Step = .language, close: @escaping () -> Void = {}) {
         self.engine = engine
         self.close = close
         _step = State(initialValue: start)
@@ -135,6 +146,7 @@ struct OnboardingView: View {
         .preferredColorScheme(Theme.scheme)
         .tint(Theme.accent)
         .onAppear { engine.refreshIntegrations() }
+        .onChange(of: engine.language) { OnboardingWindow.shared.refreshTitle() }
     }
 
     // MARK: Pages
@@ -142,10 +154,105 @@ struct OnboardingView: View {
     @ViewBuilder
     private func page(_ step: Step) -> some View {
         switch step {
+        case .language: languagePage
         case .welcome: welcome
         case .lid: lid
         case .agents: agents
+        case .tourAgents: tourAgents
+        case .tourTimer: tourTimer
+        case .tourLid: tourLid
+        case .tourScreen: tourScreen
+        case .tourLook: tourLook
         case .finish: finishPage
+        }
+    }
+
+    private var languagePage: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // In both languages: nobody has chosen yet.
+            Heading(title: tr("Welcome to AFK Pug"), text: "Choose your language · เลือกภาษาที่ต้องการ")
+            VStack(spacing: 8) {
+                LanguageChoice(title: "English", selected: !L10n.isThai) { engine.language = .en }
+                LanguageChoice(title: "ไทย", selected: L10n.isThai) { engine.language = .th }
+            }
+            .padding(.top, 22)
+        }
+    }
+
+    private var tourAgents: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Heading(title: tr("See what each agent is doing"),
+                    text: tr("Click the A to see each job and its current step. When a job ends, it moves to Just finished."))
+            Card {
+                VStack(alignment: .leading, spacing: 8) {
+                    AgentRow(hold: Self.sampleHold("claude", prompt: tr("Fix the failing payment tests"), cwd: "/billing-api",
+                                                   tool: "Edit", target: "checkout.ts")) {}
+                    AgentRow(hold: Self.sampleHold("codex", prompt: tr("Move the site to Astro"), cwd: "/website", waiting: true)) {}
+                    Text(tr("Just finished")).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Theme.sub)
+                    FinishedRow(item: FinishedTask(id: UUID(), agent: "gemini",
+                                                   task: AgentTask(cwd: "/docs", prompt: tr("Update the README")),
+                                                   at: Clock.now().addingTimeInterval(-300), failed: false)) {}
+                }
+                .allowsHitTesting(false)
+                .accessibilityElement(children: .combine)
+            }
+            .padding(.top, 22)
+        }
+    }
+
+    private static func sampleHold(_ agent: String, prompt: String, cwd: String, tool: String? = nil, target: String? = nil, waiting: Bool = false) -> AgentHold {
+        AgentHold(id: "\(agent)-sample", agent: agent, started: Clock.now().addingTimeInterval(-720), expires: nil, reason: nil,
+                  task: AgentTask(cwd: cwd, prompt: prompt, tool: tool, target: target, waiting: waiting))
+    }
+
+    private var tourTimer: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Heading(title: tr("Stay awake without an agent"),
+                    text: tr("For a long download or a backup, click the A, pick a time and press Go AFK. ⌥⌘A starts or stops it from any app."))
+            Card {
+                Durations(engine: engine)
+                ActionButton(title: tr("Go AFK"), style: .solid) {}
+            }
+            .allowsHitTesting(false)
+            // A picture of the home screen. Durations is the real control: nothing here may reach it.
+            .accessibilityHidden(true)
+            .padding(.top, 22)
+        }
+    }
+
+    private var tourLid: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Heading(title: tr("Close the lid and go"),
+                    text: tr("Here's what happens while AFK Pug keeps your Mac awake. Sound comes back when you open the lid. Change any of this in Settings."))
+            Card {
+                Row(symbol: "display", title: tr("The screen turns off"), detail: tr("Saves battery while work keeps running")) { EmptyView() }
+                Row(symbol: "speaker.slash", title: tr("Sound is muted"), detail: tr("Unless music is playing")) { EmptyView() }
+                Row(symbol: "lock", title: tr("The Mac locks"), detail: tr("Nobody can use it while you're away")) { EmptyView() }
+                Row(symbol: "battery.25percent", title: tr("AFK Pug stops when it has to"), detail: tr("At low battery or critical heat, the Mac sleeps")) { EmptyView() }
+            }
+            .padding(.top, 22)
+        }
+    }
+
+    private var tourScreen: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Heading(title: tr("Keep the screen on"),
+                    text: tr("Leaving agents running? Choose how long the screen stays on, so you can check them at a glance."))
+            Card {
+                Row(symbol: "sun.max", title: tr("Keep the screen on"), detail: tr("On the charger, lid open")) {
+                    KeepScreenPicker(engine: engine)
+                }
+            }
+            .padding(.top, 22)
+        }
+    }
+
+    private var tourLook: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Heading(title: tr("Make it yours"),
+                    text: tr("Pick a background and an accent color. Text stays readable on any choice."))
+            Card { AppearanceRows() }
+                .padding(.top, 22)
         }
     }
 
@@ -184,7 +291,7 @@ struct OnboardingView: View {
                 if let error = engine.setupError { ErrorText(error).padding(.leading, 30) }
             }
             .padding(.top, 22)
-            Text(tr("Only allows turning lid sleep on and off. You can remove it in Settings."))
+            Text(tr("Only allows turning lid sleep and Low Power Mode on and off. You can remove it in Settings."))
                 .font(.system(size: 11)).foregroundStyle(Theme.sub)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 10)
@@ -200,7 +307,7 @@ struct OnboardingView: View {
     private var agents: some View {
         VStack(alignment: .leading, spacing: 0) {
             Heading(title: tr("Connect your agents"),
-                    text: tr("AFK Pug adds a small hook so it knows when an agent starts and finishes."))
+                    text: tr("AFK Pug adds a small hook so it can show what each agent is doing and when it finishes. This stays on your Mac."))
             Card {
                 ForEach(AgentIntegrations.all) { item in
                     AgentConnectionRow(engine: engine, item: item, allowDisconnect: false)
@@ -216,8 +323,14 @@ struct OnboardingView: View {
 
     private var finishPage: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Heading(title: tr("You're all set"),
-                    text: tr("Turn on Agent mode, close the lid and walk away. AFK Pug keeps watch."))
+            if engine.setupDone {
+                Heading(title: tr("You're all set"),
+                        text: tr("Keep Agent mode on, close the lid and walk away. AFK Pug keeps watch."))
+            } else {
+                // Skipped the permission: closing the lid would still sleep the Mac.
+                Heading(title: tr("Almost ready"),
+                        text: tr("Lid-closed mode isn't allowed yet, so closing the lid still sleeps the Mac. Click the A and press Set up."))
+            }
             Card {
                 ToggleRow(symbol: "sparkles", title: tr("Agent mode"),
                           detail: tr("Awake only while your AI agents work"), isOn: $engine.agentMode)
@@ -254,7 +367,7 @@ struct OnboardingView: View {
             .accessibilityElement()
             .accessibilityLabel(tr("Step %d of %d", step.rawValue + 1, Step.allCases.count))
             Spacer()
-            if step != .welcome {
+            if step != .language {
                 PillButton(title: tr("Back"), style: .quiet) { go(step.rawValue - 1) }
             }
             PillButton(title: step == .finish ? tr("Done") : tr("Continue"), style: stepDone ? .primary : .soft) {
@@ -289,6 +402,37 @@ struct OnboardingView: View {
 }
 
 // MARK: - Pieces
+
+/// One language, as a large row with a check when chosen.
+private struct LanguageChoice: View {
+    @ObservedObject var themeStore = ThemeStore.shared
+    let title: String
+    let selected: Bool
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button {
+            Haptics.tap()
+            action()
+        } label: {
+            HStack {
+                Text(title).font(.system(size: 14, weight: selected ? .semibold : .regular))
+                Spacer()
+                if selected { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)) }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(hover || selected ? Theme.surfaceHover : Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(selected ? Theme.text.opacity(0.7) : Theme.line, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .animation(Theme.hover, value: hover)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
 
 private struct Heading: View {
     @ObservedObject var themeStore = ThemeStore.shared
@@ -328,7 +472,7 @@ struct DoneMark: View {
             Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
             Text(title).font(.system(size: 11.5, weight: .semibold))
         }
-        .foregroundStyle(Theme.live)
+        .foregroundStyle(Theme.liveText)
         .lineLimit(1)
         .fixedSize()
     }

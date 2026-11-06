@@ -61,7 +61,7 @@ enum Screens {
             "displayOffOnClose": true, "muteOnClose": true, "lowPowerOnClose": true, "lidOnlyOnPower": false,
             "notifyAgents": true, "graceMinutes": 5, "detectOtherAgents": true, "pauseChatApps": false,
             "lockOnClose": true, "hotkeyEnabled": true, "phoneTopic": "", "autoOnPower": false,
-            "autoApps": "", "keepMusic": true, "onboardingDone": true,
+            "autoApps": "", "keepMusic": true, "onboardingVersion": Engine.onboardingVersion,
         ]
         for (key, value) in defaults { Engine.store.set(value, forKey: key) }
         if scene == "white" {

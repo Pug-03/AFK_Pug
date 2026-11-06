@@ -95,7 +95,10 @@ final class Engine: ObservableObject {
     @Published private(set) var connected: [String: Bool] = [:]
     @Published private(set) var integrationErrors: [String: String] = [:]
     /// First-run walkthrough (permission, Claude Code / other agents, open at login).
-    @Published var showOnboarding = !Engine.store.bool(forKey: "onboardingDone")
+    /// Raising this shows the welcome once more to everyone, including a reinstall that
+    /// kept its settings (an app dragged to the Trash leaves them behind).
+    static let onboardingVersion = 2
+    @Published var showOnboarding = Engine.store.integer(forKey: "onboardingVersion") < Engine.onboardingVersion
     @Published private(set) var trip: GuardTrip?
     @Published private(set) var isActive = false
     @Published private(set) var lidOverrideOn = false
@@ -639,7 +642,7 @@ final class Engine: ObservableObject {
     }
 
     func finishOnboarding() {
-        Engine.store.set(true, forKey: "onboardingDone")
+        Engine.store.set(Engine.onboardingVersion, forKey: "onboardingVersion")
         showOnboarding = false
     }
 
