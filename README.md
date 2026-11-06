@@ -331,7 +331,7 @@ Click the A in the menu bar. The big line at the top always tells you why the Ma
 
 ### Make it yours
 
-Choose the look under **Settings → Appearance**. **Background** can match your Mac, or be white, black or any color you pick. **Accent color** sets the switches and the app mark, with six presets and a picker for anything else.
+Choose the look under **Settings → Appearance**. Click a swatch and it applies right away. **Background** can match your Mac, or be white, black, navy, forest, plum or any color you pick. **Accent color** sets the switches and the app mark, with six presets. The rainbow swatch opens a color pad and a hex field for anything else.
 
 Text color follows the background and is raised until it's readable, so no combination can leave you with an unreadable app. Green, amber and red keep their meaning: working, waiting and warning.
 
@@ -438,7 +438,7 @@ Press the gear at the top right of the app.
 | | Let agents keep the Mac awake (MCP) | not connected |
 | **Phone notifications** | ntfy topic name | empty |
 | **Start automatically** | When the charger is connected · While these apps are open | off |
-| **Appearance** | Background: match Mac, white, black or custom | black |
+| **Appearance** | Background: match Mac, white, black, three dark colors or custom | black |
 | | Accent color: six presets or custom | orange |
 | **General** | Open at login | on |
 | | Show status in the menu bar | off |

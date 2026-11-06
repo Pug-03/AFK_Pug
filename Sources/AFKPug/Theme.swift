@@ -31,6 +31,27 @@ struct RGB: Equatable {
         return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
     }
 
+    /// A point on the color pad: hue runs left to right, white at the top, black at the bottom.
+    static func pad(x: Double, y: Double) -> RGB {
+        let h = x * 6
+        let channel = { (offset: Double) in min(max(abs((h + offset).truncatingRemainder(dividingBy: 6) - 3) - 1, 0), 1) }
+        let (r, g, b) = (channel(0), channel(4), channel(2))
+        let mix = { (v: Double) in y < 0.5 ? 1 + (v - 1) * y * 2 : v * (1 - y) * 2 }
+        return RGB(mix(r), mix(g), mix(b))
+    }
+
+    /// Where this color sits on the pad, or the closest point for a grayer color.
+    var padPosition: (x: Double, y: Double) {
+        let (high, low) = (max(r, g, b), min(r, g, b))
+        let range = high - low
+        var hue = 0.0
+        if range > 0 {
+            if high == r { hue = (g - b) / range } else if high == g { hue = (b - r) / range + 2 } else { hue = (r - g) / range + 4 }
+            if hue < 0 { hue += 6 }
+        }
+        return (hue / 6, 0.5 - low / 2 + (1 - high) / 2)
+    }
+
     func contrast(with other: RGB) -> Double {
         let (a, b) = (luminance, other.luminance)
         return (max(a, b) + 0.05) / (min(a, b) + 0.05)
@@ -186,6 +207,11 @@ final class ThemeStore: ObservableObject {
         ("Pink", "#F472B6"), ("Purple", "#A78BFA"), ("Red", "#F87171"),
     ]
 
+    /// Backgrounds offered beside white and black.
+    static let backgrounds: [(name: String, hex: String)] = [
+        ("Navy", "#1B2A4A"), ("Forest", "#17332B"), ("Plum", "#2E1F3D"),
+    ]
+
     @Published var mode: AppearanceMode { didSet { save() } }
     @Published var accentHex: String { didSet { save() } }
     @Published var backgroundHex: String { didSet { save() } }
@@ -200,14 +226,14 @@ final class ThemeStore: ObservableObject {
         }
     }
 
-    var accent: Binding<Color> { hexBinding(\.accentHex) }
-    var background: Binding<Color> { hexBinding(\.backgroundHex) }
+    var backgroundName: String {
+        guard mode == .custom else { return mode.label }
+        return Self.backgrounds.first { $0.hex == backgroundHex }.map { tr($0.name) } ?? mode.label
+    }
 
-    private func hexBinding(_ path: ReferenceWritableKeyPath<ThemeStore, String>) -> Binding<Color> {
-        Binding(get: { RGB(hex: self[keyPath: path])?.color ?? .clear },
-                set: { color in
-                    if let rgb = RGB(color), rgb.hex != self[keyPath: path] { self[keyPath: path] = rgb.hex }
-                })
+    func pickBackground(hex: String) {
+        backgroundHex = hex
+        mode = .custom
     }
 
     private func save() {
@@ -245,41 +271,170 @@ final class ThemeStore: ObservableObject {
     }
 }
 
-/// Settings rows: background and accent.
+/// Settings rows: pick a background and an accent right in the window.
 struct AppearanceRows: View {
+    private enum Editing { case background, accent }
+
     @ObservedObject var store = ThemeStore.shared
+    @State private var editing: Editing?
 
     var body: some View {
-        Row(symbol: "circle.lefthalf.filled", title: tr("Background"), detail: "") {
-            if store.mode == .custom {
-                ColorPicker(tr("Background color"), selection: store.background, supportsOpacity: false).labelsHidden().frame(width: 36)
+        Row(symbol: "circle.lefthalf.filled", title: tr("Background"), detail: store.backgroundName) { EmptyView() }
+        HStack(spacing: 9) {
+            Swatch(label: tr("Match Mac"), selected: store.mode == .system, action: { pick(.system) }) {
+                Circle().fill(LinearGradient(stops: [.init(color: .white, location: 0.5), .init(color: .black, location: 0.5)],
+                                             startPoint: .leading, endPoint: .trailing))
             }
-            Picker(tr("Background"), selection: $store.mode) {
-                ForEach(AppearanceMode.allCases) { mode in Text(mode.label).tag(mode) }
+            Swatch(label: tr("White"), selected: store.mode == .light, action: { pick(.light) }) { Circle().fill(.white) }
+            Swatch(label: tr("Black"), selected: store.mode == .dark, action: { pick(.dark) }) { Circle().fill(ThemePalette.dark.color) }
+            ForEach(ThemeStore.backgrounds, id: \.hex) { preset in
+                Swatch(label: tr(preset.name), selected: store.mode == .custom && store.backgroundHex == preset.hex, action: {
+                    editing = nil
+                    store.pickBackground(hex: preset.hex)
+                }) { Circle().fill(RGB(hex: preset.hex)?.color ?? .clear) }
             }
-            .labelsHidden().frame(width: 100)
+            CustomSwatch(label: tr("Background color"), hex: store.backgroundHex,
+                         chosen: store.mode == .custom && !ThemeStore.backgrounds.contains { $0.hex == store.backgroundHex },
+                         open: editing == .background) {
+                editing = editing == .background ? nil : .background
+                if editing != nil { store.pickBackground(hex: store.backgroundHex) }
+            }
         }
+        .padding(.leading, 30)
+        if editing == .background {
+            ColorEditor(label: tr("Background color"), hex: $store.backgroundHex).padding(.leading, 30)
+        }
+
         Row(symbol: "paintpalette", title: tr("Accent color"), detail: tr("Switches and the app mark")) { EmptyView() }
         HStack(spacing: 9) {
             ForEach(ThemeStore.accents, id: \.hex) { accent in
-                Button {
-                    Haptics.tap()
+                Swatch(label: tr(accent.name), selected: store.accentHex == accent.hex, action: {
+                    editing = nil
                     store.accentHex = accent.hex
-                } label: {
-                    Circle()
-                        .fill(RGB(hex: accent.hex)?.color ?? .clear)
-                        .frame(width: 20, height: 20)
-                        .padding(3)
-                        .overlay(Circle().stroke(store.accentHex == accent.hex ? Theme.text : .clear, lineWidth: 1.5))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(tr(accent.name))
-                .accessibilityAddTraits(store.accentHex == accent.hex ? .isSelected : [])
+                }) { Circle().fill(RGB(hex: accent.hex)?.color ?? .clear) }
             }
-            Spacer(minLength: 0)
-            ColorPicker(tr("Custom accent color"), selection: store.accent, supportsOpacity: false).labelsHidden().frame(width: 36)
+            CustomSwatch(label: tr("Custom accent color"), hex: store.accentHex,
+                         chosen: !ThemeStore.accents.contains { $0.hex == store.accentHex },
+                         open: editing == .accent) {
+                editing = editing == .accent ? nil : .accent
+            }
         }
         .padding(.leading, 30)
+        if editing == .accent {
+            ColorEditor(label: tr("Custom accent color"), hex: $store.accentHex).padding(.leading, 30)
+        }
+    }
+
+    private func pick(_ mode: AppearanceMode) {
+        editing = nil
+        store.mode = mode
+    }
+}
+
+/// One round choice. The ring marks what's selected, and the hairline keeps a
+/// swatch visible on a background of the same color.
+private struct Swatch<Fill: View>: View {
+    let label: String
+    let selected: Bool
+    let action: () -> Void
+    @ViewBuilder let fill: () -> Fill
+
+    var body: some View {
+        Button {
+            Haptics.tap()
+            action()
+        } label: {
+            fill()
+                .overlay(Circle().stroke(Theme.ink.opacity(0.25), lineWidth: 0.5))
+                .frame(width: 20, height: 20)
+                .padding(3)
+                .overlay(Circle().stroke(selected ? Theme.text : .clear, lineWidth: 1.5))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// The rainbow swatch that opens the color editor, showing the color once one is chosen.
+private struct CustomSwatch: View {
+    let label: String
+    let hex: String
+    let chosen: Bool
+    let open: Bool
+    let action: () -> Void
+
+    private static let rainbow = stride(from: 0.0, through: 1.0, by: 1.0 / 6).map { RGB.pad(x: $0, y: 0.5).color }
+
+    var body: some View {
+        Swatch(label: label, selected: chosen || open, action: action) {
+            ZStack {
+                Circle().fill(AngularGradient(colors: Self.rainbow, center: .center))
+                if chosen { Circle().fill(RGB(hex: hex)?.color ?? .clear).padding(4) }
+            }
+        }
+    }
+}
+
+/// Drag anywhere on the pad, or type a hex code for an exact color.
+private struct ColorEditor: View {
+    let label: String
+    @Binding var hex: String
+    @State private var typed = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            pad
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(RGB(hex: hex)?.color ?? .clear)
+                    .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Theme.ink.opacity(0.25), lineWidth: 0.5))
+                    .frame(width: 22, height: 22)
+                TextField(label, text: $typed)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .labelsHidden()
+                    .frame(width: 86)
+                    .onChange(of: typed) { _, text in
+                        let code = text.trimmingCharacters(in: .whitespaces)
+                        if let rgb = RGB(hex: code), rgb.hex != hex { hex = rgb.hex }
+                    }
+            }
+        }
+        .onAppear { typed = hex }
+        .onChange(of: hex) { _, value in
+            if RGB(hex: typed)?.hex != value { typed = value }
+        }
+    }
+
+    private var pad: some View {
+        GeometryReader { geo in
+            let position = (RGB(hex: hex) ?? ThemePalette.brand).padPosition
+            ZStack(alignment: .topLeading) {
+                LinearGradient(colors: stride(from: 0.0, through: 1.0, by: 1.0 / 6).map { RGB.pad(x: $0, y: 0.5).color },
+                               startPoint: .leading, endPoint: .trailing)
+                LinearGradient(stops: [.init(color: .white, location: 0), .init(color: .white.opacity(0), location: 0.5),
+                                       .init(color: .black.opacity(0), location: 0.5), .init(color: .black, location: 1)],
+                               startPoint: .top, endPoint: .bottom)
+                Circle()
+                    .stroke(.white, lineWidth: 2)
+                    .background(Circle().stroke(.black.opacity(0.45), lineWidth: 3))
+                    .frame(width: 12, height: 12)
+                    .position(x: position.x * geo.size.width, y: position.y * geo.size.height)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
+                // Kept just inside the edges, where a color still has a hue for the marker to follow.
+                let x = min(max(drag.location.x / geo.size.width, 0), 0.99)
+                let y = min(max(drag.location.y / geo.size.height, 0.03), 0.97)
+                hex = RGB.pad(x: x, y: y).hex
+            })
+        }
+        .frame(height: 96)
+        // The hex field is the way to reach this with VoiceOver or the keyboard.
+        .accessibilityHidden(true)
     }
 }

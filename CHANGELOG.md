@@ -8,6 +8,7 @@
 - Early battery warning, 5 points above the floor.
 - Liquid Glass cards on macOS 26, rolling timer digits and light trackpad taps.
 - Demo animation in the README.
+- Colors are picked right in Settings: swatches for the background and accent, plus a color pad and hex field.
 
 ### Fixed
 - Phone messages now leave before a closed Mac goes to sleep.

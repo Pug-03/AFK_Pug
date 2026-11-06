@@ -536,6 +536,20 @@ private final class Runner {
         check(Theme.palette.accentRGB.hex == "#3CCB7F", "custom accent applies")
         check(ThemeStore.loadPalette().background.hex == "#1B2A4A", "choices are saved")
 
+        store.pickBackground(hex: ThemeStore.backgrounds[0].hex)
+        check(store.mode == .custom && Theme.palette.background.hex == ThemeStore.backgrounds[0].hex, "a background swatch applies with one click")
+        check(store.backgroundName == tr(ThemeStore.backgrounds[0].name), "the row names the chosen swatch")
+        var padRoundTrip = 0.0
+        for x in stride(from: 0.0, to: 0.99, by: 0.07) { for y in stride(from: 0.03, through: 0.97, by: 0.07) {
+            let spot = RGB.pad(x: x, y: y).padPosition
+            let hueOff = abs(spot.x - x)
+            padRoundTrip = max(padRoundTrip, abs(spot.y - y), min(hueOff, 1 - hueOff))
+        } }
+        check(padRoundTrip < 0.001, "the marker sits where the color was picked (off by \(padRoundTrip))")
+        check(RGB.pad(x: 0, y: 0.5) == RGB(1, 0, 0) && RGB.pad(x: 1.0 / 3, y: 0.5) == RGB(0, 1, 0) && RGB.pad(x: 2.0 / 3, y: 0.5) == RGB(0, 0, 1),
+              "pad hues are exact at the primaries")
+        check(RGB.pad(x: 0.4, y: 0) == RGB(1, 1, 1) && RGB.pad(x: 0.4, y: 1) == RGB(0, 0, 0), "pad runs from white to black")
+
         Engine.store.set("nonsense", forKey: "appearance")
         Engine.store.set("not-a-color", forKey: "accentColor")
         check(ThemeStore.loadPalette().background == ThemePalette.dark && ThemeStore.loadPalette().accentRGB == ThemePalette.brand,
