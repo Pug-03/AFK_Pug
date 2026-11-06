@@ -200,9 +200,17 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 2)
                 }
-                .padding(.bottom, 4)
+                // Clears the fade below, so the last row can be read at the end.
+                .padding(.bottom, 22)
             }
-            .scrollIndicators(.automatic)
+            // A scrollbar would sit on top of the switches. The fade shows there's more.
+            .scrollIndicators(.hidden)
+            .mask {
+                VStack(spacing: 0) {
+                    Rectangle()
+                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 22)
+                }
+            }
             .frame(maxHeight: .infinity)
         }
         .padding(18)

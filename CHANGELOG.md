@@ -23,6 +23,7 @@
 - Reading audio and processes no longer blocks the main thread every few seconds, which could stutter animations.
 
 ### Changed
+- Settings has no scrollbar over the switches; a soft fade at the bottom shows there's more.
 - The panel is wider, and unfolds from the menu bar with a spring when it opens.
 - New app icon: a white A on black.
 - **Keep the screen on** moved to the home screen, because it changes from night to night.
