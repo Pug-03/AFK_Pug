@@ -63,6 +63,7 @@ enum Simulation {
         ("updates", "Updates: version compare, release parsing, once a day, dismiss, safety checks, real swap of the app"),
         ("menu-bar", "Menu bar status: off by default, time left, agents, grace, nothing when a guard stopped it"),
         ("background-sampling", "Slow reads run off the main thread: the last value comes back at once, never two reads together"),
+        ("keep-screen", "Screen stays on for agents: only when chosen, on the charger, lid open; ends with the wait, a guard, unplugging or the lid"),
         ("theme", "Appearance: text stays legible on any background and accent, defaults keep the black look, bad values fall back"),
         ("ui-contract", "UI API: trip vs Sleep now / grace, cooldown, charger, trigger sublines, Idle, waits, Fmt hours, admin errors"),
     ]
@@ -162,7 +163,7 @@ private final class Runner {
         let base: [String: Any] = [
             "agentMode": true, "lidMode": true, "selectedMinutes": 120, "batteryFloor": 15,
             "displayOffOnClose": true, "muteOnClose": true, "lowPowerOnClose": true, "lidOnlyOnPower": false,
-            "notifyAgents": true, "graceMinutes": 2, "detectOtherAgents": true, "pauseChatApps": true,
+            "notifyAgents": true, "graceMinutes": 2, "keepScreenMinutes": -1, "detectOtherAgents": true, "pauseChatApps": true,
             "lockOnClose": true, "hotkeyEnabled": false, "phoneTopic": "", "autoOnPower": false,
             "autoApps": "", "keepMusic": true,
         ]
@@ -344,6 +345,7 @@ private final class Runner {
         case "ui-contract": uiContract()
         case "preview-states": previewStates()
         case "background-sampling": backgroundSampling()
+        case "keep-screen": keepScreen()
         case "theme": theme()
         case "menu-bar": menuBar()
         case "updates": updates()
@@ -544,6 +546,67 @@ private final class Runner {
         record.lock.lock()
         check(!record.onMain && !record.overlapped, "reads stay off the main thread and never overlap")
         record.lock.unlock()
+    }
+
+    func keepScreen() {
+        configure(); boot()
+        step("off by default: an agent doesn't touch the screen", ticks: 2, forbid: ["display assertion"]) { Sim.set("battery", "80 ac"); hold("claude-a1") }
+        step("agent ends", ticks: 2, forbid: ["display assertion"]) { dropHold("claude-a1") }
+        step("the wait runs out", ticks: 70, forbid: ["display assertion"])
+        check(!engine.isActive && !engine.keepingScreenOn, "back to normal")
+
+        engine.keepScreenMinutes = 0
+        step("while agents work: on with the agent", ticks: 2, expect: ["display assertion ON"]) { hold("claude-a2") }
+        check(engine.keepingScreenOn, "reported as on")
+        step("a second agent changes nothing", ticks: 2, forbid: ["display assertion"]) { hold("claude-a3") }
+        step("one of two ends: stays on", ticks: 2, forbid: ["display assertion"]) { dropHold("claude-a2") }
+        step("last one ends: off, normal wait keeps the Mac up", ticks: 2, expect: ["display assertion OFF"], forbid: ["idle assertion OFF"]) { dropHold("claude-a3") }
+        check(abs(engine.graceLength - 120) < 1, "the normal 2 min wait is untouched")
+        step("the wait runs out", ticks: 70, expect: ["idle assertion OFF"], forbid: ["display assertion"])
+
+        engine.keepScreenMinutes = 30
+        step("30 min after: on with the agent", ticks: 2, expect: ["display assertion ON"]) { hold("claude-a4") }
+        step("agent ends: screen and Mac stay up", ticks: 2, forbid: ["display assertion OFF", "idle assertion OFF"]) { dropHold("claude-a4") }
+        check(engine.graceActive && abs(engine.graceLength - 1800) < 1, "counts down the 30 min (\(engine.graceLength))")
+        check(engine.subline.contains("Screen on"), "the panel says the screen is on (\(engine.subline))")
+        step("after 10 min: still on", ticks: 1, every: 600, forbid: ["display assertion OFF", "idle assertion OFF"])
+        step("after 31 min: everything lets go", ticks: 1, every: 1260, expect: ["display assertion OFF"])
+        step("settles", ticks: 2, forbid: ["display assertion ON"])
+        check(!engine.isActive && !engine.keepingScreenOn, "normal sleep is back")
+
+        engine.keepScreenMinutes = 60
+        step("1 hour after: agent runs", ticks: 2, expect: ["display assertion ON"]) { hold("claude-a5") }
+        step("agent ends", ticks: 2, forbid: ["display assertion OFF"]) { dropHold("claude-a5") }
+        check(abs(engine.graceLength - 3600) < 1, "counts down the hour")
+        step("Allow sleep ends it right away", expect: ["idle assertion OFF", "display assertion OFF"]) { engine.sleepNow() }
+
+        step("agent runs again", ticks: 2, expect: ["display assertion ON"]) { hold("claude-a6") }
+        step("on battery the screen isn't held", ticks: 2, expect: ["display assertion OFF"], forbid: ["idle assertion OFF"]) { Sim.set("battery", "80 battery") }
+        step("charger back: held again", ticks: 2, expect: ["display assertion ON"]) { Sim.set("battery", "80 ac") }
+        step("agent ends, then unplugged at 10 min: the long wait is over", ticks: 1, every: 600, expect: ["idle assertion OFF", "display assertion OFF"]) {
+            dropHold("claude-a6"); engine.tick(); Sim.clockOffset += 1; Sim.set("battery", "80 battery")
+        }
+        Sim.set("battery", "80 ac")
+
+        step("agent runs", ticks: 2, expect: ["display assertion ON"]) { hold("claude-a7") }
+        step("lid closes: screen let go at once, agent keeps running", ticks: 2, expect: ["display assertion OFF", "pmset displaysleepnow"], forbid: ["pmset sleepnow"]) { Sim.set("lid", "closed") }
+        step("lid opens: held again", ticks: 2, expect: ["display assertion ON"]) { Sim.set("lid", "open") }
+        if let dismissed = engine.holds.first {
+            step("× on the last agent: no long wait", ticks: 2, expect: ["display assertion OFF"]) { engine.release(dismissed) }
+        }
+        check(abs(engine.graceLength - 120) < 1, "only the normal wait after a dismissal (\(engine.graceLength))")
+        step("that wait ends", ticks: 70, expect: ["idle assertion OFF"])
+
+        step("agent runs", ticks: 2, expect: ["display assertion ON"]) { hold("claude-a8") }
+        step("battery guard: screen let go", ticks: 2, expect: ["display assertion OFF"]) { Sim.set("battery", "5 battery") }
+        Sim.set("battery", "80 ac")
+        step("recovers", ticks: 3)
+        engine.keepScreenMinutes = -1
+        step("turning it off lets go", ticks: 1, forbid: ["display assertion ON"])
+        check(!engine.keepingScreenOn, "off again")
+        dropHold("claude-a8")
+        engine.shutdown()
+        check(!engine.keepingScreenOn, "quitting releases the screen")
     }
 
     func theme() {

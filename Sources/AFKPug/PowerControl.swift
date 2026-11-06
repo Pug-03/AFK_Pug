@@ -127,6 +127,36 @@ enum PowerControl {
         }
     }
 
+    // MARK: Display-sleep assertion (screen stays on, lid open)
+
+    private static var displayAssertionID: IOPMAssertionID = 0
+    private static var holdingDisplayAssertion = false
+
+    /// The kernel drops this if the app dies, so a crash can't leave the screen on.
+    static func setDisplayAssertion(_ on: Bool) {
+        if Sim.enabled {
+            if on != holdingDisplayAssertion { Sim.record("display assertion \(on ? "ON" : "OFF")") }
+            holdingDisplayAssertion = on
+            return
+        }
+        if on, !holdingDisplayAssertion {
+            var id: IOPMAssertionID = 0
+            let result = IOPMAssertionCreateWithName(
+                "PreventUserIdleDisplaySleep" as CFString,
+                IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                "AFK Pug is keeping the screen on for your agents" as CFString,
+                &id
+            )
+            if result == kIOReturnSuccess {
+                displayAssertionID = id
+                holdingDisplayAssertion = true
+            }
+        } else if !on, holdingDisplayAssertion {
+            IOPMAssertionRelease(displayAssertionID)
+            holdingDisplayAssertion = false
+        }
+    }
+
     // MARK: Lid-closed override
 
     /// Our rule file must exist (`sudo -n -l` alone also succeeds through any

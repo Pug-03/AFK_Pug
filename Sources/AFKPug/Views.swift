@@ -340,7 +340,7 @@ private struct TimerBlock: View {
             }
         case .grace:
             // A duration with units: "14:38" here once read as a clock time.
-            return tr("Sleeping in %@", Fmt.countdown((engine.graceUntil ?? date).timeIntervalSince(date)))
+            return tr(engine.keepingScreenOn ? "Screen on. Sleeping in %@" : "Sleeping in %@", Fmt.countdown((engine.graceUntil ?? date).timeIntervalSince(date)))
         case .idle:
             let m = engine.selectedMinutes
             return m > 0 ? tr("Press Go AFK to stay awake for %@", Fmt.minutes(m)) : tr("Press Go AFK to stay awake until you stop")
@@ -358,7 +358,7 @@ private struct TimerBlock: View {
             guard total > 0 else { return 0 }
             return CGFloat(max(0, min(1, end.timeIntervalSince(date) / total)))
         case .grace:
-            let total = TimeInterval(max(1, engine.graceMinutes) * 60)
+            let total = max(60, engine.graceLength)
             return CGFloat(max(0, min(1, (engine.graceUntil ?? date).timeIntervalSince(date) / total)))
         default:
             return 0

@@ -55,6 +55,9 @@ final class Engine: ObservableObject {
     @Published var lidOnlyOnPower: Bool { didSet { save(lidOnlyOnPower, "lidOnlyOnPower"); tick() } }
     @Published var notifyAgents: Bool { didSet { save(notifyAgents, "notifyAgents") } }
     @Published var graceMinutes: Int { didSet { save(graceMinutes, "graceMinutes") } }
+    /// Keep the screen on for agents: -1 off, 0 while they work, or minutes after they finish.
+    @Published var keepScreenMinutes: Int { didSet { save(keepScreenMinutes, "keepScreenMinutes") } }
+    @Published private(set) var keepingScreenOn = false
     @Published var language: AppLanguage { didSet { save(language.rawValue, "language"); L10n.language = language } }
     @Published var detectOtherAgents: Bool { didSet { save(detectOtherAgents, "detectOtherAgents"); tick() } }
     @Published var pauseChatApps: Bool { didSet { save(pauseChatApps, "pauseChatApps") } }
@@ -182,6 +185,7 @@ final class Engine: ObservableObject {
         lidOnlyOnPower = bool("lidOnlyOnPower", false)
         notifyAgents = bool("notifyAgents", true)
         graceMinutes = int("graceMinutes", 2)
+        keepScreenMinutes = int("keepScreenMinutes", -1)
         language = AppLanguage(rawValue: ud.string(forKey: "language") ?? "") ?? .system
         detectOtherAgents = bool("detectOtherAgents", true)
         pauseChatApps = bool("pauseChatApps", false)
@@ -254,6 +258,8 @@ final class Engine: ObservableObject {
             PowerControl.setSleepDisabled(false)
         }
         PowerControl.setIdleAssertion(false)
+        PowerControl.setDisplayAssertion(false)
+        keepingScreenOn = false
         lidOverrideOn = false
         isActive = false
         Paths.removeAppPid()
@@ -704,7 +710,9 @@ final class Engine: ObservableObject {
         case .app(let name): return tr("Sleeps normally once %@ quits", name)
         case nil: if triggerReason != nil { return tr("Sleeps normally once that stops") }
         }
-        if graceActive, let grace = graceUntil { return tr("Sleeping in %@", Fmt.countdown(grace.timeIntervalSince(Clock.now()))) }
+        if graceActive, let grace = graceUntil {
+            return tr(keepingScreenOn ? "Screen on. Sleeping in %@" : "Sleeping in %@", Fmt.countdown(grace.timeIntervalSince(Clock.now())))
+        }
         return agentMode ? tr("Wakes when your agents start") : tr("Your Mac sleeps normally")
     }
 
@@ -743,7 +751,7 @@ final class Engine: ObservableObject {
         if agentMode, !previous.isEmpty, holds.isEmpty { holdsEndedAt = now }
         if !holds.isEmpty || !agentMode { holdsEndedAt = nil }
         if !holds.isEmpty { releasedByHand = false }
-        let newGrace = holdsEndedAt.map { $0.addingTimeInterval(TimeInterval(max(0, graceMinutes) * 60)) }
+        let newGrace = holdsEndedAt.map { $0.addingTimeInterval(graceLength) }
         if newGrace != graceUntil { graceUntil = newGrace }
         if let g = graceUntil, g <= now { holdsEndedAt = nil; graceUntil = nil }
         for hold in holds where !previous.contains(where: { $0.id == hold.id }) {
@@ -808,6 +816,7 @@ final class Engine: ObservableObject {
         // Dropping the override can put a closed Mac to sleep at once: send messages first.
         if goingToSleep { PhoneNotifier.flush(timeout: 4) }
         apply(active: want, wantLid: wantLid)
+        updateKeepScreen()
         if lidEngaged, !lidOverrideOn {
             // The override could not be re-applied; macOS will sleep on its own.
             disengageLid()
@@ -819,6 +828,24 @@ final class Engine: ObservableObject {
         if sleepAfter { PowerControl.sleepNow() }
         updateLidSession()
         updateMenuBarText()
+    }
+
+    /// Staying on after the agents finish only counts on the charger with the lid open,
+    /// and not after an agent was dismissed. Losing any of these shortens the wait at once.
+    private var screenWaitApplies: Bool {
+        keepScreenMinutes > 0 && agentMode && battery.onAC && !lidClosed && !releasedByHand
+    }
+
+    /// How long after the last agent the Mac stays awake.
+    var graceLength: TimeInterval {
+        TimeInterval(max(0, graceMinutes, screenWaitApplies ? keepScreenMinutes : 0) * 60)
+    }
+
+    private func updateKeepScreen() {
+        let wanted = keepScreenMinutes >= 0 && trip == nil && agentMode && battery.onAC && !lidClosed
+            && (!holds.isEmpty || (screenWaitApplies && (graceUntil.map { $0 > now } ?? false)))
+        PowerControl.setDisplayAssertion(wanted)
+        if wanted != keepingScreenOn { keepingScreenOn = wanted }
     }
 
     private func updateMenuBarText() {

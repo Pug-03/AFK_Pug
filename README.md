@@ -357,6 +357,19 @@ AFK Pug does this for you, and puts it all back when you open the lid:
 
 Turn on **Settings → General → Show status in the menu bar** to see the time left (`1:45`) or how many agents are working (`2`) beside the A. It's off by default, because a MacBook with a notch has little room up there.
 
+### Keep the screen on
+
+The screen normally sleeps on its own timer while your agents work. To watch them from across the room, choose how long it stays on under **Settings → Agents → Keep the screen on**:
+
+| Choice | The screen stays on |
+|---|---|
+| **Off** (default) | no longer than usual |
+| **While agents work** | until the last agent finishes |
+| **30 min after they finish** | while they work, then 30 more minutes |
+| **1 hour after they finish** | while they work, then one more hour |
+
+It only works on the charger with the lid open. Unplugging, closing the lid, **Allow sleep**, a safety guard or dismissing the last agent with **×** ends it early. During the extra time the Mac stays awake too, and the panel counts down.
+
 ### Starts by itself
 
 Both are off by default. Turn them on under **Settings → Start automatically**:
@@ -435,6 +448,7 @@ Press the gear at the top right of the app.
 | **Safety** | Stop at battery, from 5% to 50% | 15% |
 | **Agents** | Notify me | on |
 | | Wait before sleeping: off, 2, 5 or 15 minutes | 2 min |
+| | Keep the screen on: off, while agents work, or 30 minutes or an hour after | off |
 | | Connect or disconnect Claude Code, Codex, Gemini CLI, Cursor | set by you |
 | | Detect other agents | on |
 | | Let agents keep the Mac awake (MCP) | not connected |
@@ -560,7 +574,7 @@ Timers end on their own, agent mode ends when the work does, and quitting the ap
 A headless simulator drives the engine with fake lid, battery, heat, audio and process input. Nothing real runs: every power command is logged instead.
 
 ```sh
-swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate all      # 53 scenarios
+swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate all      # 54 scenarios
 swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate stress   # 69 adversarial scenarios
 scripts/screenshots.sh               # renders the app screens into docs/screens/
 node scripts/guide-illustrations.mjs # draws the install pictures into docs/guide/

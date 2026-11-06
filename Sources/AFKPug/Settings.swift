@@ -59,6 +59,16 @@ struct SettingsView: View {
                             }
                             .labelsHidden().frame(width: 92)
                         }
+                        Row(symbol: "sun.max", title: tr("Keep the screen on"),
+                            detail: tr("On the charger with the lid open")) {
+                            Picker(tr("Keep the screen on"), selection: $engine.keepScreenMinutes) {
+                                Text(tr("Off")).tag(-1)
+                                Text(tr("While agents work")).tag(0)
+                                Text(tr("30 min after they finish")).tag(30)
+                                Text(tr("1 hour after they finish")).tag(60)
+                            }
+                            .labelsHidden().frame(width: 150)
+                        }
                         ForEach(AgentIntegrations.all) { item in
                             AgentConnectionRow(engine: engine, item: item)
                         }
