@@ -104,11 +104,44 @@ struct RootView: View {
     }
 
     private func go(_ target: Page) {
+        CursorSteadier.hold(for: 0.8)
         withAnimation(reduceMotion ? Theme.fade : Theme.smooth) { page = target }
     }
 
     private func slide(from edge: Edge) -> AnyTransition {
         reduceMotion ? .opacity : .move(edge: edge).combined(with: .opacity)
+    }
+}
+
+/// When views move under the window, AppKit re-applies the current cursor every frame. With a
+/// customised pointer (Accessibility > Display) each one re-renders the pointer image on the main
+/// thread, enough to make a page slide late on a third of its frames. While something is moving,
+/// this skips a set to the cursor that's already current. Only then: another app can have changed
+/// the pointer since we last set it, so at any other time a repeat has to go through.
+enum CursorSteadier {
+    nonisolated(unsafe) private static var until = Date.distantPast
+    private static let installed: Void = {
+        guard let original = class_getInstanceMethod(NSCursor.self, #selector(NSCursor.set)),
+              let steady = class_getInstanceMethod(NSCursor.self, #selector(NSCursor.afk_steadySet)) else { return }
+        method_exchangeImplementations(original, steady)
+    }()
+
+    static func hold(for seconds: TimeInterval) {
+        _ = installed
+        until = Date().addingTimeInterval(seconds)
+    }
+
+    static func release() { until = .distantPast }
+
+    static func skips(_ cursor: NSCursor) -> Bool {
+        Date() < until && NSCursor.current === cursor
+    }
+}
+
+private extension NSCursor {
+    /// After the swap in `CursorSteadier` this calls the real `set`.
+    @objc dynamic func afk_steadySet() {
+        if !CursorSteadier.skips(self) { afk_steadySet() }
     }
 }
 

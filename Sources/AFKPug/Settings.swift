@@ -212,6 +212,13 @@ struct SettingsView: View {
                 }
             }
             .frame(maxHeight: .infinity)
+            // Momentum ends in didEndLiveScroll too; the timeout covers a scroll with no end.
+            .onReceive(NotificationCenter.default.publisher(for: NSScrollView.willStartLiveScrollNotification)) { _ in
+                CursorSteadier.hold(for: 30)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSScrollView.didEndLiveScrollNotification)) { _ in
+                CursorSteadier.release()
+            }
         }
         .padding(18)
         .onAppear { engine.refreshIntegrations() }

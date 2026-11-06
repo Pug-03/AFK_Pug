@@ -14,6 +14,7 @@
 - Colors are picked right in Settings: swatches for the background and accent, plus a color pad and hex field.
 
 ### Fixed
+- Page changes and Settings scrolling no longer stutter when the pointer is customised in Accessibility settings.
 - Phone messages now leave before a closed Mac goes to sleep.
 - A finished agent is reported even when the Mac sleeps right away.
 - A usage limit that reset just before midnight no longer lets the Mac sleep just after it.

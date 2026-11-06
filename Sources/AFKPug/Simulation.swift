@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Headless scenario runner for the lid / session state machine.
@@ -64,6 +65,7 @@ enum Simulation {
         ("menu-bar", "Menu bar status: off by default, time left, agents, grace, nothing when a guard stopped it"),
         ("background-sampling", "Slow reads run off the main thread: the last value comes back at once, never two reads together"),
         ("keep-screen", "Screen stays on for agents: only when chosen, on the charger, lid open; ends with the wait, a guard, unplugging or the lid"),
+        ("cursor-steady", "Pointer during motion: a repeat is skipped only while something moves; a real change always goes through"),
         ("agent-tasks", "Agent rows: project, request and current step from hooks; waiting shows; finished list; prompts stay local and don't linger"),
         ("theme", "Appearance: text stays legible on any background and accent, defaults keep the black look, bad values fall back"),
         ("ui-contract", "UI API: trip vs Sleep now / grace, cooldown, charger, trigger sublines, Idle, waits, Fmt hours, admin errors"),
@@ -347,6 +349,7 @@ private final class Runner {
         case "preview-states": previewStates()
         case "background-sampling": backgroundSampling()
         case "keep-screen": keepScreen()
+        case "cursor-steady": cursorSteady()
         case "agent-tasks": agentTasks()
         case "theme": theme()
         case "menu-bar": menuBar()
@@ -506,6 +509,31 @@ private final class Runner {
         engine.menuBarStatus = false
         check(engine.menuBarText == nil, "turned off")
         check(Fmt.hoursMinutes(1) == "0:01" && Fmt.hoursMinutes(-5) == "0:00" && Fmt.hoursMinutes(3660) == "1:01", "formatting")
+    }
+
+    func cursorSteady() {
+        _ = NSApplication.shared
+        let arrow = NSCursor.arrow, beam = NSCursor.iBeam
+        beam.set()
+        check(NSCursor.current === beam, "before any motion a set goes through")
+        CursorSteadier.hold(for: 10)
+        check(!CursorSteadier.skips(arrow), "a change is never skipped")
+        arrow.set()
+        check(NSCursor.current === arrow, "a real change goes through during motion")
+        check(CursorSteadier.skips(arrow), "a repeat of the current cursor is skipped during motion")
+        arrow.set()
+        check(NSCursor.current === arrow, "a skipped repeat leaves the cursor as it was")
+        CursorSteadier.release()
+        check(!CursorSteadier.skips(arrow), "a repeat goes through once motion ends")
+        arrow.set()
+        beam.set()
+        check(NSCursor.current === beam, "a change goes through after motion")
+        CursorSteadier.hold(for: 0.05)
+        check(CursorSteadier.skips(beam), "a short hold starts skipping")
+        usleep(100_000)
+        check(!CursorSteadier.skips(beam), "a hold with no end signal runs out")
+        beam.set()
+        check(NSCursor.current === beam, "a set after the hold ran out goes through")
     }
 
     func backgroundSampling() {
