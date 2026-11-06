@@ -725,7 +725,8 @@ final class Engine: ObservableObject {
         let newThermal = Sensors.thermal()
         if newThermal != thermal { thermal = newThermal }
         // Audio before the lid, so a close in this same tick knows music was playing.
-        if AudioWatcher.isPlaying() { lastMusicHeard = now }
+        let audio = AudioWatcher.current()
+        if audio.playing { lastMusicHeard = now }
         // Read the lid first so this tick's decisions (e.g. sleepnow) never use a stale value.
         let closed = LidSensor.update(now: now)
         if closed != lidClosed { lidClosed = closed; lidChanged(closed) }
@@ -769,7 +770,7 @@ final class Engine: ObservableObject {
         if musicOn != musicPlaying { musicPlaying = musicOn }
         // With the lid closed, music only counts if it was already playing when the lid
         // closed: an idle audio stream must not keep a Mac in a bag awake.
-        let newApps = musicOn ? AudioWatcher.playingApps() : []
+        let newApps = musicOn ? audio.apps : []
         if newApps != musicApps { musicApps = newApps }
         // "Allow sleep" snoozes a trigger until its condition goes away.
         if snoozeMusic, !musicOn { snoozeMusic = false }

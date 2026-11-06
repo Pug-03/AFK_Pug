@@ -32,8 +32,11 @@ enum ProcessWatcher {
         var busy: Bool { cpu >= ProcessWatcher.busyCPU }
     }
 
+    private static let sampler = BackgroundSampler(initial: [Found]()) { parse(sample(), ownPid: getpid()) }
+
+    /// `ps` takes tens of ms, so the real read happens off the main thread.
     static func scan() -> [Found] {
-        parse(sample(), ownPid: getpid())
+        Sim.enabled ? parse(sample(), ownPid: getpid()) : sampler.latest()
     }
 
     /// `ps` output (or the simulator's fake process list).
@@ -566,7 +569,52 @@ enum MCPInstaller {
 
 // MARK: - Is audio playing?
 
+/// Reads on a background queue and hands back the last result, so a slow system call
+/// never blocks the main thread and stutters an animation. A result is at most one read old.
+final class BackgroundSampler<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private let read: @Sendable () -> Value
+    private var value: Value
+    private var reading = false
+
+    init(initial: Value, read: @escaping @Sendable () -> Value) {
+        value = initial
+        self.read = read
+    }
+
+    func latest() -> Value {
+        lock.lock()
+        defer { lock.unlock() }
+        if !reading {
+            reading = true
+            DispatchQueue.global(qos: .utility).async { [self] in
+                let new = read()
+                lock.lock()
+                value = new
+                reading = false
+                lock.unlock()
+            }
+        }
+        return value
+    }
+}
+
 enum AudioWatcher {
+    struct State: Sendable {
+        var playing = false
+        var apps: [String] = []
+    }
+
+    private static let sampler = BackgroundSampler(initial: State()) {
+        let playing = isPlaying()
+        return State(playing: playing, apps: playing ? playingApps() : [])
+    }
+
+    /// What the 2 s tick reads. The simulator stays synchronous, so its steps are exact.
+    static func current() -> State {
+        Sim.enabled ? State(playing: isPlaying(), apps: playingApps()) : sampler.latest()
+    }
+
     /// True when another app is sending audio out (music, YouTube, a call).
     /// Our own sounds and chat apps we have SIGSTOPped never count.
     /// Note: an app that keeps an output stream open while silent still counts;

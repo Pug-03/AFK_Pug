@@ -62,6 +62,7 @@ enum Simulation {
         ("away-notices", "Away: phone messages leave before sleep, finish isn't lost at grace 0, early battery warning, an unanswered prompt ends"),
         ("updates", "Updates: version compare, release parsing, once a day, dismiss, safety checks, real swap of the app"),
         ("menu-bar", "Menu bar status: off by default, time left, agents, grace, nothing when a guard stopped it"),
+        ("background-sampling", "Slow reads run off the main thread: the last value comes back at once, never two reads together"),
         ("theme", "Appearance: text stays legible on any background and accent, defaults keep the black look, bad values fall back"),
         ("ui-contract", "UI API: trip vs Sleep now / grace, cooldown, charger, trigger sublines, Idle, waits, Fmt hours, admin errors"),
     ]
@@ -342,6 +343,7 @@ private final class Runner {
         case "limit-formats": limitFormats()
         case "ui-contract": uiContract()
         case "preview-states": previewStates()
+        case "background-sampling": backgroundSampling()
         case "theme": theme()
         case "menu-bar": menuBar()
         case "updates": updates()
@@ -500,6 +502,48 @@ private final class Runner {
         engine.menuBarStatus = false
         check(engine.menuBarText == nil, "turned off")
         check(Fmt.hoursMinutes(1) == "0:01" && Fmt.hoursMinutes(-5) == "0:00" && Fmt.hoursMinutes(3660) == "1:01", "formatting")
+    }
+
+    func backgroundSampling() {
+        final class Record: @unchecked Sendable {
+            let lock = NSLock()
+            var reads = 0, active = 0, overlapped = false, onMain = false
+        }
+        let record = Record()
+        let sampler = BackgroundSampler(initial: 0) {
+            record.lock.lock()
+            record.reads += 1
+            record.active += 1
+            if record.active > 1 { record.overlapped = true }
+            if Thread.isMainThread { record.onMain = true }
+            let result = record.reads
+            record.lock.unlock()
+            usleep(100_000)
+            record.lock.lock()
+            record.active -= 1
+            record.lock.unlock()
+            return result
+        }
+        let started = Date()
+        check(sampler.latest() == 0, "the first call returns the initial value")
+        for _ in 0..<50 { _ = sampler.latest() }
+        check(Date().timeIntervalSince(started) < 0.05, "calls return without waiting for the read")
+        // Waits by polling: a background queue's timing isn't exact on a busy machine.
+        func waitForResult(atLeast target: Int) -> Int {
+            let deadline = Date().addingTimeInterval(5)
+            var result = sampler.latest()
+            while result < target, Date() < deadline {
+                usleep(20_000)
+                result = sampler.latest()
+            }
+            return result
+        }
+        check(waitForResult(atLeast: 1) >= 1, "a finished read comes back on a later call")
+        check(waitForResult(atLeast: 3) >= 3, "reads keep refreshing the value")
+        usleep(300_000)
+        record.lock.lock()
+        check(!record.onMain && !record.overlapped, "reads stay off the main thread and never overlap")
+        record.lock.unlock()
     }
 
     func theme() {

@@ -15,6 +15,7 @@
 - A finished agent is reported even when the Mac sleeps right away.
 - The window stays still when you change pages, and its top stays on screen when a row goes away.
 - Agent rows fade and slide when they come and go, and the window follows on the same curve instead of jumping.
+- Reading audio and processes no longer blocks the main thread every few seconds, which could stutter animations.
 
 ### Changed
 - A notification about an unanswered prompt under the lid says the Mac sleeps in about 15 minutes.
