@@ -44,18 +44,20 @@ You ask Claude Code to refactor a module, close your MacBook and walk to lunch. 
 **AFK Pug is a small menu bar app that keeps your MacBook working with the lid closed**, with no external display, on battery or on power. It knows when your AI agents are really working, turns the screen off to save battery, and lets the Mac sleep as soon as the work is done.
 
 <p align="center">
-  <img src="docs/demo-en.gif" width="640" alt="Animation: an agent works, the lid closes while the work continues, and a summary waits when the lid opens">
+  <a href="docs/demo-en.mp4"><img src="docs/demo-en.gif" width="760" alt="Animation of a MacBook: agents work, the lid closes while the work continues, and a summary waits when the lid opens"></a>
   <br>
-  <sub>An animation made from the app's screens, not a screen recording.</sub>
+  <sub>An animation made from the app's screens, not a screen recording. <a href="docs/demo-en.mp4">Watch it in full quality</a>.</sub>
 </p>
 
 - **Works with the lid closed:** no monitor or dongle needed
 - **Follows your agents:** Claude Code, Codex, Gemini CLI, Cursor and more
+- **Shows what each one is doing:** the project, your request and the current step, and which jobs have finished
 - **Waits out a Claude usage limit:** stays awake until the reset, so the task can continue
 - **Easy on the battery:** screen off, sound muted, Low Power Mode, all restored when you open the lid
 - **Keeps music playing:** a track that's already on stays on
 - **Has hard limits:** stops at low battery or critical heat, and restores normal sleep even if the app crashes
-- **Looks how you like:** white, black or any background, with your own accent color
+- **Can keep the screen on:** while agents work, or for 30 minutes or an hour after
+- **Looks how you like:** black and white by default, or any background and accent color
 - **Stays on your Mac:** no account and no telemetry
 
 ---
@@ -151,19 +153,21 @@ You don't need A3 or A4: macOS only blocks apps that were downloaded.
 
 ### C. The welcome window
 
-The welcome window opens by itself on first launch. Every step can be skipped. To open it later: **Settings → General → Show welcome again**.
+The welcome window opens by itself on first launch, and teaches the app one part at a time. Every step can be skipped. To open it later: **Settings → General → Show welcome again**.
 
 | Step | What to do |
 |---|---|
-| **1. Meet AFK Pug** | press **Continue** |
-| **2. Lid-closed mode** | press **Allow** and enter your password. Asked once, and it only permits [these commands](#safety) |
-| **3. Connect your agents** | press **Connect** next to each agent you use. Installed agents show the button |
-| **4. You're all set** | keep **Agent mode** and **Open at login** on, then press **Done** |
+| **1. Choose your language** | English or Thai |
+| **2. Meet AFK Pug** | find the A in the menu bar |
+| **3. Lid-closed mode** | press **Allow** and enter your password. Asked once, and it only permits [these commands](#safety) |
+| **4. Connect your agents** | press **Connect** next to each agent you use. Installed agents show the button |
+| **5–9. The tour** | what each agent is doing, the timer, closing the lid, keeping the screen on, and your colors |
+| **10. You're all set** | keep **Agent mode** and **Open at login** on, then press **Done** |
 
 <p align="center">
-  <img src="docs/screens/en/welcome-1.png" width="270" alt="Welcome step 1: Meet AFK Pug">
-  <img src="docs/screens/en/welcome-2.png" width="270" alt="Welcome step 2: Allow lid-closed mode">
-  <img src="docs/screens/en/welcome-3.png" width="270" alt="Welcome step 3: Connect your agents">
+  <img src="docs/screens/en/welcome-1.png" width="270" alt="Welcome: choose your language">
+  <img src="docs/screens/en/welcome-3.png" width="270" alt="Welcome: allow lid-closed mode">
+  <img src="docs/screens/en/welcome-5.png" width="270" alt="Tour: see what each agent is doing">
 </p>
 
 > **Codex users:** Codex only runs new hooks after you trust them. Open Codex and type `/hooks`. Until then, AFK Pug detects Codex from its running process.
@@ -257,7 +261,9 @@ Click the A in the menu bar. The big line at the top always tells you why the Ma
 <td valign="top"><img src="docs/screens/en/working.png" width="230" alt="Two agents listed as working"></td>
 <td valign="top">
 
-**What it means:** each agent that's working has a green dot. An idle session waiting at the prompt doesn't count, and background tasks still running after a reply do.
+**What it means:** each agent that's working has a green dot, with its project, your request and its current step, such as *Editing checkout.ts*. An amber dot and *Waiting for you* mean it needs your permission. An idle session waiting at the prompt doesn't count, and background tasks still running after a reply do.
+
+When a job ends it moves to **Just finished**, with the project, request and time, so you can see what's done at a glance. Agents found through process detection only show their name.
 
 **What to do:** close the lid and go. The **×** stops keeping the Mac awake for that one agent, without stopping the agent itself. An agent that's still running comes back on its next tool call. During one long command it doesn't, so the Mac can sleep mid-command.
 
@@ -336,7 +342,7 @@ Choose the look under **Settings → Appearance**. Click a swatch and it applies
 Text color follows the background and is raised until it's readable, so no combination can leave you with an unreadable app. Green, amber and red keep their meaning: working, waiting and warning. On macOS 26, cards use Liquid Glass.
 
 <p align="center">
-  <img src="docs/screens/en/working.png" width="250" alt="Black background with an orange accent">
+  <img src="docs/screens/en/working.png" width="250" alt="Black background with a white accent">
   <img src="docs/screens/en/white.png" width="250" alt="White background with a blue accent">
   <img src="docs/screens/en/custom.png" width="250" alt="Navy background with a green accent">
 </p>
@@ -359,14 +365,14 @@ Turn on **Settings → General → Show status in the menu bar** to see the time
 
 ### Keep the screen on
 
-The screen normally sleeps on its own timer while your agents work. To watch them from across the room, choose how long it stays on under **Settings → Agents → Keep the screen on**:
+The screen normally sleeps on its own timer while your agents work. To check on them at a glance, choose how long it stays on with **Keep the screen on** on the home screen:
 
 | Choice | The screen stays on |
 |---|---|
 | **Off** (default) | no longer than usual |
-| **While agents work** | until the last agent finishes |
-| **30 min after they finish** | while they work, then 30 more minutes |
-| **1 hour after they finish** | while they work, then one more hour |
+| **While they work** | until the last agent finishes |
+| **30 min after** | while they work, then 30 more minutes |
+| **1 hour after** | while they work, then one more hour |
 
 It only works on the charger with the lid open. Unplugging, closing the lid, **Allow sleep**, a safety guard or dismissing the last agent with **×** ends it early. During the extra time the Mac stays awake too, and the panel counts down.
 
@@ -442,26 +448,26 @@ Press the gear at the top right of the app.
 
 | Section | Setting | Default |
 |---|---|---|
+| **Home screen** | Keep the screen on: off, while agents work, or 30 minutes or an hour after | off |
 | **When the lid closes** | Turn the screen off · Mute sound · Low Power Mode on battery · Lock the screen | on |
 | | Pause chat apps | off |
 | | Only when plugged in: on battery, closing the lid sleeps as usual | off |
 | **Safety** | Stop at battery, from 5% to 50% | 15% |
 | **Agents** | Notify me | on |
 | | Wait before sleeping: off, 2, 5 or 15 minutes | 2 min |
-| | Keep the screen on: off, while agents work, or 30 minutes or an hour after | off |
 | | Connect or disconnect Claude Code, Codex, Gemini CLI, Cursor | set by you |
 | | Detect other agents | on |
 | | Let agents keep the Mac awake (MCP) | not connected |
 | **Phone notifications** | ntfy topic name | empty |
 | **Start automatically** | When the charger is connected · While these apps are open | off |
 | **Appearance** | Background: match Mac, white, black, three dark colors or custom | black |
-| | Accent color: six presets or custom | orange |
+| | Accent color: six presets or custom | white |
 | **General** | Open at login | on |
 | | Show status in the menu bar | off |
 | | Check for updates: once a day | on |
 | | Show welcome again | |
 | | <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>A</kbd> starts or stops AFK | on |
-| | Language: Thai, English or match macOS | match macOS |
+| | Language: English, Thai or match macOS | English |
 | **Activity** | What AFK Pug did recently | |
 | **For developers** | Command line and URL commands | |
 
@@ -481,7 +487,7 @@ A closed MacBook sheds heat more slowly, so AFK Pug has several guards:
 
 ## Privacy
 
-Everything stays on your Mac. There's no account and no telemetry. AFK Pug only goes online for two things: the optional phone notification, sent to the ntfy topic you enter, and the update check, which asks GitHub for the latest release once a day and sends nothing about you. Turn it off under **Settings → General → Check for updates**. Update files are checked against GitHub's checksum, this app's ID and version, and their code signature before they're installed.
+Everything stays on your Mac. There's no account and no telemetry. To show what each agent is doing, hooks save the folder, your request and the current step in `~/.afkpug/tasks`, readable only by you, and delete them when the job is listed or within about an hour. Commands show their first two words only. None of this goes in phone notifications. AFK Pug only goes online for two things: the optional phone notification, sent to the ntfy topic you enter, and the update check, which asks GitHub for the latest release once a day and sends nothing about you. Turn it off under **Settings → General → Check for updates**. Update files are checked against GitHub's checksum, this app's ID and version, and their code signature before they're installed.
 
 ---
 
@@ -574,11 +580,11 @@ Timers end on their own, agent mode ends when the work does, and quitting the ap
 A headless simulator drives the engine with fake lid, battery, heat, audio and process input. Nothing real runs: every power command is logged instead.
 
 ```sh
-swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate all      # 54 scenarios
+swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate all      # 56 scenarios
 swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate stress   # 69 adversarial scenarios
 scripts/screenshots.sh               # renders the app screens into docs/screens/
 node scripts/guide-illustrations.mjs # draws the install pictures into docs/guide/
-node scripts/demo-gif.mjs            # makes the demo animation (needs ffmpeg)
+node scripts/demo-video.mjs          # makes the demo video and GIF (needs ffmpeg)
 scripts/build.sh --zip               # packs dist/AFK-Pug.zip for a GitHub release
 ```
 
