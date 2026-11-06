@@ -225,9 +225,11 @@ private struct TimerBlock: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     // Digits roll as they change. The font is monospaced and the height
-                    // fixed, so this can't resize the window.
+                    // fixed, so this can't resize the window. A new identity for each
+                    // mode swaps the text cleanly, so "1 agent" never morphs into "30:00".
                     .contentTransition(.numericText(countsDown: true))
                     .animation(reduceMotion ? nil : Theme.fade, value: big)
+                    .id(String(describing: mode))
                 Text(subline(mode, at: date))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.sub)
