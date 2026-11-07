@@ -735,46 +735,6 @@ private struct Modes: View {
                 }
                 .padding(.leading, 30).padding(.bottom, 10)
             }
-
-            Rectangle().fill(Theme.line).frame(height: 1)
-
-            ModeRow(symbol: "sun.max", title: tr("Keep the screen on"), detail: tr("On the charger, lid open")) {
-                KeepScreenPicker(engine: engine)
-            }
-
-            Rectangle().fill(Theme.line).frame(height: 1)
-
-            ModeRow(symbol: "laptopcomputer", title: tr("Lid-closed mode"),
-                    detail: engine.setupDone ? tr("Screen off, work keeps running") : tr("Needs a one-time permission")) {
-                Toggle(tr("Lid-closed mode"), isOn: $engine.lidMode).toggleStyle(MiniSwitch()).labelsHidden()
-            }
-            if engine.lidMode, !engine.setupDone {
-                HStack(spacing: 8) {
-                    Text(tr("Asks for your password once. Only allows turning lid sleep and Low Power Mode on and off."))
-                        .font(.system(size: 11)).foregroundStyle(Theme.sub)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    let titles = [tr("Set up"), tr("Try again"), tr("Working…")]
-                    if engine.setupWorking {
-                        PillButton(title: tr("Working…"), style: .soft, reserve: titles) {}.disabled(true)
-                    } else {
-                        PillButton(title: engine.setupError == nil ? tr("Set up") : tr("Try again"), style: .primary, reserve: titles) {
-                            engine.runSetup()
-                        }
-                    }
-                }
-                .padding(.leading, 30).padding(.bottom, 10)
-            }
-            // Only relevant while lid-closed mode is on.
-            if engine.lidMode, let error = engine.setupError {
-                ErrorText(error).padding(.leading, 30).padding(.bottom, 10)
-            }
-
-            Rectangle().fill(Theme.line).frame(height: 1)
-
-            ModeRow(symbol: "music.note", title: tr("Keep music playing"), detail: musicDetail) {
-                Toggle(tr("Keep music playing"), isOn: $engine.keepMusic).toggleStyle(MiniSwitch()).labelsHidden()
-            }
         }
     }
 
@@ -789,13 +749,6 @@ private struct Modes: View {
             return engine.graceActive ? tr("Waiting in case more work comes") : tr("No agents working right now")
         }
         return tr("Awake only while your AI agents work")
-    }
-
-    private var musicDetail: String {
-        if engine.keepMusic, engine.musicPlaying, !engine.musicApps.isEmpty {
-            return tr("Playing: %@", engine.musicApps.prefix(2).joined(separator: ", "))
-        }
-        return tr("Mac stays awake while audio plays")
     }
 }
 

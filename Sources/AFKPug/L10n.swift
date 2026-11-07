@@ -354,7 +354,7 @@ private let thaiV3: [String: String] = [
     "Starting": "กำลังเริ่ม",
     "Just finished": "เพิ่งเสร็จ",
     "Almost ready": "เกือบพร้อมแล้ว",
-    "Lid-closed mode isn't allowed yet, so closing the lid still sleeps the Mac. Click the A and press Set up.": "ยังไม่ได้อนุญาตโหมดพับจอ ตอนนี้พับจอแล้วเครื่องจะพักตามปกติ กดตัว A แล้วกด “อนุญาต”",
+    "Lid-closed mode isn't allowed yet, so closing the lid still sleeps the Mac. Click the A, open Settings and press Set up.": "ยังไม่ได้อนุญาตโหมดพับจอ ตอนนี้พับจอแล้วเครื่องจะพักตามปกติ กดตัว A เข้าไปที่ตั้งค่า แล้วกด “อนุญาต”",
     "Go to this session": "ไปที่หน้าต่างของงานนี้",
     "Clear": "ล้าง",
     "Remove from the list": "เอาออกจากรายการ",
@@ -404,4 +404,7 @@ private let thaiV3: [String: String] = [
     "7d": "7 วัน",
     "now": "ตอนนี้",
     "%@ · %@ · %d steps": "%@ · %@ · %d ขั้นตอน",
+
+    // Settings: Keep awake
+    "Keep awake": "ให้เครื่องตื่น",
 ]

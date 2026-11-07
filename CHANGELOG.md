@@ -5,6 +5,9 @@
 ### Added
 - **Agent hustle** on the home screen: how long your agents worked today, how many steps they took and how many jobs they finished, with a bar chart for the last 24 hours or 7 days. Hover a bar for its numbers. Counted on your Mac only and kept for 8 days.
 
+### Changed
+- **Lid-closed mode**, **Keep the screen on** and **Keep music playing** moved to a new **Keep awake** section at the top of Settings, so the home screen shows only your agents and the chart.
+
 ## 0.6.1 - 2026-11-08
 
 ### Fixed

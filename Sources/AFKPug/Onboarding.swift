@@ -329,7 +329,7 @@ struct OnboardingView: View {
             } else {
                 // Skipped the permission: closing the lid would still sleep the Mac.
                 Heading(title: tr("Almost ready"),
-                        text: tr("Lid-closed mode isn't allowed yet, so closing the lid still sleeps the Mac. Click the A and press Set up."))
+                        text: tr("Lid-closed mode isn't allowed yet, so closing the lid still sleeps the Mac. Click the A, open Settings and press Set up."))
             }
             Card {
                 ToggleRow(symbol: "sparkles", title: tr("Agent mode"),
