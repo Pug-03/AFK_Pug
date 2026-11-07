@@ -57,14 +57,21 @@ You ask Claude Code to refactor a module, close your MacBook and walk to lunch. 
 - **Keeps music playing:** a track that's already on stays on
 - **Has hard limits:** stops at low battery or critical heat, and restores normal sleep even if the app crashes
 - **Can keep the screen on:** while agents work, or for 30 minutes or an hour after
+- **Shows how hard they worked:** agent time, steps and finished jobs, on a chart of the last 24 hours or 7 days
 - **Looks how you like:** black and white by default, or any background and accent color
 - **Stays on your Mac:** no account and no telemetry
+
+### What's new in 0.7
+
+- **Agent hustle:** a chart on the home screen of how long your agents worked, how many steps they took and how many jobs they finished, for the last 24 hours or 7 days. A badge goes from **Napping** to **On fire**
+- **A calmer home screen:** **Lid-closed mode**, **Keep the screen on** and **Keep music playing** moved to **Settings → Keep awake**
+- **Opens where you need it:** the panel always opens on your agents, even if you closed it on Settings
 
 ### What's new in 0.6
 
 - **See what each agent is doing:** the project, your request and the current step, plus a **Just finished** list
 - **Click an agent to go to it:** jumps to its terminal tab or project window
-- **Keep the screen on:** on the home screen, while agents work or for 30 minutes or an hour after
+- **Keep the screen on:** while agents work or for 30 minutes or an hour after
 - **A guided welcome:** choose a language, then learn the app one part at a time
 - **Updates inside the app:** a daily check with one-click install, which you can turn off
 - **Status in the menu bar:** optional time left or agent count beside the A
@@ -247,12 +254,12 @@ Click the A in the menu bar. The big line at the top always tells you why the Ma
 
 <tr><td colspan="2"><h3>Finish setup</h3></td></tr>
 <tr>
-<td valign="top"><img src="docs/screens/en/setup.png" width="230" alt="Home screen with Connect and Set up buttons"></td>
+<td valign="top"><img src="docs/screens/en/setup.png" width="230" alt="Home screen with a Connect button"></td>
 <td valign="top">
 
 **What it means:** you skipped a welcome step. Without the permission, the Mac still sleeps when the lid closes. Without a connection, agents are only found through process detection.
 
-**What to do:** press **Set up** for the lid and **Connect** for your agents.
+**What to do:** press **Connect** for your agents. For the lid, open **Settings → Keep awake** and press **Set up** under **Lid-closed mode**.
 
 </td>
 </tr>
@@ -389,7 +396,7 @@ Turn on **Settings → General → Show status in the menu bar** to see the time
 
 ### Keep the screen on
 
-The screen normally sleeps on its own timer while your agents work. To check on them at a glance, choose how long it stays on with **Keep the screen on** on the home screen:
+The screen normally sleeps on its own timer while your agents work. To check on them at a glance, choose how long it stays on with **Keep the screen on** under **Settings → Keep awake**:
 
 | Choice | The screen stays on |
 |---|---|
@@ -472,7 +479,9 @@ Press the gear at the top right of the app.
 
 | Section | Setting | Default |
 |---|---|---|
-| **Home screen** | Keep the screen on: off, while agents work, or 30 minutes or an hour after | off |
+| **Keep awake** | Lid-closed mode: needs a one-time permission, see **Set up** | on |
+| | Keep the screen on: off, while agents work, or 30 minutes or an hour after | off |
+| | Keep music playing | on |
 | **When the lid closes** | Turn the screen off · Mute sound · Low Power Mode on battery · Lock the screen | on |
 | | Pause chat apps | off |
 | | Only when plugged in: on battery, closing the lid sleeps as usual | off |
@@ -532,7 +541,7 @@ On a MacBook with a notch, macOS hides menu bar icons when there isn't room, and
 <summary><b>The Mac still sleeps when I close the lid</b></summary>
 <br>
 
-Open the app and check **Lid-closed mode**. If it says *Needs a one-time permission*, press **Set up**. Then check that something is keeping the Mac awake: an agent, a timer or music. With nothing to do, sleeping is correct. **Only when plugged in** also lets it sleep on battery.
+Open **Settings → Keep awake** and check **Lid-closed mode**. If it says *Needs a one-time permission*, press **Set up**. Then check that something is keeping the Mac awake: an agent, a timer or music. With nothing to do, sleeping is correct. **Only when plugged in** also lets it sleep on battery.
 
 </details>
 
