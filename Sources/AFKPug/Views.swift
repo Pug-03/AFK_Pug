@@ -10,6 +10,8 @@ struct RootView: View {
     @State private var windowHeight: CGFloat = 0
     /// 1 when open. The panel unfolds from the menu bar each time it opens.
     @State private var unfold: CGFloat = RootView.folded
+    /// Counts openings, so the hustle chart grows in each time.
+    @State private var opens = 0
     private static let folded: CGFloat = 0.28
     /// Lively on purpose: it overshoots a little, then settles.
     private static let unfoldAnimation = Animation.spring(response: 0.48, dampingFraction: 0.66)
@@ -65,6 +67,7 @@ struct RootView: View {
             if fitsWindow {
                 WindowHeightFitter(opened: {
                     engine.postponeTick()
+                    opens += 1
                     withAnimation(Self.unfoldAnimation) { unfold = 1 }
                 }, closed: {
                     var transaction = Transaction(animation: nil)
@@ -80,6 +83,7 @@ struct RootView: View {
                 })
             }
         }
+        .environment(\.panelOpens, opens)
         .background(Theme.bg.ignoresSafeArea())
         .modifier(WindowBackground())
         .foregroundStyle(Theme.text)
@@ -304,6 +308,9 @@ struct HomeView: View {
                 UpdateCard(update: update, engine: engine)
             }
             Modes(engine: engine)
+            if engine.agentMode {
+                HustleCard()
+            }
             StatusBar(engine: engine)
         }
         .padding(18)

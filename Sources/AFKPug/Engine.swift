@@ -267,6 +267,7 @@ final class Engine: ObservableObject {
         keepingScreenOn = false
         lidOverrideOn = false
         isActive = false
+        HustleStore.shared.save()
         Paths.removeAppPid()
     }
 
@@ -753,6 +754,7 @@ final class Engine: ObservableObject {
         let scanned = HoldStore.scan(now: now)
         let newHolds = agentMode ? scanned + scanProcesses(hookHolds: scanned) : []
         if newHolds != holds { holds = newHolds }
+        HustleStore.shared.record(holds: holds, now: now)
         // Events left from while the app wasn't running would all fire at once.
         handleEvents(HoldStore.consumeEvents(notBefore: firstTick ? Date().addingTimeInterval(-120) : nil))
         firstTick = false
@@ -916,6 +918,7 @@ final class Engine: ObservableObject {
         let task = holdId.flatMap { HoldStore.takeTask($0) }
         finished.insert(FinishedTask(id: UUID(), agent: agent, task: task, at: now, failed: failed), at: 0)
         if finished.count > 20 { finished.removeLast(finished.count - 20) }
+        if !failed { HustleStore.shared.jobDone(now: now) }
         return task
     }
 

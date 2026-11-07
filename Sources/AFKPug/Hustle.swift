@@ -1,0 +1,398 @@
+import SwiftUI
+
+/// One hour of agent work. `hour` is hours since 1970, so buckets line up with the clock.
+struct HustleBucket: Codable, Equatable {
+    var hour: Int
+    /// Agent-seconds: two agents working for a minute count 120.
+    var seconds: Double = 0
+    /// Tool calls seen, roughly: a new tool or target on a tick.
+    var steps: Int = 0
+    /// Turns that ended without an error.
+    var jobs: Int = 0
+}
+
+/// How hard the agents worked, by the hour. Counted from the holds the engine already
+/// scans, saved on this Mac only (`~/.afkpug/state/hustle.json`), kept for 8 days.
+@MainActor
+final class HustleStore: ObservableObject {
+    static let shared = HustleStore()
+    static let keepHours = 24 * 8
+    /// Ticks further apart than this are a sleep or a stall, not work.
+    static let maxGap: TimeInterval = 10
+
+    /// What the UI draws. Published at most every 15 s, so a tick doesn't redraw the card.
+    @Published private(set) var buckets: [HustleBucket]
+    /// Always up to date; tests read this.
+    private(set) var current: [HustleBucket]
+    private let file: URL
+    private var lastTick: Date?
+    private var lastStep: [String: String] = [:]
+    private var lastPublish = Date.distantPast
+    private var lastSave = Date.distantPast
+    private var dirty = false
+
+    init(file: URL = Paths.state.appendingPathComponent("hustle.json")) {
+        self.file = file
+        let loaded = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([HustleBucket].self, from: $0) } ?? []
+        current = loaded.sorted { $0.hour < $1.hour }
+        buckets = current
+    }
+
+    /// Called every engine tick with this tick's holds.
+    func record(holds: [AgentHold], now: Date) {
+        let gap = lastTick.map { now.timeIntervalSince($0) } ?? 0
+        lastTick = now
+        let working = holds.filter(Self.isWorking).count
+        if working > 0, gap > 0, gap <= Self.maxGap {
+            add(now) { $0.seconds += gap * Double(working) }
+        }
+        var seen: [String: String] = [:]
+        var steps = 0
+        for hold in holds {
+            guard let task = hold.task, let tool = task.tool else { continue }
+            let key = tool + "|" + (task.target ?? "")
+            seen[hold.id] = key
+            if lastStep[hold.id] != key { steps += 1 }
+        }
+        lastStep = seen
+        if steps > 0 { add(now) { $0.steps += steps } }
+        flush(now)
+    }
+
+    func jobDone(now: Date) {
+        add(now) { $0.jobs += 1 }
+        flush(now, force: true)
+    }
+
+    /// Writes what's pending, e.g. before quitting.
+    func save() {
+        guard dirty else { return }
+        Paths.ensure()
+        if let data = try? JSONEncoder().encode(current) { try? data.write(to: file, options: .atomic) }
+        dirty = false
+    }
+
+    /// Agents doing something: not paused on a limit, not waiting for you, not a hold from the terminal.
+    static func isWorking(_ hold: AgentHold) -> Bool {
+        !hold.isUsageLimitWait && hold.task?.waiting != true && hold.agent.lowercased() != "cli"
+    }
+
+    private func add(_ now: Date, _ change: (inout HustleBucket) -> Void) {
+        let hour = Self.hour(of: now)
+        if let i = current.lastIndex(where: { $0.hour == hour }) {
+            change(&current[i])
+        } else {
+            var bucket = HustleBucket(hour: hour)
+            change(&bucket)
+            current.append(bucket)
+            current.sort { $0.hour < $1.hour }
+            current.removeAll { $0.hour <= hour - Self.keepHours }
+        }
+        dirty = true
+    }
+
+    private func flush(_ now: Date, force: Bool = false) {
+        guard dirty else { return }
+        if force || abs(now.timeIntervalSince(lastPublish)) >= 15, buckets != current {
+            buckets = current
+            lastPublish = now
+        }
+        if force || abs(now.timeIntervalSince(lastSave)) >= 60 {
+            save()
+            lastSave = now
+        }
+    }
+
+    nonisolated static func hour(of date: Date) -> Int { Int((date.timeIntervalSince1970 / 3600).rounded(.down)) }
+}
+
+// MARK: Reading the numbers
+
+struct HustleSummary: Equatable {
+    var seconds: Double = 0
+    var steps = 0
+    var jobs = 0
+
+    static func + (a: Self, b: HustleBucket) -> Self {
+        Self(seconds: a.seconds + b.seconds, steps: a.steps + b.steps, jobs: a.jobs + b.jobs)
+    }
+}
+
+/// One bar: a span of time and what happened in it.
+struct HustleBar: Identifiable, Equatable {
+    let id: Int
+    let start: Date
+    let total: HustleSummary
+}
+
+enum HustleRange: String, CaseIterable { case day, week }
+
+enum Hustle {
+    /// Since midnight, local time.
+    static func today(_ buckets: [HustleBucket], now: Date, calendar: Calendar = .current) -> HustleSummary {
+        let from = HustleStore.hour(of: calendar.startOfDay(for: now))
+        return buckets.filter { $0.hour >= from }.reduce(HustleSummary(), +)
+    }
+
+    /// 24 hourly bars ending with this hour, or 7 daily bars ending today.
+    static func bars(_ buckets: [HustleBucket], range: HustleRange, now: Date, calendar: Calendar = .current) -> [HustleBar] {
+        switch range {
+        case .day:
+            let last = HustleStore.hour(of: now)
+            return (0..<24).map { i in
+                let hour = last - 23 + i
+                let total = buckets.filter { $0.hour == hour }.reduce(HustleSummary(), +)
+                return HustleBar(id: i, start: Date(timeIntervalSince1970: Double(hour) * 3600), total: total)
+            }
+        case .week:
+            let today = calendar.startOfDay(for: now)
+            return (0..<7).map { i in
+                let start = calendar.date(byAdding: .day, value: i - 6, to: today) ?? today
+                let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start
+                let (a, b) = (HustleStore.hour(of: start), HustleStore.hour(of: end))
+                let total = buckets.filter { $0.hour >= a && $0.hour < b }.reduce(HustleSummary(), +)
+                return HustleBar(id: i, start: start, total: total)
+            }
+        }
+    }
+}
+
+/// How busy today was, by agent time.
+enum HustleLevel: Int, CaseIterable {
+    case napping, warmingUp, busy, grinding, onFire
+
+    init(seconds: Double) {
+        switch seconds {
+        case ..<60: self = .napping
+        case ..<1800: self = .warmingUp
+        case ..<7200: self = .busy
+        case ..<18000: self = .grinding
+        default: self = .onFire
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .napping: return tr("Napping")
+        case .warmingUp: return tr("Warming up")
+        case .busy: return tr("Busy")
+        case .grinding: return tr("Grinding")
+        case .onFire: return tr("On fire")
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .napping: return "moon.zzz.fill"
+        case .warmingUp: return "sparkle"
+        case .busy: return "bolt.fill"
+        case .grinding: return "hammer.fill"
+        case .onFire: return "flame.fill"
+        }
+    }
+}
+
+// MARK: Card
+
+/// Counts up each time the panel opens, so the chart can grow in again.
+private struct PanelOpensKey: EnvironmentKey { static let defaultValue = 0 }
+extension EnvironmentValues {
+    var panelOpens: Int {
+        get { self[PanelOpensKey.self] }
+        set { self[PanelOpensKey.self] = newValue }
+    }
+}
+
+struct HustleCard: View {
+    @ObservedObject var themeStore = ThemeStore.shared
+    @ObservedObject var store = HustleStore.shared
+    @State private var range: HustleRange = .day
+    @State private var hovered: Int?
+    /// True for still renders, which never appear; opening the panel grows the bars from zero.
+    @State private var grown = true
+    @Environment(\.panelOpens) private var panelOpens
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let chartHeight: CGFloat = 64
+
+    var body: some View {
+        // The minute is enough: the store publishes every 15 s at most.
+        let now = Clock.now()
+        let today = Hustle.today(store.buckets, now: now)
+        let bars = Hustle.bars(store.buckets, range: range, now: now)
+        VStack(alignment: .leading, spacing: 12) {
+            header(level: HustleLevel(seconds: today.seconds))
+            HStack(alignment: .top, spacing: 8) {
+                Figure(value: Self.time(today.seconds), label: tr("agent time today"))
+                Figure(value: "\(today.steps)", label: tr("steps"))
+                Figure(value: "\(today.jobs)", label: tr("jobs done"))
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(caption(bars))
+                        .font(.system(size: 10.5).monospacedDigit()).foregroundStyle(hovered == nil ? Theme.sub : Theme.text)
+                        .lineLimit(1)
+                        .contentTransition(.opacity)
+                        .animation(Theme.hover, value: hovered)
+                    Spacer(minLength: 4)
+                    rangePicker
+                }
+                chart(bars)
+                axis(bars)
+            }
+        }
+        .padding(12)
+        .cardBackground(radius: 12)
+        .onChange(of: panelOpens) { grow() }
+        .onChange(of: range) { grow() }
+    }
+
+    private func header(level: HustleLevel) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "chart.bar.fill").font(.system(size: 12)).foregroundStyle(Theme.accent).accessibilityHidden(true)
+            Text(tr("Agent hustle")).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            Spacer(minLength: 4)
+            HStack(spacing: 4) {
+                Image(systemName: level.symbol).font(.system(size: 9, weight: .bold))
+                    .symbolEffect(.bounce, value: level)
+                Text(level.title).font(.system(size: 10.5, weight: .semibold)).lineLimit(1)
+            }
+            .foregroundStyle(level == .onFire ? Theme.onAccent : (level == .napping ? Theme.sub : Theme.text))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Capsule().fill(level == .onFire ? Theme.accent : Theme.surfaceHover))
+            .animation(Theme.smooth, value: level)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private var rangePicker: some View {
+        HStack(spacing: 2) {
+            ForEach(HustleRange.allCases, id: \.self) { option in
+                let on = option == range
+                Button {
+                    Haptics.tap()
+                    withAnimation(Theme.smooth) { range = option; hovered = nil }
+                } label: {
+                    Text(option == .day ? tr("24h") : tr("7d"))
+                        .font(.system(size: 10, weight: on ? .semibold : .regular))
+                        .foregroundStyle(on ? Theme.text : Theme.sub)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Capsule().fill(on ? Theme.surfaceHover : .clear))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+    }
+
+    private func chart(_ bars: [HustleBar]) -> some View {
+        let peak = max(bars.map(\.total.seconds).max() ?? 0, 1)
+        let peakID = bars.max { $0.total.seconds < $1.total.seconds }.flatMap { $0.total.seconds > 0 ? $0.id : nil }
+        let last = bars.last?.id
+        return HStack(alignment: .bottom, spacing: range == .day ? 3 : 6) {
+            ForEach(bars) { bar in
+                let fraction = bar.total.seconds / peak
+                let dim = hovered != nil && hovered != bar.id
+                ZStack(alignment: .bottom) {
+                    Rectangle().fill(.clear)
+                    if bar.total.seconds > 0 {
+                        RoundedRectangle(cornerRadius: range == .day ? 2.5 : 4, style: .continuous)
+                            .fill(LinearGradient(colors: [Theme.accent, Theme.accent.opacity(0.35)], startPoint: .top, endPoint: .bottom))
+                            .frame(height: max(4, Self.chartHeight * fraction))
+                            .opacity(dim ? 0.3 : (bar.id == peakID || bar.id == hovered ? 1 : 0.78))
+                            .shadow(color: Theme.accent.opacity(bar.id == peakID && !dim ? 0.45 : 0), radius: 6)
+                    } else {
+                        Capsule().fill(bar.id == last ? Theme.sub : Theme.line).frame(height: 2)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: Self.chartHeight)
+                .scaleEffect(x: 1, y: grown || reduceMotion ? 1 : 0.02, anchor: .bottom)
+                .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.7).delay(Double(bar.id) * (range == .day ? 0.014 : 0.04)), value: grown)
+                .animation(Theme.hover, value: hovered)
+                .contentShape(Rectangle())
+                .onHover { inside in
+                    if inside { hovered = bar.id } else if hovered == bar.id { hovered = nil }
+                }
+                .accessibilityElement()
+                .accessibilityLabel(detail(bar))
+            }
+        }
+        .frame(height: Self.chartHeight)
+    }
+
+    private func axis(_ bars: [HustleBar]) -> some View {
+        HStack(spacing: 0) {
+            switch range {
+            case .day:
+                ForEach([0, 6, 12, 18], id: \.self) { i in
+                    Text(bars.indices.contains(i) ? Self.hourLabel(bars[i].start) : "")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Text(tr("now"))
+            case .week:
+                ForEach(bars) { bar in
+                    Text(Self.dayLabel(bar.start)).frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .font(.system(size: 9.5).monospacedDigit())
+        .foregroundStyle(Theme.faint)
+        .lineLimit(1)
+    }
+
+    private func caption(_ bars: [HustleBar]) -> String {
+        if let hovered, let bar = bars.first(where: { $0.id == hovered }) { return detail(bar) }
+        if bars.allSatisfy({ $0.total.seconds == 0 && $0.total.steps == 0 }) { return tr("No agent work yet") }
+        return range == .day ? tr("Last 24 hours") : tr("Last 7 days")
+    }
+
+    private func detail(_ bar: HustleBar) -> String {
+        let when = range == .day ? Fmt.time(bar.start) : Self.dayLabel(bar.start)
+        return tr("%@ · %@ · %d steps", when, Self.time(bar.total.seconds), bar.total.steps)
+    }
+
+    private func grow() {
+        guard !reduceMotion else { return }
+        var reset = Transaction(animation: nil)
+        reset.disablesAnimations = true
+        withTransaction(reset) { grown = false }
+        DispatchQueue.main.async { grown = true }
+    }
+
+    static func time(_ seconds: Double) -> String {
+        seconds < 60 ? tr("%dm", 0) : Fmt.compact(seconds)
+    }
+
+    private static func formatter(_ template: String) -> DateFormatter {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: L10n.isThai ? "th_TH" : "en_US")
+        f.calendar = Calendar(identifier: .gregorian)
+        f.setLocalizedDateFormatFromTemplate(template)
+        return f
+    }
+
+    static func hourLabel(_ date: Date) -> String {
+        L10n.isThai ? formatter("HH").string(from: date) + ":00" : formatter("j").string(from: date)
+    }
+
+    static func dayLabel(_ date: Date) -> String { formatter("EEE").string(from: date) }
+
+    private struct Figure: View {
+        @ObservedObject var themeStore = ThemeStore.shared
+        let value: String
+        let label: String
+        var body: some View {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(value).font(.system(size: 16, weight: .semibold, design: .rounded).monospacedDigit())
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .contentTransition(.numericText())
+                    .animation(Theme.smooth, value: value)
+                Text(label).font(.system(size: 10)).foregroundStyle(Theme.sub)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+        }
+    }
+}

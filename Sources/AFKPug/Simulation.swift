@@ -67,6 +67,7 @@ enum Simulation {
         ("keep-screen", "Screen stays on for agents: only when chosen, on the charger, lid open; ends with the wait, a guard, unplugging or the lid"),
         ("agent-jump", "Clicking an agent row: goes to the right window, launches nothing, and odd values from the hook can't reach another program"),
         ("cursor-steady", "Pointer during motion: a repeat is skipped only while something moves; a real change always goes through"),
+        ("hustle", "Agent hustle: working time, steps and jobs by the hour; waiting and limits don't count; saved and reloaded"),
         ("agent-tasks", "Agent rows: project, request and current step from hooks; waiting shows; finished list; prompts stay local and don't linger"),
         ("theme", "Appearance: text stays legible on any background and accent, defaults keep the black look, bad values fall back"),
         ("ui-contract", "UI API: trip vs Sleep now / grace, cooldown, charger, trigger sublines, Idle, waits, Fmt hours, admin errors"),
@@ -353,6 +354,7 @@ private final class Runner {
         case "agent-jump": agentJump()
         case "cursor-steady": cursorSteady()
         case "agent-tasks": agentTasks()
+        case "hustle": hustle()
         case "theme": theme()
         case "menu-bar": menuBar()
         case "updates": updates()
@@ -687,6 +689,50 @@ private final class Runner {
         dropHold("claude-a8")
         engine.shutdown()
         check(!engine.keepingScreenOn, "quitting releases the screen")
+    }
+
+    func hustle() {
+        configure(["graceMinutes": 0]); boot()
+        let store = HustleStore.shared
+        func today() -> HustleSummary { Hustle.today(store.current, now: Clock.now()) }
+        func now(_ tool: String?, waiting: Bool = false) {
+            try? FileManager.default.createDirectory(at: Paths.tasks, withIntermediateDirectories: true)
+            var object: [String: Any] = [:]
+            if let tool { object["tool"] = tool; object["target"] = "/x/\(tool).swift" }
+            if waiting { object["waiting"] = 1 }
+            let data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
+            try? data.write(to: Paths.tasks.appendingPathComponent("claude-h1.now"))
+        }
+        check(today() == HustleSummary(), "nothing counted before any work")
+
+        hold("claude-h1"); now("Edit")
+        step("one agent works a minute", ticks: 30) { }
+        check((56...62).contains(today().seconds), "about 60 agent-seconds (\(today().seconds))")
+        check(today().steps == 1, "the first step counts once (\(today().steps))")
+
+        hold("claude-h2")
+        step("a second agent joins for 20 s", ticks: 10) { now("Read") }
+        check((94...102).contains(today().seconds), "two agents count double (\(today().seconds))")
+        check(today().steps == 2, "a new step counts (\(today().steps))")
+
+        dropHold("claude-h2", event: nil)
+        step("waiting for you", ticks: 15) { now("Read", waiting: true) }
+        let waited = today().seconds
+        check(waited < 104, "time waiting for you isn't work (\(waited))")
+
+        step("a sleep gap", ticks: 1, every: 600) { now("Bash") }
+        check(today().seconds - waited < 1, "a 10 minute gap isn't counted as work (\(today().seconds - waited))")
+
+        step("finishes", ticks: 7, expect: ["notify: Claude Code finished"]) { dropHold("claude-h1") }
+        check(today().jobs == 1, "a finished turn counts as a job (\(today().jobs))")
+        check(store.buckets == store.current, "a job shows on the card right away")
+
+        let reloaded = HustleStore()
+        check(Hustle.today(reloaded.current, now: Clock.now()) == today(), "saved and read back after a restart")
+        let bars = Hustle.bars(store.current, range: .day, now: Clock.now())
+        check(bars.count == 24 && bars.last?.total.seconds == today().seconds, "the last of 24 bars is this hour")
+        check(Hustle.bars(store.current, range: .week, now: Clock.now()).count == 7, "7 daily bars")
+        check(HustleLevel(seconds: 0) == .napping && HustleLevel(seconds: 3 * 3600) == .grinding && HustleLevel(seconds: 6 * 3600) == .onFire, "levels follow agent time")
     }
 
     func agentTasks() {

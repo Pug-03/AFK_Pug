@@ -386,4 +386,22 @@ private let thaiV3: [String: String] = [
     "%@ stopped with an error %d times": "%@ หยุดเพราะมีข้อผิดพลาด %d ครั้ง",
     "The AFK Pug plugin for Claude Code already gives agents these tools.": "ปลั๊กอิน AFK Pug ของ Claude Code มีเครื่องมือนี้ให้ agent อยู่แล้ว",
     "Your agents are done. AFK Pug will let the Mac sleep soon.": "agent ทำเสร็จหมดแล้ว อีกสักพัก Mac จะพักเครื่อง",
+
+    // Agent hustle
+    "Agent hustle": "ความขยันของ agent",
+    "Napping": "หลับอยู่",
+    "Warming up": "เริ่มวอร์ม",
+    "Busy": "ขยันดี",
+    "Grinding": "ปั่นงานหนัก",
+    "On fire": "ไฟลุก",
+    "agent time today": "เวลาทำงานวันนี้",
+    "steps": "ขั้นตอน",
+    "jobs done": "งานที่เสร็จ",
+    "Last 24 hours": "24 ชั่วโมงล่าสุด",
+    "Last 7 days": "7 วันล่าสุด",
+    "No agent work yet": "ยังไม่มีงานของ agent",
+    "24h": "24 ชม.",
+    "7d": "7 วัน",
+    "now": "ตอนนี้",
+    "%@ · %@ · %d steps": "%@ · %@ · %d ขั้นตอน",
 ]
