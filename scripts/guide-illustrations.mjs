@@ -21,11 +21,13 @@ const screen = (lang, name) => `file://${resolve(`docs/screens/${lang}/${name}.p
 
 const PALETTE = {
   light: {
+    call: '#000000', callText: '#ffffff', callGlow: 'rgba(0,0,0,.14)',
     text: '#1f2328', muted: '#6b6b6b', border: '#d9d9d9', shadow: '0 12px 40px rgba(0,0,0,.18)',
     gh: { bg: '#ffffff', subtle: '#f6f8fa', border: '#d1d9e0', text: '#1f2328', muted: '#59636e', link: '#0969da', label: '#1a7f37' },
     mac: { window: '#ececec', side: '#e6e6e6', pane: '#ffffff', group: '#f5f5f5', select: '#0a64d9', bar: 'rgba(245,245,247,.92)', barText: '#1d1d1f', button: '#ffffff', wall: 'linear-gradient(120deg,#d9dee8,#eef0f4)', dialog: '#f2f2f2' },
   },
   dark: {
+    call: '#ffffff', callText: '#000000', callGlow: 'rgba(255,255,255,.18)',
     text: '#e6e6e6', muted: '#a0a0a0', border: '#3c3c3c', shadow: '0 12px 40px rgba(0,0,0,.55)',
     gh: { bg: '#0d1117', subtle: '#151b23', border: '#3d444d', text: '#e6edf3', muted: '#9198a1', link: '#4493f8', label: '#3fb950' },
     mac: { window: '#2b2b2b', side: '#323232', pane: '#1e1e1e', group: '#2a2a2a', select: '#0a64d9', bar: 'rgba(30,30,32,.92)', barText: '#f5f5f7', button: '#4a4a4a', wall: 'linear-gradient(120deg,#23262e,#14161b)', dialog: '#2e2e2e' },
@@ -56,9 +58,9 @@ html,body{margin:0;background:transparent}
 body{font:13px/1.4 -apple-system,BlinkMacSystemFont,"Thonburi",system-ui,sans-serif;color:${p.text};padding:28px;-webkit-font-smoothing:antialiased}
 svg{display:block;flex:none}
 .frame{border-radius:12px;overflow:hidden;box-shadow:${p.shadow};border:1px solid ${p.border}}
-.mark{position:relative;display:inline-flex;border-radius:var(--r);outline:3px solid #ff5a36;outline-offset:3px;box-shadow:0 0 0 9px rgba(255,90,54,.18)}
+.mark{position:relative;display:inline-flex;border-radius:var(--r);outline:3px solid ${p.call};outline-offset:3px;box-shadow:0 0 0 9px ${p.callGlow}}
 .mark.block{display:flex}
-.badge{position:absolute;z-index:5;width:26px;height:26px;border-radius:50%;background:#ff5a36;color:#fff;font:700 14px/26px -apple-system,sans-serif;text-align:center;font-style:normal;box-shadow:0 2px 6px rgba(0,0,0,.35);border:2px solid #fff;line-height:22px}
+.badge{position:absolute;z-index:5;width:26px;height:26px;border-radius:50%;background:${p.call};color:${p.callText};font:700 14px/26px -apple-system,sans-serif;text-align:center;font-style:normal;box-shadow:0 2px 6px rgba(0,0,0,.35);border:2px solid ${p.callText};line-height:22px}
 .badge.tr{top:-20px;right:-20px}.badge.tl{top:-20px;left:-20px}.badge.b{bottom:-40px;left:50%;margin-left:-13px}
 .badge.r{top:50%;right:-42px;margin-top:-13px}.badge.l{top:50%;left:-42px;margin-top:-13px}
 .row{display:flex;align-items:center}
@@ -73,10 +75,10 @@ const hero = (lang, captions) => ({
   width: 1080, height: 660, single: true,
   body: () => {
     const shot = (name, n, text) => `<div style="width:290px;text-align:center">
-      <div style="margin-bottom:18px;font-size:16px;font-weight:600;color:#fff"><span style="color:#faa159;margin-right:6px">${n}</span>${text}</div>
+      <div style="margin-bottom:18px;font-size:16px;font-weight:600;color:#fff"><span style="color:rgba(255,255,255,.5);margin-right:6px">${n}</span>${text}</div>
       <img src="${screen(lang, name)}" style="width:290px;border-radius:14px;box-shadow:0 22px 50px rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.09)">
     </div>`;
-    return `<div style="margin:-28px;width:1080px;height:660px;padding:26px 42px;border-radius:20px;background:radial-gradient(120% 90% at 50% 0%,#2a2118 0%,#121214 58%,#0c0c0e 100%);display:flex;justify-content:space-between;align-items:flex-start">
+    return `<div style="margin:-28px;width:1080px;height:660px;padding:26px 42px;border-radius:20px;background:#000;display:flex;justify-content:space-between;align-items:flex-start">
       ${shot('idle', 1, captions[0])}${shot('working', 2, captions[1])}${shot('away', 3, captions[2])}
     </div>`;
   },

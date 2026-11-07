@@ -9,15 +9,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Pug-03/AFK_Pug/releases/latest"><img alt="Download for Mac" src="https://img.shields.io/badge/Download-for%20Mac-F9A15A?style=for-the-badge&logo=apple&logoColor=white"></a>
+  <a href="https://github.com/Pug-03/AFK_Pug/releases/latest"><img alt="Download for Mac" src="https://img.shields.io/badge/Download-for%20Mac-FFFFFF?style=for-the-badge&logo=apple&logoColor=white&labelColor=000000"></a>
 </p>
 
 <p align="center">
   <a href="https://github.com/Pug-03/AFK_Pug/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Pug-03/AFK_Pug/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple&logoColor=white">
-  <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple%20Silicon-M1%2B-111111">
-  <img alt="MIT" src="https://img.shields.io/badge/license-MIT-F9A15A">
-  <img alt="Thai and English" src="https://img.shields.io/badge/lang-ไทย%20%C2%B7%20English-F9A15A">
+  <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-FFFFFF?logo=apple&logoColor=white&labelColor=000000">
+  <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple%20Silicon-M1%2B-FFFFFF?labelColor=000000">
+  <img alt="MIT" src="https://img.shields.io/badge/license-MIT-FFFFFF?labelColor=000000">
+  <img alt="Thai and English" src="https://img.shields.io/badge/lang-ไทย%20%C2%B7%20English-FFFFFF?labelColor=000000">
 </p>
 
 <p align="center">
