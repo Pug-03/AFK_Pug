@@ -31,6 +31,8 @@
             </array>
         </dict>
     </array>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>AFK Pug brings the terminal tab of the agent you clicked to the front.</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHumanReadableCopyright</key>

@@ -850,6 +850,7 @@ struct AgentRow: View {
             }
         }
         .padding(.vertical, 4)
+        .modifier(GoesToSession(place: hold.task?.place))
     }
 
     private var nameLine: some View {
@@ -890,6 +891,38 @@ struct AgentRow: View {
         if let end = hold.expires { return tr("until %@", Fmt.time(end)) }
         let elapsed = Clock.now().timeIntervalSince(hold.started)
         return elapsed < 60 ? tr("just started") : tr("working for %@", Fmt.compact(elapsed))
+    }
+}
+
+/// A click anywhere on the row, apart from its buttons, goes back to where that session runs.
+private struct GoesToSession: ViewModifier {
+    @ObservedObject var themeStore = ThemeStore.shared
+    let place: AgentPlace?
+    @State private var hover = false
+
+    func body(content: Content) -> some View {
+        if let place {
+            // A real button: it works from the keyboard, and the × inside still takes its own clicks.
+            Button {
+                Haptics.tap()
+                AgentJump.go(place)
+            } label: {
+                content.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .contain)
+                .onHover { hover = $0 }
+                .background {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(hover ? Theme.surfaceHover : .clear)
+                        .padding(.horizontal, -6)
+                        .animation(Theme.hover, value: hover)
+                }
+                .help(tr("Go to this session"))
+                .accessibilityAction(named: Text(tr("Go to this session"))) { AgentJump.go(place) }
+        } else {
+            content
+        }
     }
 }
 
@@ -953,6 +986,7 @@ struct FinishedRow: View {
             .accessibilityLabel(tr("Remove from the list"))
         }
         .padding(.vertical, 2)
+        .modifier(GoesToSession(place: item.task?.place))
     }
 
     private var detail: String {

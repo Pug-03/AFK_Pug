@@ -65,6 +65,7 @@ enum Simulation {
         ("menu-bar", "Menu bar status: off by default, time left, agents, grace, nothing when a guard stopped it"),
         ("background-sampling", "Slow reads run off the main thread: the last value comes back at once, never two reads together"),
         ("keep-screen", "Screen stays on for agents: only when chosen, on the charger, lid open; ends with the wait, a guard, unplugging or the lid"),
+        ("agent-jump", "Clicking an agent row: goes to the right window, launches nothing, and odd values from the hook can't reach another program"),
         ("cursor-steady", "Pointer during motion: a repeat is skipped only while something moves; a real change always goes through"),
         ("agent-tasks", "Agent rows: project, request and current step from hooks; waiting shows; finished list; prompts stay local and don't linger"),
         ("theme", "Appearance: text stays legible on any background and accent, defaults keep the black look, bad values fall back"),
@@ -349,6 +350,7 @@ private final class Runner {
         case "preview-states": previewStates()
         case "background-sampling": backgroundSampling()
         case "keep-screen": keepScreen()
+        case "agent-jump": agentJump()
         case "cursor-steady": cursorSteady()
         case "agent-tasks": agentTasks()
         case "theme": theme()
@@ -509,6 +511,52 @@ private final class Runner {
         engine.menuBarStatus = false
         check(engine.menuBarText == nil, "turned off")
         check(Fmt.hoursMinutes(1) == "0:01" && Fmt.hoursMinutes(-5) == "0:00" && Fmt.hoursMinutes(3660) == "1:01", "formatting")
+    }
+
+    func agentJump() {
+        configure(); boot()
+        typealias Step = AgentJump.Step
+        let folder = Sim.dir.path
+        func steps(_ place: AgentPlace) -> [Step] { AgentJump.steps(for: place) }
+
+        check(steps(AgentPlace(bundle: "com.apple.Terminal", tty: "ttys3")) == [.terminalTab(tty: "ttys3")], "Terminal goes to the tab")
+        check(steps(AgentPlace(bundle: "com.googlecode.iterm2", tty: "ttys3")) == [.itermSession(tty: "ttys3")], "iTerm2 goes to the session")
+        check(steps(AgentPlace(bundle: "com.apple.Terminal")) == [.activate(bundle: "com.apple.Terminal")], "no terminal known: just the app")
+        Sim.set("open-folders", "\(folder)\n\(folder)/nested\n/Users/me/App")
+        check(steps(AgentPlace(bundle: "com.microsoft.VSCode", root: folder)) == [.openFolder(bundle: "com.microsoft.VSCode", path: folder)], "VS Code goes to the project's window")
+        check(steps(AgentPlace(bundle: "com.microsoft.VSCode", root: folder + "/sub/dir")) == [.openFolder(bundle: "com.microsoft.VSCode", path: folder)], "a subfolder goes to the window that holds it")
+        check(steps(AgentPlace(bundle: "com.microsoft.VSCode", root: folder + "/nested/x")) == [.openFolder(bundle: "com.microsoft.VSCode", path: folder + "/nested")], "the deepest open folder wins")
+        check(steps(AgentPlace(bundle: "com.microsoft.VSCode", root: "/Users/me/Application")) == [.activate(bundle: "com.microsoft.VSCode")], "a similar name isn't a match")
+        check(steps(AgentPlace(bundle: "com.microsoft.VSCode", root: "/not/open")) == [.activate(bundle: "com.microsoft.VSCode")], "a project that isn't open never gets a new window")
+        check(steps(AgentPlace(bundle: "com.mitchellh.ghostty", tty: "ttys3", root: folder)) == [.activate(bundle: "com.mitchellh.ghostty")], "any other app is only brought forward")
+        check(steps(AgentPlace(bundle: "com.apple.Terminal", tty: "ttys3", tmuxPane: "%7", tmuxSocket: "/tmp/s")) == [.tmux(socket: "/tmp/s", pane: "%7"), .terminalTab(tty: "ttys3")], "tmux picks the pane, then the terminal")
+
+        check(AgentPlace(["cwd": "/x"]) == nil, "an older task file has no place, and its row stays plain")
+        check(AgentPlace(["app": "com.a b"]) == nil, "a bundle id with a space is refused")
+        let odd = AgentPlace(["app": "com.apple.Terminal", "tty": "ttys1\nx", "pane": "%1;x", "socket": "/tmp/$(x)", "root": "relative"])
+        check(odd?.tty == nil && odd?.tmuxPane == nil && odd?.tmuxSocket == nil && odd?.root == nil, "odd values are dropped, not passed on")
+        check(AgentJump.terminalScript.contains("item 1 of argv") && AgentJump.itermScript.contains("item 1 of argv"), "the terminal reaches the script as an argument")
+
+        // From the real hook, with hostile values in its environment.
+        let payload = #"{"session_id":"j1","hook_event_name":"UserPromptSubmit","cwd":"\#(folder)","prompt":"hello"}"#
+        let pwned = Sim.dir.appendingPathComponent("jump-pwned").path
+        shell("__CFBundleIdentifier='com.apple.Terminal\";touch \(pwned);\"' CLAUDE_PROJECT_DIR='/a\"b\\c' TMUX= \"\(Paths.hookScript.path)\" start claude", stdin: payload)
+        let task = HoldStore.readTask("claude-j1")
+        check(task?.prompt == "hello", "the file stays readable with quotes in the environment")
+        check(task?.place?.root == #"/a"b\c"#, "the project folder survives quotes and backslashes (\(task?.place?.root ?? "-"))")
+        check(task?.place?.bundle?.contains("\"") == false && task?.place?.bundle?.contains(";") == false, "the bundle id keeps only safe characters (\(task?.place?.bundle ?? "-"))")
+        check(!FileManager.default.fileExists(atPath: pwned), "nothing in the environment is ever executed")
+
+        shell("__CFBundleIdentifier=com.apple.Terminal TMUX=/tmp/tmux-1/default,1,0 TMUX_PANE=%9 \"\(Paths.hookScript.path)\" start claude", stdin: #"{"session_id":"j2","hook_event_name":"UserPromptSubmit"}"#)
+        let inTmux = HoldStore.readTask("claude-j2")?.place
+        check(inTmux?.tmuxPane == "%9" && inTmux?.tmuxSocket == "/tmp/tmux-1/default", "tmux's pane and socket are saved")
+
+        step("a click only records, and nothing runs under the sim", expect: ["jump: "]) {
+            AgentJump.go(AgentPlace(bundle: "com.apple.Terminal", tty: "ttys3"))
+        }
+        shell("__CFBundleIdentifier=com.apple.Terminal \"\(Paths.hookScript.path)\" stop claude", stdin: #"{"session_id":"j1","hook_event_name":"Stop"}"#)
+        step("finished", ticks: 7, expect: ["notify: Claude Code finished"])
+        check(engine.finished.first?.task?.place?.bundle != nil, "a finished job can still go to its window")
     }
 
     func cursorSteady() {

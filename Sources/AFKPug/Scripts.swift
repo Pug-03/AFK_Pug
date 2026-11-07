@@ -62,13 +62,36 @@ enum Scripts {
       printf '%s' "$input" | LC_ALL=C grep -oE '"'"$1"'"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"' | head -n 1 |
         LC_ALL=C sed -E 's/^"[^"]*"[[:space:]]*:[[:space:]]*"//; s/"$//'
     }
+    # Which app and terminal this session runs in, so a click on its row can bring it back.
+    # These come from the environment: only harmless characters are kept.
+    find_place() {
+      place_app=$(printf '%s' "$__CFBundleIdentifier" | LC_ALL=C tr -cd 'A-Za-z0-9.-' | cut -c 1-100)
+      place_root=$(printf '%s' "$CLAUDE_PROJECT_DIR" | LC_ALL=C tr -d '\000-\037' | LC_ALL=C sed -E 's/\\/\\\\/g; s/"/\\"/g')
+      [ -z "$place_root" ] && place_root="$cwd"
+      place_tty=""; place_pane=""; place_socket=""
+      if [ -n "$TMUX" ] && [ -n "$TMUX_PANE" ]; then
+        place_pane=$(printf '%s' "$TMUX_PANE" | LC_ALL=C tr -cd '%0-9')
+        place_socket=$(printf '%s' "${TMUX%%,*}" | LC_ALL=C tr -cd 'A-Za-z0-9/._-')
+        place_tty=$(tmux display-message -p -t "$place_pane" '#{client_tty}' 2>/dev/null | LC_ALL=C sed 's|^/dev/||')
+      else
+        # The hook itself has no terminal, so look up through the agent's parents.
+        pid=$PPID; i=0
+        while [ "$i" -lt 8 ] && [ "$pid" -gt 1 ] 2>/dev/null; do
+          place_tty=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
+          case "$place_tty" in ttys[0-9]*) break ;; esac
+          place_tty=""; pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' '); i=$((i + 1))
+        done
+      fi
+      place_tty=$(printf '%s' "$place_tty" | LC_ALL=C tr -cd 'a-z0-9')
+    }
     # save_task [prompt]: the folder, and the prompt only when this event is the prompt
     # (a tool's input can have a "prompt" of its own).
     save_task() {
       cwd=$(raw cwd)
       [ -z "$cwd" ] && cwd=$(printf '%s' "$input" | LC_ALL=C grep -oE '"workspace_roots"[[:space:]]*:[[:space:]]*\[[[:space:]]*"([^"\\]|\\.)*"' | head -n 1 | LC_ALL=C sed -E 's/.*\[[[:space:]]*"//; s/"$//')
       p=""; [ "$1" = prompt ] && p=$(raw prompt)
-      (umask 077; mkdir -p "$tasks" && printf '{"cwd":"%s","prompt":"%s"}\n' "$cwd" "$p" > "$task.$$.tmp" && mv -f "$task.$$.tmp" "$task") 2>/dev/null
+      find_place
+      (umask 077; mkdir -p "$tasks" && printf '{"cwd":"%s","prompt":"%s","app":"%s","tty":"%s","pane":"%s","socket":"%s","root":"%s"}\n' "$cwd" "$p" "$place_app" "$place_tty" "$place_pane" "$place_socket" "$place_root" > "$task.$$.tmp" && mv -f "$task.$$.tmp" "$task") 2>/dev/null
       rm -f "$task.now"
     }
     write_now() { (umask 077; mkdir -p "$tasks" && printf '%s\n' "$1" > "$task.$$.tmp.now" && mv -f "$task.$$.tmp.now" "$task.now") 2>/dev/null; }

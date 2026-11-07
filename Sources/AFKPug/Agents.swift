@@ -58,6 +58,8 @@ struct AgentTask: Equatable {
     var tool: String?
     var target: String?
     var waiting = false
+    /// Which window it runs in, for going back to it.
+    var place: AgentPlace? = nil
 
     /// The folder's name.
     var project: String? {
@@ -234,7 +236,7 @@ enum HoldStore {
         let base = object(id), now = object(id + ".now")
         guard base != nil || now != nil else { return nil }
         return AgentTask(cwd: text(base?["cwd"]), prompt: text(base?["prompt"]), tool: text(now?["tool"]),
-                         target: text(now?["target"]), waiting: now?["waiting"] != nil)
+                         target: text(now?["target"]), waiting: now?["waiting"] != nil, place: base.flatMap(AgentPlace.init))
     }
 
     /// The task of a turn that ended; its files go away with it.

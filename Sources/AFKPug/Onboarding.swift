@@ -182,7 +182,7 @@ struct OnboardingView: View {
     private var tourAgents: some View {
         VStack(alignment: .leading, spacing: 0) {
             Heading(title: tr("See what each agent is doing"),
-                    text: tr("Click the A to see each job and its current step. When a job ends, it moves to Just finished."))
+                    text: tr("Click the A to see each job and its current step, and click a job to go to its window. When a job ends, it moves to Just finished."))
             Card {
                 VStack(alignment: .leading, spacing: 8) {
                     AgentRow(hold: Self.sampleHold("claude", prompt: tr("Fix the failing payment tests"), cwd: "/billing-api",
