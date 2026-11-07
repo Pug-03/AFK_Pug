@@ -1,7 +1,7 @@
 {
   "name": "afk-pug",
   "displayName": "AFK Pug",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Keeps your MacBook awake (even with the lid closed) while Claude Code works, using the AFK Pug menu bar app. Adds lifecycle hooks and the AFK Pug MCP server.",
   "author": {
     "name": "Pug-03",

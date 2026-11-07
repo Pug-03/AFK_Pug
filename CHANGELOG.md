@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1 - 2026-11-08
+
+### Fixed
+- The panel always opens on the agent list, even if it was closed on Settings.
+- Red status text is more vivid, so warnings stand out.
+
 ## 0.6.0 - 2026-11-07
 
 ### Added
