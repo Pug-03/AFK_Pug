@@ -797,7 +797,7 @@ private final class Runner {
         check(dark.background == ThemePalette.dark && dark.isDark, "default is the black background")
         check(dark.accentRGB == RGB(1, 1, 1), "default accent is white")
         check(L10n.isThai == false, "English by default")
-        check(dark.warnRGB == RGB(0.93, 0.36, 0.33), "status red is unchanged on black")
+        check(dark.warnRGB == RGB(1, 0.231, 0.188), "status red is unchanged on black")
 
         var worst = (text: 99.0, sub: 99.0, faint: 99.0, warn: 99.0, mark: 99.0)
         let steps = stride(from: 0.0, through: 1.0, by: 0.125).map { $0 }

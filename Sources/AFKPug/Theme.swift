@@ -120,7 +120,7 @@ struct ThemePalette {
         textRGB = raised(from: 0.94, target: Self.textContrast)
         subRGB = raised(from: isDark ? 0.50 : 0.60, target: Self.textContrast)
         faintRGB = raised(from: isDark ? 0.47 : 0.58, target: Self.textContrast)
-        warnRGB = legible(RGB(0.93, 0.36, 0.33), target: Self.textContrast)
+        warnRGB = legible(RGB(1, 0.231, 0.188), target: Self.textContrast)
         liveRGB = legible(RGB(0.40, 0.85, 0.56), target: Self.markContrast)
         waitRGB = legible(RGB(0.96, 0.76, 0.30), target: Self.markContrast)
         liveTextRGB = legible(RGB(0.40, 0.85, 0.56), target: Self.textContrast)
