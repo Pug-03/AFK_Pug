@@ -1,7 +1,7 @@
 // Makes the README's demo video: a MacBook drawn in CSS 3D showing the real app screens
 // from docs/screens/. It's an animation, not a screen recording. Every frame is a pure
 // function of time, rendered in headless Chrome, then encoded with ffmpeg.
-// Needs Chrome and ffmpeg, and scripts/screenshots.sh run first.
+// Needs Chrome, ffmpeg and img2webp (brew install webp), and scripts/screenshots.sh run first.
 // Usage: node scripts/demo-video.mjs [en|th] [--still <seconds>]
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -12,7 +12,8 @@ const chrome = [process.env.CHROME_PATH, '/Applications/Google Chrome.app/Conten
   .filter(Boolean).find(existsSync);
 if (!chrome) throw new Error('Chrome not found; set CHROME_PATH');
 
-const WIDTH = 1280, HEIGHT = 720, FPS = 30, DURATION = 21;
+const WIDTH = 1280, HEIGHT = 720, FPS = 60, DURATION = 21;
+const WEBP_FPS = 30, WEBP_WIDTH = 960;
 const CAPTIONS = {
   en: {
     start: 'Your agents are working', watch: 'See every job and its current step', close: 'Close the lid',
@@ -178,9 +179,16 @@ for (const lang of langs.length ? langs : ['en', 'th']) {
     }
   }));
   const input = ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', join(tmp, 'f%05d.png')];
-  execFileSync('ffmpeg', [...input, '-c:v', 'libx264', '-preset', 'slow', '-crf', '20', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', `docs/demo-${lang}.mp4`]);
-  // GitHub only plays repo media inline as an image, so the README shows a GIF and links the MP4.
-  execFileSync('ffmpeg', [...input, '-filter_complex', '[0:v]fps=15,scale=800:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=200:stats_mode=diff[p];[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle', '-loop', '0', `docs/demo-${lang}.gif`]);
+  execFileSync('ffmpeg', [...input, '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', `docs/demo-${lang}.mp4`]);
+  // GitHub only plays repo media inline as an image. A GIF tops out around 15-25 fps with
+  // banding, so the README shows an animated WebP at WEBP_FPS and links the MP4.
+  const small = join(tmp, 'small');
+  execFileSync('mkdir', [small]);
+  execFileSync('ffmpeg', [...input, '-vf', `fps=${WEBP_FPS},scale=${WEBP_WIDTH}:-2:flags=lanczos`, join(small, 's%05d.png')]);
+  const frames = Array.from({ length: DURATION * WEBP_FPS }, (_, i) => join(small, `s${String(i + 1).padStart(5, '0')}.png`));
+  // Spread the rounding so the frames still add up to exactly DURATION.
+  const delays = frames.map((_, i) => Math.round(((i + 1) * 1000) / WEBP_FPS) - Math.round((i * 1000) / WEBP_FPS));
+  execFileSync('img2webp', ['-loop', '0', '-lossy', '-q', '72', '-m', '6', ...frames.flatMap((f, i) => ['-d', String(delays[i]), f]), '-o', `docs/demo-${lang}.webp`]);
   rmSync(tmp, { recursive: true, force: true });
-  console.log(`docs/demo-${lang}.mp4, docs/demo-${lang}.gif`);
+  console.log(`docs/demo-${lang}.mp4, docs/demo-${lang}.webp`);
 }

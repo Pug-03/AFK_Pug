@@ -32,7 +32,9 @@
 </p>
 
 <p align="center">
-  <img src="docs/guide/hero-en.png" width="860" alt="Three AFK Pug screens: ready with Agent mode on, watching two agents, and the summary after you come back">
+  <a href="docs/demo-en.mp4"><img src="docs/demo-en.webp" width="860" alt="Animation of a MacBook: agents work, the lid closes while the work continues, and a summary waits when the lid opens"></a>
+  <br>
+  <sub>Made from the app's real screens · <a href="docs/demo-en.mp4">Watch the full-quality video</a></sub>
 </p>
 
 ---
@@ -44,9 +46,7 @@ You ask Claude Code to refactor a module, close your MacBook and walk to lunch. 
 **AFK Pug is a small menu bar app that keeps your MacBook working with the lid closed**, with no external display, on battery or on power. It knows when your AI agents are really working, turns the screen off to save battery, and lets the Mac sleep as soon as the work is done.
 
 <p align="center">
-  <a href="docs/demo-en.mp4"><img src="docs/demo-en.gif" width="760" alt="Animation of a MacBook: agents work, the lid closes while the work continues, and a summary waits when the lid opens"></a>
-  <br>
-  <sub>An animation made from the app's screens, not a screen recording. <a href="docs/demo-en.mp4">Watch it in full quality</a>.</sub>
+  <img src="docs/guide/hero-en.png" width="760" alt="Three AFK Pug screens: ready with Agent mode on, watching two agents, and the summary after you come back">
 </p>
 
 - **Works with the lid closed:** no monitor or dongle needed
@@ -59,7 +59,6 @@ You ask Claude Code to refactor a module, close your MacBook and walk to lunch. 
 - **Can keep the screen on:** while agents work, or for 30 minutes or an hour after
 - **Looks how you like:** black and white by default, or any background and accent color
 - **Stays on your Mac:** no account and no telemetry
-
 
 ### What's new in 0.6
 
@@ -512,7 +511,14 @@ A closed MacBook sheds heat more slowly, so AFK Pug has several guards:
 
 ## Privacy
 
-Everything stays on your Mac. There's no account and no telemetry. To show what each agent is doing, hooks save the folder, your request, the current step and which app and terminal it runs in to `~/.afkpug/tasks`, readable only by you, and delete them when the job is listed or within about an hour. Commands show their first two words only. None of this goes in phone notifications. AFK Pug only goes online for two things: the optional phone notification, sent to the ntfy topic you enter, and the update check, which asks GitHub for the latest release once a day and sends nothing about you. Turn it off under **Settings → General → Check for updates**. Update files are checked against GitHub's checksum, this app's ID and version, and their code signature before they're installed.
+Everything stays on your Mac. There's no account and no telemetry.
+
+- **What each agent is doing:** hooks save the folder, your request, the current step and which app and terminal it runs in to `~/.afkpug/tasks`, readable only by you. Each file is deleted once the job is listed, or within about an hour. Commands show their first two words only.
+- **Phone notifications** never include any of that. They go only to the ntfy topic you enter, and only if you set one.
+- **The update check** asks GitHub for the latest release once a day and sends nothing about you. Turn it off under **Settings → General → Check for updates**.
+- **Updates** are checked against GitHub's checksum, this app's ID and version, and their code signature before they're installed.
+
+Those two are the only times AFK Pug goes online.
 
 ---
 
@@ -609,7 +615,7 @@ swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bi
 swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate stress   # 69 adversarial scenarios
 scripts/screenshots.sh               # renders the app screens into docs/screens/
 node scripts/guide-illustrations.mjs # draws the install pictures into docs/guide/
-node scripts/demo-video.mjs          # makes the demo video and GIF (needs ffmpeg)
+node scripts/demo-video.mjs          # makes the demo video and WebP (needs ffmpeg, img2webp)
 scripts/build.sh --zip               # packs dist/AFK-Pug.zip for a GitHub release
 ```
 
