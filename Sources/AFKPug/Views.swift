@@ -69,7 +69,14 @@ struct RootView: View {
                 }, closed: {
                     var transaction = Transaction(animation: nil)
                     transaction.disablesAnimations = true
-                    withTransaction(transaction) { unfold = Self.folded }
+                    withTransaction(transaction) {
+                        unfold = Self.folded
+                        // Always reopen on the agent list, never where it was left.
+                        if page != .home {
+                            measured = nil
+                            page = .home
+                        }
+                    }
                 })
             }
         }
