@@ -60,6 +60,20 @@ You ask Claude Code to refactor a module, close your MacBook and walk to lunch. 
 - **Looks how you like:** black and white by default, or any background and accent color
 - **Stays on your Mac:** no account and no telemetry
 
+
+### What's new in 0.6
+
+- **See what each agent is doing:** the project, your request and the current step, plus a **Just finished** list
+- **Click an agent to go to it:** jumps to its terminal tab or project window
+- **Keep the screen on:** on the home screen, while agents work or for 30 minutes or an hour after
+- **A guided welcome:** choose a language, then learn the app one part at a time
+- **Updates inside the app:** a daily check with one-click install, which you can turn off
+- **Status in the menu bar:** optional time left or agent count beside the A
+- **Early battery warning:** 5 points above the floor, and phone messages now leave before the Mac sleeps
+- **Smoother to use:** a wider panel that unfolds when opened, and steadier page changes and scrolling
+
+Coming from 0.5.0? Download the new zip once. After that, the app updates itself. Full list: [CHANGELOG](CHANGELOG.md).
+
 ---
 
 ## Installation guide
@@ -264,6 +278,17 @@ Click the A in the menu bar. The big line at the top always tells you why the Ma
 **What it means:** each agent that's working has a green dot, with its project, your request and its current step, such as *Editing checkout.ts*. An amber dot and *Waiting for you* mean it needs your permission. An idle session waiting at the prompt doesn't count, and background tasks still running after a reply do.
 
 When a job ends it moves to **Just finished**, with the project, request and time, so you can see what's done at a glance. Agents found through process detection only show their name.
+
+**Go to an agent:** click its row, or a row under **Just finished**, to bring its window forward.
+
+| It runs in | A click goes to |
+|---|---|
+| Terminal, iTerm2 | the exact tab. macOS asks once for permission, and without it you get the app |
+| VS Code, Cursor, Windsurf | the project's window, not a panel inside it. If the project isn't open, the app |
+| tmux | the pane, then its terminal |
+| Anything else | the app |
+
+AFK Pug never launches an app for this. Agents found through process detection have no window to go to, so their rows can't be clicked.
 
 **What to do:** close the lid and go. The **×** stops keeping the Mac awake for that one agent, without stopping the agent itself. An agent that's still running comes back on its next tool call. During one long command it doesn't, so the Mac can sleep mid-command.
 
@@ -487,7 +512,7 @@ A closed MacBook sheds heat more slowly, so AFK Pug has several guards:
 
 ## Privacy
 
-Everything stays on your Mac. There's no account and no telemetry. To show what each agent is doing, hooks save the folder, your request and the current step in `~/.afkpug/tasks`, readable only by you, and delete them when the job is listed or within about an hour. Commands show their first two words only. None of this goes in phone notifications. AFK Pug only goes online for two things: the optional phone notification, sent to the ntfy topic you enter, and the update check, which asks GitHub for the latest release once a day and sends nothing about you. Turn it off under **Settings → General → Check for updates**. Update files are checked against GitHub's checksum, this app's ID and version, and their code signature before they're installed.
+Everything stays on your Mac. There's no account and no telemetry. To show what each agent is doing, hooks save the folder, your request, the current step and which app and terminal it runs in to `~/.afkpug/tasks`, readable only by you, and delete them when the job is listed or within about an hour. Commands show their first two words only. None of this goes in phone notifications. AFK Pug only goes online for two things: the optional phone notification, sent to the ntfy topic you enter, and the update check, which asks GitHub for the latest release once a day and sends nothing about you. Turn it off under **Settings → General → Check for updates**. Update files are checked against GitHub's checksum, this app's ID and version, and their code signature before they're installed.
 
 ---
 
@@ -580,7 +605,7 @@ Timers end on their own, agent mode ends when the work does, and quitting the ap
 A headless simulator drives the engine with fake lid, battery, heat, audio and process input. Nothing real runs: every power command is logged instead.
 
 ```sh
-swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate all      # 56 scenarios
+swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate all      # 57 scenarios
 swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate stress   # 69 adversarial scenarios
 scripts/screenshots.sh               # renders the app screens into docs/screens/
 node scripts/guide-illustrations.mjs # draws the install pictures into docs/guide/

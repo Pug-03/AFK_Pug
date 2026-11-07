@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 - 2026-11-07
 
 ### Added
 - Update check once a day, with a card and one-click install. The download is checked before it's installed, and the check can be turned off.
@@ -10,6 +10,7 @@
 - A MacBook demo video in the README.
 - A first-run tutorial: choose a language, then learn the app one part at a time.
 - Each agent row shows its project, request and current step, and says when it's waiting for you. A **Just finished** list shows which jobs ended. Requests stay on your Mac and aren't sent to your phone.
+- Click an agent row to go to its window: the exact tab in Terminal and iTerm2, the project's window in VS Code and Cursor when it's open, and the app itself elsewhere. macOS asks once before AFK Pug can control Terminal or iTerm2.
 - Keep the screen on for agents: while they work, or 30 minutes or an hour after they finish. Only on the charger with the lid open.
 - Colors are picked right in Settings: swatches for the background and accent, plus a color pad and hex field.
 
@@ -28,7 +29,7 @@
 - The panel is wider, and unfolds from the menu bar with a spring when it opens.
 - New app icon: a white A on black.
 - **Keep the screen on** moved to the home screen, because it changes from night to night.
-- New installs start in English with a black background and white accent. White replaces red among the accent presets.
+- The defaults are now English, a black background and a white accent. This also applies if you updated and never chose a language or accent. White replaces red among the accent presets.
 - The welcome opens once more after this update, and after a reinstall from a new version.
 - The duration picker no longer dims while an agent works.
 - A notification about an unanswered prompt under the lid says the Mac sleeps in about 15 minutes.
