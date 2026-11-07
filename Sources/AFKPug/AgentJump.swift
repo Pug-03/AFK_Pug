@@ -87,7 +87,13 @@ enum AgentJump {
         return steps
     }
 
+    /// VS Code gathers folders asked for within 100 ms into a new untitled workspace, in a new
+    /// window, even when it's the same folder twice. So a double click has to stay one request.
+    nonisolated(unsafe) private static var lastGo = Date.distantPast
+
     static func go(_ place: AgentPlace) {
+        guard Date().timeIntervalSince(lastGo) > 1 else { return }
+        lastGo = Date()
         let steps = steps(for: place)
         if Sim.enabled {
             Sim.record("jump: \(steps)")

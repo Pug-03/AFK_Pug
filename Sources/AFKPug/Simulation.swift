@@ -553,7 +553,9 @@ private final class Runner {
 
         step("a click only records, and nothing runs under the sim", expect: ["jump: "]) {
             AgentJump.go(AgentPlace(bundle: "com.apple.Terminal", tty: "ttys3"))
+            AgentJump.go(AgentPlace(bundle: "com.apple.Terminal", tty: "ttys3"))
         }
+        check(readLog().filter { $0.contains("jump: ") }.count == 1, "a double click is one request: two would open a new VS Code window")
         shell("__CFBundleIdentifier=com.apple.Terminal \"\(Paths.hookScript.path)\" stop claude", stdin: #"{"session_id":"j1","hook_event_name":"Stop"}"#)
         step("finished", ticks: 7, expect: ["notify: Claude Code finished"])
         check(engine.finished.first?.task?.place?.bundle != nil, "a finished job can still go to its window")
