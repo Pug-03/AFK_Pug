@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.1 - 2026-11-08
+
+### Fixed
+- Thai text writes **Agent** with a capital A, so the headline no longer starts with a lowercase word.
+
 ## 0.7.0 - 2026-11-08
 
 ### Added
