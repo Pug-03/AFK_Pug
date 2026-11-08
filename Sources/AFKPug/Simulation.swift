@@ -3719,6 +3719,20 @@ extension Runner {
         hk("start", "claude", cj("s-esc", "UserPromptSubmit"))
         hk("notify", "claude", claudeNotify("s-esc", "idle_prompt"))
         check(!exists("claude-s-esc"), "idle_prompt drops a plain hold")
+
+        // Monitors only wait for events: a turn that leaves just those is done.
+        let monitor = #"{"id":"m1","type":"monitor","status":"running","description":"watch \"type\" CI"}"#
+        let shellTask = #"{"id":"b2","type":"shell","status":"running","description":"build","command":"swift build"}"#
+        hk("start", "claude", cj("s-mon", "UserPromptSubmit"))
+        hk("stop", "claude", cj("s-mon", "Stop", #""background_tasks":[\#(monitor)],"session_crons":[{"type":"shell"}]"#))
+        check(!exists("claude-s-mon") && eventFiles().contains { $0.hasSuffix("-claude-done@s-mon") }, "Stop with only a monitor left: released, done")
+        hk("start", "claude", cj("s-mix", "UserPromptSubmit"))
+        hk("stop", "claude", cj("s-mix", "Stop", #""background_tasks":[\#(monitor),\#(shellTask)]"#))
+        check(holdJSON("claude-s-mix")?["bg"] as? Int == 1, "Stop with a monitor and a build: kept as bg")
+        step("bg hold, owner quiet for 2 min: still kept") { Sim.set("procs", ""); age("claude-s-mix", by: 2 * 60) }
+        check(engine.holds.contains { $0.id == "claude-s-mix" }, "bg hold survives 2 quiet minutes")
+        step("bg hold, owner quiet for 4 min: dropped, countdown starts") { age("claude-s-mix", by: 4 * 60) }
+        check(!engine.holds.contains { $0.id == "claude-s-mix" } && engine.graceUntil != nil, "quiet bg hold dropped after 3 min, grace started")
         step("events", ticks: 6) {}
 
         // [b3] Two Stop hooks at once (Cursor running both hook sets, or a retry): one done.

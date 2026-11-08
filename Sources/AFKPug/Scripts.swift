@@ -211,6 +211,15 @@ enum Scripts {
       fi
       echo "$at"
     }
+    # Stop with background work in flight (a build, a subagent). Monitors only wait for
+    # something to happen (a log line, a PR), so a turn that leaves just those is done.
+    bg_work() {
+      printf '%s' "$input" | LC_ALL=C grep -q '"background_tasks"[[:space:]]*:[[:space:]]*\[[[:space:]]*[^][:space:]]' || return 1
+      types=$(printf '%s' "$input" | LC_ALL=C tr -d '\n' | LC_ALL=C sed -e 's/.*"background_tasks"[[:space:]]*:[[:space:]]*\[//' -e 's/"session_crons".*//' |
+        LC_ALL=C grep -oE '"type"[[:space:]]*:[[:space:]]*"[^"]*"')
+      [ -z "$types" ] && return 0   # no types (older Claude Code): count it as work
+      printf '%s\n' "$types" | LC_ALL=C grep -vq '"monitor"'
+    }
     case "$action" in
       start) save_task prompt; create ;;
       touch)
@@ -229,7 +238,7 @@ enum Scripts {
         esac
         # Background shells / builds still running: the session isn't done. Mark the
         # hold so idle_prompt (Claude back at its prompt) doesn't drop it.
-        if printf '%s' "$input" | LC_ALL=C grep -q '"background_tasks"[[:space:]]*:[[:space:]]*\[[[:space:]]*[^][:space:]]'; then
+        if bg_work; then
           if [ -f "$hold" ]; then
             if LC_ALL=C grep -q '"bg":1' "$hold"; then touch "$hold"
             else

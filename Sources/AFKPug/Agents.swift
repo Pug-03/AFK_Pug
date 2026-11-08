@@ -166,6 +166,10 @@ enum HoldStore {
     /// owner's process tree is still busy (a single 40 min build is one tool call).
     /// Covers turns that end without a Stop hook (Esc, some API errors).
     static let untouchedAfter: TimeInterval = 15 * 60
+    /// A turn that ended with background work in flight ("bg":1) has nothing left to
+    /// touch the hold: once the owner's tree goes quiet this long, the work is done
+    /// (or it's an idle dev server) and the countdown starts.
+    static let bgUntouchedAfter: TimeInterval = 3 * 60
     /// Hard cap for holds without an expiry, busy or not.
     static let staleAfter: TimeInterval = 6 * 3600
     /// No writer sets an expiry further than this ahead (CLI max 24 h, MCP 12 h,
@@ -196,6 +200,7 @@ enum HoldStore {
             let expiresRaw = (json["expires"] as? Double).flatMap { $0.isFinite ? $0 : nil } ?? 0
             let expires = expiresRaw > 0 ? Date(timeIntervalSince1970: min(expiresRaw, 4e10)) : nil
             let pid = (json["pid"] as? NSNumber)?.int32Value ?? 0
+            let quietAfter = (json["bg"] as? NSNumber)?.intValue == 1 ? bgUntouchedAfter : untouchedAfter
 
             var stale: Bool
             if let expires {
@@ -205,7 +210,7 @@ enum HoldStore {
                 stale = expires < now || tooFar
             } else {
                 let untouched = now.timeIntervalSince(modified)
-                stale = untouched > staleAfter || (untouched > untouchedAfter && !(pid > 1 && ProcessWatcher.treeBusy(pid)))
+                stale = untouched > staleAfter || (untouched > quietAfter && !(pid > 1 && ProcessWatcher.treeBusy(pid)))
             }
             // Holds that name their owner die with it (a killed terminal never runs the Stop hook).
             if pid > 1, kill(pid, 0) != 0, errno == ESRCH { stale = true }
