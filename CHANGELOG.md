@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **While you were away:** the hustle card shows how much of the agents' work happened while you were away (lid closed, or nobody at the Mac for 5 minutes). Bars show that part solid and the rest faint.
+- **Waited for you:** how long agents sat waiting for your answer today, in amber once it passes a minute.
+
 ## 0.7.1 - 2026-11-08
 
 ### Fixed

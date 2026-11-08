@@ -754,7 +754,9 @@ final class Engine: ObservableObject {
         let scanned = HoldStore.scan(now: now)
         let newHolds = agentMode ? scanned + scanProcesses(hookHolds: scanned) : []
         if newHolds != holds { holds = newHolds }
-        HustleStore.shared.record(holds: holds, now: now)
+        HustleStore.shared.record(holds: holds, now: now) { [lidClosed] in
+            lidClosed || Sensors.idleSeconds() >= HustleStore.awayAfter
+        }
         // Events left from while the app wasn't running would all fire at once.
         handleEvents(HoldStore.consumeEvents(notBefore: firstTick ? Date().addingTimeInterval(-120) : nil))
         firstTick = false

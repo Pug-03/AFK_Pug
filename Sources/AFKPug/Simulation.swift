@@ -709,19 +709,26 @@ private final class Runner {
         step("one agent works a minute", ticks: 30) { }
         check((56...62).contains(today().seconds), "about 60 agent-seconds (\(today().seconds))")
         check(today().steps == 1, "the first step counts once (\(today().steps))")
+        check(abs(today().away - today().seconds) < 0.01, "nobody at the Mac for 10 minutes: all of it counts as away (\(today().away))")
 
         hold("claude-h2")
-        step("a second agent joins for 20 s", ticks: 10) { now("Read") }
+        let awayBefore = today().away
+        step("you're back, and a second agent joins for 20 s", ticks: 10) { Sim.set("idle", "3"); now("Read") }
         check((94...102).contains(today().seconds), "two agents count double (\(today().seconds))")
+        check(abs(today().away - awayBefore) < 0.01, "time you were at the Mac isn't away time (\(today().away))")
         check(today().steps == 2, "a new step counts (\(today().steps))")
 
         dropHold("claude-h2", event: nil)
         step("waiting for you", ticks: 15) { now("Read", waiting: true) }
         let waited = today().seconds
         check(waited < 104, "time waiting for you isn't work (\(waited))")
+        check((28...32).contains(today().waited), "about 30 s waiting for you (\(today().waited))")
+        step("lid closed while it works", ticks: 5) { now("Grep"); Sim.set("lid", "closed") }
+        check(today().away - awayBefore >= 8, "lid closed counts as away even right after typing (\(today().away - awayBefore))")
+        Sim.set("lid", "open")
 
         step("a sleep gap", ticks: 1, every: 600) { now("Bash") }
-        check(today().seconds - waited < 1, "a 10 minute gap isn't counted as work (\(today().seconds - waited))")
+        check(today().seconds - waited < 11, "a 10 minute gap isn't counted as work (\(today().seconds - waited))")
 
         step("finishes", ticks: 7, expect: ["notify: Claude Code finished"]) { dropHold("claude-h1") }
         check(today().jobs == 1, "a finished turn counts as a job (\(today().jobs))")
@@ -734,6 +741,9 @@ private final class Runner {
         check(bars.count == 24 && bars.last.map { HustleStore.hour(of: $0.start) } == HustleStore.hour(of: Clock.now()), "the last of 24 bars is this hour")
         check(abs(bars.reduce(0) { $0 + $1.total.seconds } - all) < 0.001, "the 24 bars hold all of today's work, across an hour boundary too")
         check(Hustle.bars(store.current, range: .week, now: Clock.now()).count == 7, "7 daily bars")
+        let old = Sim.dir.appendingPathComponent("hustle-0.7.json")
+        try? #"[{"hour":5,"seconds":120,"steps":3,"jobs":1}]"#.write(to: old, atomically: true, encoding: .utf8)
+        check(HustleStore(file: old).current == [HustleBucket(hour: 5, seconds: 120, steps: 3, jobs: 1)], "a file from 0.7 still reads, with no away or waiting time")
         check(HustleLevel(seconds: 0) == .napping && HustleLevel(seconds: 3 * 3600) == .grinding && HustleLevel(seconds: 6 * 3600) == .onFire, "levels follow agent time")
     }
 

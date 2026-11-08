@@ -90,7 +90,9 @@ enum Screens {
             let wobble = 0.75 + 0.5 * abs(sin(Double(h) * 1.7))
             let seconds = (3600 * 1.6 * curve * day * wobble).rounded()
             guard seconds > 0 else { continue }
-            buckets.append(HustleBucket(hour: h, seconds: seconds, steps: Int(seconds / 25), jobs: Int(seconds / 1500)))
+            let awayShare = local >= 20 || local < 3 ? 0.9 : (local == 12 ? 0.8 : 0.25)
+            buckets.append(HustleBucket(hour: h, seconds: seconds, steps: Int(seconds / 25), jobs: Int(seconds / 1500),
+                                        away: (seconds * awayShare).rounded(), waited: (seconds * 0.04).rounded()))
         }
         if let data = try? JSONEncoder().encode(buckets.reversed()) {
             try? data.write(to: Paths.state.appendingPathComponent("hustle.json"))

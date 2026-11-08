@@ -403,7 +403,9 @@ private let thaiV3: [String: String] = [
     "24h": "24 ชม.",
     "7d": "7 วัน",
     "now": "ตอนนี้",
-    "%@ · %@ · %d steps": "%@ · %@ · %d ขั้นตอน",
+    "%@ · %@ · %@ away · %d steps": "%@ · %@ · ตอนไม่อยู่ %@ · %d ขั้นตอน",
+    "%@ while you were away": "ทำตอนคุณไม่อยู่ %@",
+    "Waited for you %@": "รอคุณ %@",
 
     // Settings: Keep awake
     "Keep awake": "ให้เครื่องตื่น",

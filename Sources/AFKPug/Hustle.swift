@@ -9,6 +9,25 @@ struct HustleBucket: Codable, Equatable {
     var steps: Int = 0
     /// Turns that ended without an error.
     var jobs: Int = 0
+    /// The part of `seconds` worked while you were away: lid closed, or nobody at the Mac for 5 minutes.
+    var away: Double = 0
+    /// Agent-seconds spent waiting for your answer.
+    var waited: Double = 0
+
+    init(hour: Int, seconds: Double = 0, steps: Int = 0, jobs: Int = 0, away: Double = 0, waited: Double = 0) {
+        (self.hour, self.seconds, self.steps, self.jobs, self.away, self.waited) = (hour, seconds, steps, jobs, away, waited)
+    }
+
+    /// Files from 0.7 have no `away` or `waited`.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hour = try c.decode(Int.self, forKey: .hour)
+        seconds = try c.decodeIfPresent(Double.self, forKey: .seconds) ?? 0
+        steps = try c.decodeIfPresent(Int.self, forKey: .steps) ?? 0
+        jobs = try c.decodeIfPresent(Int.self, forKey: .jobs) ?? 0
+        away = try c.decodeIfPresent(Double.self, forKey: .away) ?? 0
+        waited = try c.decodeIfPresent(Double.self, forKey: .waited) ?? 0
+    }
 }
 
 /// How hard the agents worked, by the hour. Counted from the holds the engine already
@@ -19,6 +38,8 @@ final class HustleStore: ObservableObject {
     static let keepHours = 24 * 8
     /// Ticks further apart than this are a sleep or a stall, not work.
     static let maxGap: TimeInterval = 10
+    /// Nobody touched the Mac for this long: you're away, even with the lid open.
+    static let awayAfter: TimeInterval = 5 * 60
 
     /// What the UI draws. Published at most every 15 s, so a tick doesn't redraw the card.
     @Published private(set) var buckets: [HustleBucket]
@@ -38,13 +59,21 @@ final class HustleStore: ObservableObject {
         buckets = current
     }
 
-    /// Called every engine tick with this tick's holds.
-    func record(holds: [AgentHold], now: Date) {
+    /// Called every engine tick with this tick's holds. `away` is only asked for while an agent works.
+    func record(holds: [AgentHold], now: Date, away: () -> Bool) {
         let gap = lastTick.map { now.timeIntervalSince($0) } ?? 0
         lastTick = now
-        let working = holds.filter(Self.isWorking).count
-        if working > 0, gap > 0, gap <= Self.maxGap {
-            add(now) { $0.seconds += gap * Double(working) }
+        if gap > 0, gap <= Self.maxGap {
+            let working = Double(holds.filter(Self.isWorking).count)
+            let waiting = Double(holds.filter { !$0.isUsageLimitWait && $0.task?.waiting == true }.count)
+            if working > 0 {
+                let isAway = away()
+                add(now) {
+                    $0.seconds += gap * working
+                    if isAway { $0.away += gap * working }
+                }
+            }
+            if waiting > 0 { add(now) { $0.waited += gap * waiting } }
         }
         var seen: [String: String] = [:]
         var steps = 0
@@ -112,10 +141,16 @@ struct HustleSummary: Equatable {
     var seconds: Double = 0
     var steps = 0
     var jobs = 0
+    var away: Double = 0
+    var waited: Double = 0
 
     static func + (a: Self, b: HustleBucket) -> Self {
-        Self(seconds: a.seconds + b.seconds, steps: a.steps + b.steps, jobs: a.jobs + b.jobs)
+        Self(seconds: a.seconds + b.seconds, steps: a.steps + b.steps, jobs: a.jobs + b.jobs,
+             away: a.away + b.away, waited: a.waited + b.waited)
     }
+
+    /// How much of the work happened while you were away, 0...1.
+    var awayShare: Double { seconds > 0 ? min(1, away / seconds) : 0 }
 }
 
 /// One bar: a span of time and what happened in it.
@@ -226,6 +261,15 @@ struct HustleCard: View {
                 Figure(value: "\(today.steps)", label: tr("steps"))
                 Figure(value: "\(today.jobs)", label: tr("jobs done"))
             }
+            HStack(spacing: 6) {
+                Chip(swatch: Theme.accent, symbol: nil,
+                     text: tr("%@ while you were away", Self.time(today.away)) + (today.seconds >= 60 ? " · \(Int((today.awayShare * 100).rounded()))%" : ""),
+                     color: Theme.text)
+                Chip(swatch: nil, symbol: "hourglass",
+                     text: tr("Waited for you %@", Self.time(today.waited)),
+                     color: today.waited >= 60 ? Theme.waitText : Theme.sub)
+                Spacer(minLength: 0)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Text(caption(bars))
@@ -296,8 +340,17 @@ struct HustleCard: View {
                 ZStack(alignment: .bottom) {
                     Rectangle().fill(.clear)
                     if bar.total.seconds > 0 {
-                        RoundedRectangle(cornerRadius: range == .day ? 2.5 : 4, style: .continuous)
-                            .fill(LinearGradient(colors: [Theme.accent, Theme.accent.opacity(0.35)], startPoint: .top, endPoint: .bottom))
+                        // Faint: while you were here. Solid, from the bottom: while you were away.
+                        let shape = RoundedRectangle(cornerRadius: range == .day ? 2.5 : 4, style: .continuous)
+                        shape.fill(Theme.accent.opacity(0.3))
+                            .overlay(alignment: .bottom) {
+                                GeometryReader { box in
+                                    LinearGradient(colors: [Theme.accent, Theme.accent.opacity(0.6)], startPoint: .top, endPoint: .bottom)
+                                        .frame(height: box.size.height * bar.total.awayShare)
+                                        .frame(maxHeight: .infinity, alignment: .bottom)
+                                }
+                            }
+                            .clipShape(shape)
                             .frame(height: max(4, Self.chartHeight * fraction))
                             .opacity(dim ? 0.3 : (bar.id == peakID || bar.id == hovered ? 1 : 0.78))
                             .shadow(color: Theme.accent.opacity(bar.id == peakID && !dim ? 0.45 : 0), radius: 6)
@@ -349,7 +402,7 @@ struct HustleCard: View {
 
     private func detail(_ bar: HustleBar) -> String {
         let when = range == .day ? Fmt.time(bar.start) : Self.dayLabel(bar.start)
-        return tr("%@ · %@ · %d steps", when, Self.time(bar.total.seconds), bar.total.steps)
+        return tr("%@ · %@ · %@ away · %d steps", when, Self.time(bar.total.seconds), Self.time(bar.total.away), bar.total.steps)
     }
 
     private func grow() {
@@ -377,6 +430,31 @@ struct HustleCard: View {
     }
 
     static func dayLabel(_ date: Date) -> String { formatter("EEE").string(from: date) }
+
+    private struct Chip: View {
+        @ObservedObject var themeStore = ThemeStore.shared
+        let swatch: Color?
+        let symbol: String?
+        let text: String
+        let color: Color
+        var body: some View {
+            HStack(spacing: 5) {
+                if let swatch {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous).fill(swatch).frame(width: 7, height: 7)
+                }
+                if let symbol {
+                    Image(systemName: symbol).font(.system(size: 9, weight: .semibold))
+                }
+                Text(text).font(.system(size: 10.5).monospacedDigit()).lineLimit(1).minimumScaleFactor(0.8)
+                    .contentTransition(.numericText())
+                    .animation(Theme.smooth, value: text)
+            }
+            .foregroundStyle(color)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Capsule().fill(Theme.surfaceHover))
+            .accessibilityElement(children: .combine)
+        }
+    }
 
     private struct Figure: View {
         @ObservedObject var themeStore = ThemeStore.shared
