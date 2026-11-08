@@ -730,7 +730,9 @@ private final class Runner {
         let reloaded = HustleStore()
         check(Hustle.today(reloaded.current, now: Clock.now()) == today(), "saved and read back after a restart")
         let bars = Hustle.bars(store.current, range: .day, now: Clock.now())
-        check(bars.count == 24 && bars.last?.total.seconds == today().seconds, "the last of 24 bars is this hour")
+        let all = store.current.reduce(0) { $0 + $1.seconds }
+        check(bars.count == 24 && bars.last.map { HustleStore.hour(of: $0.start) } == HustleStore.hour(of: Clock.now()), "the last of 24 bars is this hour")
+        check(abs(bars.reduce(0) { $0 + $1.total.seconds } - all) < 0.001, "the 24 bars hold all of today's work, across an hour boundary too")
         check(Hustle.bars(store.current, range: .week, now: Clock.now()).count == 7, "7 daily bars")
         check(HustleLevel(seconds: 0) == .napping && HustleLevel(seconds: 3 * 3600) == .grinding && HustleLevel(seconds: 6 * 3600) == .onFire, "levels follow agent time")
     }
