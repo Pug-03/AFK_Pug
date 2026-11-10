@@ -35,14 +35,23 @@ struct AFKPugApp: App {
     }
 }
 
-/// Menu bar icon and optional status. Re-renders only when one of them actually changes.
+/// Menu bar icon and optional status. Re-renders only when one of them actually changes,
+/// or a few times a second while the icon moves.
 private struct MenuBarLabel: View {
     @State private var active = Engine.shared.isActive
     @State private var status = Engine.shared.menuBarText
+    @State private var motion = Engine.shared.menuMotion
+    @State private var frame: NSImage?
+
+    /// Breathing: the crossbar fades between these over 2.4 s, 8 frames a second.
+    private static let breath: [NSImage] = (0..<20).map { i in
+        AppGlyph.menuImage(crossbar: 0.6 + 0.4 * cos(Double(i) / 20 * 2 * .pi))
+    }
+    private static let amber = AppGlyph.menuImage(crossbar: 1, tint: .systemOrange)
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(nsImage: AppGlyph.menuImage(active: active))
+            Image(nsImage: frame ?? AppGlyph.menuImage(active: active))
             if let status { Text(status).monospacedDigit() }
         }
         .onReceive(Engine.shared.$isActive.removeDuplicates()) { value in
@@ -50,6 +59,40 @@ private struct MenuBarLabel: View {
         }
         .onReceive(Engine.shared.$menuBarText.removeDuplicates()) { value in
             if value != status { status = value }
+        }
+        .onReceive(Engine.shared.$menuMotion.removeDuplicates()) { value in
+            if value != motion { motion = value }
+        }
+        .task(id: motion) { await animate(motion) }
+    }
+
+    private func animate(_ motion: MenuMotion) async {
+        let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        switch motion {
+        case .still:
+            frame = nil
+        case .working:
+            if still { frame = nil; return }
+            var i = 0
+            while !Task.isCancelled {
+                frame = Self.breath[i % Self.breath.count]; i += 1
+                try? await Task.sleep(for: .milliseconds(120))
+            }
+        case .waiting:
+            if still { frame = Self.amber; return }
+            var on = true
+            while !Task.isCancelled {
+                frame = on ? Self.amber : AppGlyph.menuImage(active: true); on.toggle()
+                try? await Task.sleep(for: .milliseconds(700))
+            }
+        case let .countdown(until, length):
+            while !Task.isCancelled {
+                let left = until.timeIntervalSince(Clock.now())
+                frame = AppGlyph.menuImage(crossbar: 1, ring: left / length)
+                if left <= 0 { return }
+                // 120 steps around the ring, never faster than once a second.
+                try? await Task.sleep(for: .seconds(max(1, length / 120)))
+            }
         }
     }
 }

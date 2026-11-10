@@ -709,6 +709,7 @@ private final class Runner {
         step("one agent works a minute", ticks: 30) { }
         check((56...62).contains(today().seconds), "about 60 agent-seconds (\(today().seconds))")
         check(today().steps == 1, "the first step counts once (\(today().steps))")
+        check(engine.menuMotion == .working, "menu bar icon breathes while an agent works (\(engine.menuMotion))")
         check(abs(today().away - today().seconds) < 0.01, "nobody at the Mac for 10 minutes: all of it counts as away (\(today().away))")
 
         hold("claude-h2")
@@ -723,6 +724,7 @@ private final class Runner {
         let waited = today().seconds
         check(waited < 104, "time waiting for you isn't work (\(waited))")
         check((28...32).contains(today().waited), "about 30 s waiting for you (\(today().waited))")
+        check(engine.menuMotion == .waiting, "menu bar icon turns amber while an agent waits for you (\(engine.menuMotion))")
         step("lid closed while it works", ticks: 5) { now("Grep"); Sim.set("lid", "closed") }
         check(today().away - awayBefore >= 8, "lid closed counts as away even right after typing (\(today().away - awayBefore))")
         Sim.set("lid", "open")
@@ -1173,6 +1175,9 @@ private final class Runner {
         check(engine.holds.contains { $0.id == "claude-s1" }, "busy owner keeps an untouched hold")
         step("Esc: no Stop hook, Claude idle at the prompt, 16 min untouched", forbid: ["pmset sleepnow"]) { Sim.set("procs", idle); age("claude-s1", by: 16 * 60) }
         check(!engine.holds.contains { $0.id == "claude-s1" } && engine.graceUntil != nil, "hold dropped after 15 min idle, grace started")
+        if case let .countdown(until, length) = engine.menuMotion {
+            check(until == engine.graceUntil && abs(length - engine.graceLength) < 1, "countdown ring runs to the end of the wait")
+        } else { fail("menu bar icon shows a countdown ring during the wait (\(engine.menuMotion))") }
         step("grace runs out", ticks: 61, expect: Self.restoreActions + ["disablesleep 0", "pmset sleepnow"])
         step("PreToolUse with no hold re-creates it", expect: ["log: Claude Code started working"]) { script(Paths.hookScript, ["touch", "claude"], stdin: input) }
         step("Stop (finished confirmed after 10 s)", ticks: 6, expect: ["log: Claude Code finished"]) { script(Paths.hookScript, ["stop", "claude"], stdin: input) }

@@ -927,10 +927,18 @@ struct FinishedRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: item.failed ? "exclamationmark.triangle.fill" : "checkmark")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(item.failed ? Theme.warn : Theme.live)
-                .frame(width: 8)
+            Group {
+                if item.failed {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 8, weight: .bold))
+                } else {
+                    // A turn that just ended draws its tick.
+                    CheckMark().trim(from: 0, to: drawn ? 1 : 0)
+                        .stroke(style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
+                        .frame(width: 8, height: 7)
+                }
+            }
+            .foregroundStyle(item.failed ? Theme.warn : Theme.live)
+            .frame(width: 8)
             VStack(alignment: .leading, spacing: 0) {
                 Text(item.task?.title ?? AgentIntegrations.displayName(item.agent))
                     .font(.system(size: 11)).lineLimit(1).truncationMode(.tail)
@@ -953,7 +961,28 @@ struct FinishedRow: View {
             .accessibilityLabel(tr("Remove from the list"))
         }
         .padding(.vertical, 2)
+        .background(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.live.opacity(glow ? 0.14 : 0))
+                .padding(.horizontal, -6)
+        }
         .modifier(GoesToSession(place: item.task?.place))
+        .onAppear(perform: celebrate)
+    }
+
+    @State private var drawn = true
+    @State private var glow = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Rows for turns that ended in the last 30 s arrive with a drawn tick and a soft glow.
+    private func celebrate() {
+        guard !item.failed, !reduceMotion, Clock.now().timeIntervalSince(item.at) < 30 else { return }
+        var reset = Transaction(animation: nil)
+        reset.disablesAnimations = true
+        withTransaction(reset) { drawn = false; glow = true }
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.45).delay(0.1)) { drawn = true }
+            withAnimation(.easeOut(duration: 1.4).delay(0.6)) { glow = false }
+        }
     }
 
     private var detail: String {
@@ -961,6 +990,16 @@ struct FinishedRow: View {
         let when = elapsed < 60 ? tr("just now") : tr("%@ ago", Fmt.compact(elapsed))
         let name = AgentIntegrations.displayName(item.agent)
         return (item.failed ? tr("%@ stopped with an error", name) : name) + " · " + when
+    }
+}
+
+private struct CheckMark: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX, y: rect.midY))
+        p.addLine(to: CGPoint(x: rect.minX + rect.width * 0.36, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        return p
     }
 }
 

@@ -5,6 +5,8 @@
 ### Added
 - **While you were away:** the hustle card shows how much of the agents' work happened while you were away (lid closed, or nobody at the Mac for 5 minutes). Bars show that part solid and the rest faint.
 - **Waited for you:** how long agents sat waiting for your answer today, in amber once it passes a minute.
+- **A menu bar icon that shows what's happening:** the A breathes while agents work, blinks orange while one waits for you, and shrinks into a ring that empties as the Mac counts down to sleep. It stays still with Reduce motion on.
+- **Done, with a little cheer:** a job that just finished draws its tick in the list with a soft glow, the jobs count pops and this hour's bar flashes.
 
 ### Fixed
 - A Claude Code turn that ended with only a Monitor running no longer keeps the Mac awake as if the agent were still working. A turn that leaves a background build drops its hold 3 minutes after the build goes quiet (was 15), so the countdown starts.

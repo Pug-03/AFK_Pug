@@ -73,6 +73,9 @@ final class Engine: ObservableObject {
     @Published var menuBarStatus: Bool { didSet { save(menuBarStatus, "menuBarStatus"); updateMenuBarText() } }
     /// Beside the icon: time left or agents working. Minute resolution, so it rarely redraws.
     @Published private(set) var menuBarText: String?
+    /// How the menu bar icon moves: breathing while agents work, amber while one waits,
+    /// a ring counting down to sleep.
+    @Published private(set) var menuMotion: MenuMotion = .still
 
     // MARK: Live state
 
@@ -873,6 +876,18 @@ final class Engine: ObservableObject {
             }
         }
         if text != menuBarText { menuBarText = text }
+
+        var motion = MenuMotion.still
+        if trip == nil, agentMode {
+            if holds.contains(where: { !$0.isUsageLimitWait && $0.task?.waiting == true }) {
+                motion = .waiting
+            } else if holds.contains(where: HustleStore.isWorking) {
+                motion = .working
+            } else if holds.isEmpty, graceActive, let until = graceUntil, graceLength > 0 {
+                motion = .countdown(until: until, length: graceLength)
+            }
+        }
+        if motion != menuMotion { menuMotion = motion }
     }
 
     /// Report "finished" only if the session didn't pick the work up again within 10 s

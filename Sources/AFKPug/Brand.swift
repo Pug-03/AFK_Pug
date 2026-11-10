@@ -21,17 +21,62 @@ enum AppGlyph {
 
     /// Template image for the menu bar, so macOS tints it for light and dark bars.
     static func menuImage(active: Bool) -> NSImage {
+        menuImage(crossbar: active ? 1 : 0)
+    }
+
+    /// One frame of the menu bar icon. `crossbar` is the bar's opacity (it breathes while
+    /// agents work). `ring` is the share of the countdown left: the glyph shrinks into a
+    /// ring that empties clockwise. `tint` draws a colored (non-template) frame.
+    static func menuImage(crossbar: CGFloat, ring: Double? = nil, tint: NSColor? = nil) -> NSImage {
         let size: CGFloat = 18
         let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { _ in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
-            context.addPath(scaled(size, active: active).cgPath)
-            context.setFillColor(NSColor.black.cgColor)
+            let color = (tint ?? .black).cgColor
+            var glyph: CGFloat = size, offset: CGFloat = 0
+            if let ring {
+                glyph = 10; offset = (size - glyph) / 2
+                let center = CGPoint(x: size / 2, y: size / 2), radius = size / 2 - 1
+                context.setLineWidth(1.6)
+                context.setLineCap(.round)
+                context.setStrokeColor(color.copy(alpha: 0.3) ?? color)
+                context.addEllipse(in: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+                context.strokePath()
+                let left = max(0, min(1, ring))
+                if left > 0 {
+                    // Flipped context: clockwise on screen from 12 o'clock.
+                    context.setStrokeColor(color)
+                    context.addArc(center: center, radius: radius, startAngle: -.pi / 2,
+                                   endAngle: -.pi / 2 + 2 * .pi * left, clockwise: false)
+                    context.strokePath()
+                }
+            }
+            let move = CGAffineTransform(translationX: offset, y: offset)
+            context.addPath(scaled(glyph, active: false).applying(move).cgPath)
+            context.setFillColor(color)
             context.fillPath()
+            if crossbar > 0 {
+                context.addPath(crossbarPath(glyph).applying(move).cgPath)
+                context.setFillColor(color.copy(alpha: crossbar) ?? color)
+                context.fillPath()
+            }
             return true
         }
-        image.isTemplate = true
+        image.isTemplate = tint == nil
         return image
     }
+
+    private static func crossbarPath(_ size: CGFloat) -> Path {
+        var bar = Path()
+        bar.move(to: CGPoint(x: 9.5, y: 20.5))
+        bar.addLine(to: CGPoint(x: 22.5, y: 20.5))
+        return bar.strokedPath(StrokeStyle(lineWidth: 4.6, lineCap: .round))
+            .applying(CGAffineTransform(scaleX: size / 32, y: size / 32))
+    }
+}
+
+enum MenuMotion: Equatable {
+    case still, working, waiting
+    case countdown(until: Date, length: TimeInterval)
 }
 
 struct GlyphView: View {

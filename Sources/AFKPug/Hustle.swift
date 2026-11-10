@@ -245,6 +245,9 @@ struct HustleCard: View {
     @State private var hovered: Int?
     /// True for still renders, which never appear; opening the panel grows the bars from zero.
     @State private var grown = true
+    /// A job just finished: the count pops and this hour's bar flashes.
+    @State private var cheer = 0
+    @State private var flash = false
     @Environment(\.panelOpens) private var panelOpens
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private static let chartHeight: CGFloat = 64
@@ -259,7 +262,7 @@ struct HustleCard: View {
             HStack(alignment: .top, spacing: 8) {
                 Figure(value: Self.time(today.seconds), label: tr("agent time today"))
                 Figure(value: "\(today.steps)", label: tr("steps"))
-                Figure(value: "\(today.jobs)", label: tr("jobs done"))
+                Figure(value: "\(today.jobs)", label: tr("jobs done"), pop: cheer)
             }
             HStack(spacing: 6) {
                 Chip(swatch: Theme.accent, symbol: nil,
@@ -288,6 +291,12 @@ struct HustleCard: View {
         .cardBackground(radius: 12)
         .onChange(of: panelOpens) { grow() }
         .onChange(of: range) { grow() }
+        .onChange(of: today.jobs) { old, new in
+            guard new > old, !reduceMotion else { return }
+            cheer += 1
+            withAnimation(.easeOut(duration: 0.15)) { flash = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { withAnimation(.easeOut(duration: 0.6)) { flash = false } }
+        }
     }
 
     private func header(level: HustleLevel) -> some View {
@@ -352,8 +361,10 @@ struct HustleCard: View {
                             }
                             .clipShape(shape)
                             .frame(height: max(4, Self.chartHeight * fraction))
-                            .opacity(dim ? 0.3 : (bar.id == peakID || bar.id == hovered ? 1 : 0.78))
-                            .shadow(color: Theme.accent.opacity(bar.id == peakID && !dim ? 0.45 : 0), radius: 6)
+                            .brightness(flash && bar.id == last ? 0.25 : 0)
+                            .opacity(dim ? 0.3 : (bar.id == peakID || bar.id == hovered || (flash && bar.id == last) ? 1 : 0.78))
+                            .shadow(color: Theme.accent.opacity(flash && bar.id == last ? 0.8 : (bar.id == peakID && !dim ? 0.45 : 0)),
+                                    radius: flash && bar.id == last ? 10 : 6)
                     } else {
                         Capsule().fill(bar.id == last ? Theme.sub : Theme.line).frame(height: 2)
                     }
@@ -460,12 +471,19 @@ struct HustleCard: View {
         @ObservedObject var themeStore = ThemeStore.shared
         let value: String
         let label: String
+        var pop = 0
         var body: some View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(value).font(.system(size: 16, weight: .semibold, design: .rounded).monospacedDigit())
                     .lineLimit(1).minimumScaleFactor(0.7)
                     .contentTransition(.numericText())
                     .animation(Theme.smooth, value: value)
+                    .keyframeAnimator(initialValue: 1.0, trigger: pop) { view, scale in
+                        view.scaleEffect(scale, anchor: .bottomLeading)
+                    } keyframes: { _ in
+                        SpringKeyframe(1.3, duration: 0.18, spring: .snappy)
+                        SpringKeyframe(1.0, duration: 0.45, spring: .bouncy)
+                    }
                 Text(label).font(.system(size: 10)).foregroundStyle(Theme.sub)
                     .lineLimit(1).minimumScaleFactor(0.8)
             }
