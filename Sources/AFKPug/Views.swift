@@ -68,6 +68,7 @@ struct RootView: View {
                 WindowHeightFitter(opened: {
                     engine.postponeTick()
                     opens += 1
+                    UsageStore.shared.panelOpened(now: Clock.now())
                     withAnimation(Self.unfoldAnimation) { unfold = 1 }
                 }, closed: {
                     var transaction = Transaction(animation: nil)
@@ -310,6 +311,7 @@ struct HomeView: View {
             Modes(engine: engine)
             if engine.agentMode {
                 HustleCard()
+                UsageCard(engine: engine)
             }
             StatusBar(engine: engine)
         }

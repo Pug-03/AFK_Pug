@@ -409,6 +409,28 @@ enum Scripts {
     /// The app writes its pid to state/app.pid at launch and removes it on quit. The pid
     /// only counts while it is alive, still an AFKPug executable (a renamed or moved
     /// bundle is fine) and not an `AFKPug --mcp` server, which shares the name.
+    /// Claude Code status line tap: afkpug-statusline ['<your status line command>'].
+    /// Keeps only the `rate_limits` object (no paths, prompts or costs), then runs the
+    /// user's own status line with the same input so it prints exactly as before.
+    static let statusline = #"""
+    #!/bin/sh
+    # AFK Pug: saves Claude Code's usage limits, then runs your own status line.
+    input=$(cat)
+    case "$input" in *'"rate_limits"'*)
+      dir="$HOME/.afkpug/state"
+      if [ -d "$dir" ]; then
+        tmp="$dir/.usage-claude.$$.tmp"
+        if printf '%s' "$input" | /usr/bin/plutil -extract rate_limits json -o "$tmp" - 2>/dev/null && [ -s "$tmp" ]; then
+          mv -f "$tmp" "$dir/usage-claude.json"
+        else
+          rm -f "$tmp"
+        fi
+      fi ;;
+    esac
+    [ -n "$1" ] && printf '%s' "$input" | /bin/sh -c "$1"
+    exit 0
+    """#
+
     static let watchdog = #"""
     #!/bin/sh
     state="$HOME/.afkpug/state"

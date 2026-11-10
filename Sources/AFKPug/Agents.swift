@@ -20,6 +20,8 @@ enum Paths {
     static let appPid = state.appendingPathComponent("app.pid")
     static let hookScript = bin.appendingPathComponent("afkpug-hook")
     static let cliScript = bin.appendingPathComponent("afkpug")
+    /// In front of Claude Code's status line: saves its usage limits (see ClaudeStatusLine).
+    static let statuslineScript = bin.appendingPathComponent("afkpug-statusline")
     static let watchdogScript = bin.appendingPathComponent("watchdog.sh")
     static let watchdogPlist = Sim.enabled
         ? root.appendingPathComponent("com.pug03.afkpug.watchdog.plist")
@@ -307,6 +309,7 @@ enum Installer {
         Paths.ensure()
         write(Scripts.hook, to: Paths.hookScript)
         write(Scripts.cli, to: Paths.cliScript)
+        write(Scripts.statusline, to: Paths.statuslineScript)
         write(Scripts.watchdog, to: Paths.watchdogScript)
     }
 

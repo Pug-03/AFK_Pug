@@ -131,6 +131,9 @@ final class Engine: ObservableObject {
     @Published private(set) var triggerKind: TriggerKind?
     @Published private(set) var musicPlaying = false
     @Published private(set) var mcpConnected = MCPInstaller.isInstalled()
+    /// AFK Pug's tap sits in front of Claude Code's status line (usage limits).
+    @Published private(set) var claudeUsageOn = ClaudeStatusLine.isInstalled()
+    @Published private(set) var claudeUsageError: String?
 
     private var timer: Timer?
     private var tickCount = 0
@@ -224,6 +227,11 @@ final class Engine: ObservableObject {
             if (try? item.connect()) != nil { log("link", tr("Updated the %@ connection", item.name)) }
         }
         refreshIntegrations()
+        claudeUsageOn = ClaudeStatusLine.isInstalled()
+        UsageStore.shared.alert = { [weak self] title, body in
+            guard let self, self.notifyAgents else { return }
+            self.notify(title, body)
+        }
         recoverFromCrash()
         if !Engine.store.bool(forKey: "didFirstRun") {
             Engine.store.set(true, forKey: "didFirstRun")
@@ -606,6 +614,24 @@ final class Engine: ObservableObject {
 
     // MARK: Agent integrations
 
+    /// Claude Code is here but its usage limits aren't being read yet.
+    var claudeUsageOffered: Bool { !claudeUsageOn && ClaudeStatusLine.isAvailable() }
+
+    func setClaudeUsage(_ on: Bool) {
+        claudeUsageError = nil
+        do {
+            let was = ClaudeStatusLine.isInstalled()
+            if on { try ClaudeStatusLine.install() } else { try ClaudeStatusLine.uninstall() }
+            if was != on {
+                log("gauge.with.dots.needle.67percent", on ? tr("Showing Claude Code's usage limits") : tr("Stopped reading Claude Code's usage limits"))
+            }
+        } catch {
+            claudeUsageError = error.localizedDescription
+        }
+        claudeUsageOn = ClaudeStatusLine.isInstalled()
+        UsageStore.shared.tick(now: now)
+    }
+
     func refreshIntegrations() {
         // Plugin installed after the settings.json hooks: every event would fire twice.
         if ClaudeHooks.doubledByPlugin(), (try? ClaudeHooks.install()) != nil {
@@ -760,6 +786,7 @@ final class Engine: ObservableObject {
         HustleStore.shared.record(holds: holds, now: now) { [lidClosed] in
             lidClosed || Sensors.idleSeconds() >= HustleStore.awayAfter
         }
+        UsageStore.shared.tick(now: now)
         // Events left from while the app wasn't running would all fire at once.
         handleEvents(HoldStore.consumeEvents(notBefore: firstTick ? Date().addingTimeInterval(-120) : nil))
         firstTick = false

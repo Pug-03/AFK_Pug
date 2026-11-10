@@ -409,4 +409,23 @@ private let thaiV3: [String: String] = [
 
     // Settings: Keep awake
     "Keep awake": "ให้เครื่องตื่น",
+    // Usage limits
+    "Usage limits": "โควตาการใช้งาน",
+    "5-hour": "5 ชั่วโมง",
+    "Daily": "รายวัน",
+    "Weekly": "รายสัปดาห์",
+    "Monthly": "รายเดือน",
+    "Limit": "โควตา",
+    "Resets in %@": "รีเซ็ตใน %@",
+    "%dd": "%d วัน",
+    "%dd %dh": "%d วัน %d ชม.",
+    "Show": "แสดง",
+    "See Claude Code's 5-hour and weekly limits here": "ดูโควตา 5 ชั่วโมงและรายสัปดาห์ของ Claude Code ได้ที่นี่",
+    "%@ is at %d%% of its %@ limit": "%1$@ ใช้โควตา%3$@ไปแล้ว %2$d%%",
+    "Showing Claude Code's usage limits": "แสดงโควตาของ Claude Code แล้ว",
+    "Stopped reading Claude Code's usage limits": "เลิกอ่านโควตาของ Claude Code แล้ว",
+    "%@ has a \"statusLine\" value that is not an object": "%@ มีค่า \"statusLine\" ที่ไม่ใช่ออบเจกต์",
+    "Your Claude Code status line isn't a command, so AFK Pug can't add to it": "status line ของ Claude Code ไม่ได้เป็นคำสั่ง AFK Pug จึงเพิ่มเข้าไปไม่ได้",
+    "Claude Code usage limits": "โควตาของ Claude Code",
+    "Read from its status line. Yours keeps showing": "อ่านจาก status line ของ Claude Code โดยของเดิมยังแสดงเหมือนเดิม",
 ]

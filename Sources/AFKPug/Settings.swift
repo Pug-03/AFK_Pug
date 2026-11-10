@@ -100,6 +100,14 @@ struct SettingsView: View {
                         ForEach(AgentIntegrations.all) { item in
                             AgentConnectionRow(engine: engine, item: item)
                         }
+                        if ClaudeStatusLine.isAvailable() || engine.claudeUsageOn {
+                            Row(symbol: "gauge.with.dots.needle.67percent", title: tr("Claude Code usage limits"),
+                                detail: tr("Read from its status line. Yours keeps showing")) {
+                                Toggle(tr("Claude Code usage limits"), isOn: Binding(get: { engine.claudeUsageOn }, set: { engine.setClaudeUsage($0) }))
+                                    .toggleStyle(MiniSwitch()).labelsHidden()
+                            }
+                            if let error = engine.claudeUsageError { ErrorText(error).padding(.leading, 30) }
+                        }
                         ToggleRow(symbol: "magnifyingglass", title: tr("Detect other agents"),
                                   detail: tr("Codex, Gemini CLI, Cursor Agent, Aider, OpenCode and more"), isOn: $engine.detectOtherAgents)
                         // The plugin ships its own MCP server, so there's nothing to connect here.

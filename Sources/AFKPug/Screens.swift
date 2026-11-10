@@ -76,7 +76,16 @@ enum Screens {
             Engine.store.set("#3CCB7F", forKey: "accentColor")
         }
         Theme.palette = ThemeStore.loadPalette()
-        if ["working", "white", "custom"].contains(scene) { seedHustle() }
+        if ["working", "white", "custom"].contains(scene) { seedHustle(); seedUsage() }
+    }
+
+    /// Usage limits as Claude Code's status line and Codex would report them.
+    private static func seedUsage() {
+        let now = Int(Clock.now().timeIntervalSince1970)
+        Paths.ensure()
+        let claude = #"{"five_hour":{"used_percentage":64,"resets_at":\#(now + 2 * 3600 + 900)},"seven_day":{"used_percentage":83,"resets_at":\#(now + 2 * 86400 + 5 * 3600)}}"#
+        try? claude.write(to: UsageStore.claudeFile, atomically: true, encoding: .utf8)
+        Sim.set("codex-usage", #"{"rateLimits":{"primary":{"usedPercent":22,"windowDurationMins":300,"resetsAt":\#(now + 3 * 3600)},"secondary":{"usedPercent":41,"windowDurationMins":10080,"resetsAt":\#(now + 4 * 86400)},"planType":"plus"}}"#)
     }
 
     /// A believable week of agent work for the hustle card: busy afternoons, a late night, a quiet weekend.

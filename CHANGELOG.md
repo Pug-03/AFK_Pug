@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **Usage limits:** a card on the home screen shows how much of each AI's quota is used, with bars for the 5-hour and weekly windows and when each resets. Bars turn amber at 80% and red at 95%, and AFK Pug notifies you once per window when it crosses them. Codex is read from `codex app-server`. For Claude Code, press **Show** (or the switch in Settings → Agents): AFK Pug adds a small tap in front of your status line that saves only the limits, and your own status line keeps printing as before. Turning it off puts your status line back exactly.
 - **While you were away:** the hustle card shows how much of the agents' work happened while you were away (lid closed, or nobody at the Mac for 5 minutes). Bars show that part solid and the rest faint.
 - **Waited for you:** how long agents sat waiting for your answer today, in amber once it passes a minute.
 - **A menu bar icon that shows what's happening:** the A breathes while agents work, blinks orange while one waits for you, and shrinks into a ring that empties as the Mac counts down to sleep. It stays still with Reduce motion on.

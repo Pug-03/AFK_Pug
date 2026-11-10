@@ -67,6 +67,7 @@ enum Simulation {
         ("keep-screen", "Screen stays on for agents: only when chosen, on the charger, lid open; ends with the wait, a guard, unplugging or the lid"),
         ("agent-jump", "Clicking an agent row: goes to the right window, launches nothing, and odd values from the hook can't reach another program"),
         ("cursor-steady", "Pointer during motion: a repeat is skipped only while something moves; a real change always goes through"),
+        ("usage", "Usage limits: Claude status line tap (wrap, pass through, unwrap), Codex answer, alerts once per window"),
         ("hustle", "Agent hustle: working time, steps and jobs by the hour; waiting and limits don't count; saved and reloaded"),
         ("agent-tasks", "Agent rows: project, request and current step from hooks; waiting shows; finished list; prompts stay local and don't linger"),
         ("theme", "Appearance: text stays legible on any background and accent, defaults keep the black look, bad values fall back"),
@@ -354,6 +355,7 @@ private final class Runner {
         case "agent-jump": agentJump()
         case "cursor-steady": cursorSteady()
         case "agent-tasks": agentTasks()
+        case "usage": usage()
         case "hustle": hustle()
         case "theme": theme()
         case "menu-bar": menuBar()
@@ -689,6 +691,82 @@ private final class Runner {
         dropHold("claude-a8")
         engine.shutdown()
         check(!engine.keepingScreenOn, "quitting releases the screen")
+    }
+
+    func usage() {
+        configure(); boot()
+        let fm = FileManager.default
+        let settings = ClaudeStatusLine.settingsURL
+        let seen = Sim.dir.appendingPathComponent("statusline-seen.json")
+        try? fm.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let mine = "cat > \(ConfigFile.shellQuote(seen.path)); printf 'MY LINE'"
+        let before: [String: Any] = ["model": "opus", "statusLine": ["type": "command", "command": mine, "padding": 2]]
+        try? ConfigFile.saveJSON(before, to: settings)
+        check(engine.claudeUsageOffered && !engine.claudeUsageOn, "Claude Code here: usage offered")
+
+        engine.setClaudeUsage(true)
+        let json = (try? ConfigFile.loadJSON(settings)) ?? [:]
+        let line = json["statusLine"] as? [String: Any] ?? [:]
+        let command = line["command"] as? String ?? ""
+        check(engine.claudeUsageOn && command.contains(ClaudeStatusLine.marker), "tap installed (\(command))")
+        check(line["padding"] as? Int == 2 && json["model"] as? String == "opus", "the rest of settings.json kept")
+        check(ClaudeStatusLine.original(from: command) == mine, "original recoverable from the command")
+        engine.setClaudeUsage(true)
+        check(((try? ConfigFile.loadJSON(settings))?["statusLine"] as? [String: Any])?["command"] as? String == command, "connecting twice doesn't wrap twice")
+
+        let input = #"{"cwd":"/Users/u/secret","session_id":"s","rate_limits":{"five_hour":{"used_percentage":83,"resets_at":\#(Int(Clock.now().timeIntervalSince1970) + 7200)},"seven_day":{"used_percentage":25.5,"resets_at":\#(Int(Clock.now().timeIntervalSince1970) + 86400 * 3)}}}"#
+        let run = sh(["-c", command], stdin: input)
+        check(run.output == "MY LINE", "your status line still prints (\(run.output.debugDescription))")
+        check((try? String(contentsOf: seen, encoding: .utf8)) == input, "your status line gets the same input")
+        let saved = (try? String(contentsOf: UsageStore.claudeFile, encoding: .utf8)) ?? ""
+        check(saved.contains("five_hour") && !saved.contains("secret") && !saved.contains("session_id"), "only rate_limits is saved (\(saved))")
+
+        step("tick reads it", expect: ["notify: Claude Code is at 83% of its 5-hour limit"]) {}
+        let claude = UsageStore.shared.reports.first { $0.agent == "claude" }
+        check(claude?.windows.map(\.label) == ["5-hour", "Weekly"] && claude?.windows.first?.percent == 83, "Claude windows (\(claude?.windows ?? []))")
+        check(claude?.windows.first?.level == .warning, "83% is a warning")
+        step("same reading again: no second alert", ticks: 3, forbid: ["notify:"]) { _ = sh(["-c", command], stdin: input) }
+        let higher = input.replacingOccurrences(of: #""used_percentage":83"#, with: #""used_percentage":96"#)
+        step("96%: one more alert", expect: ["notify: Claude Code is at 96% of its 5-hour limit"]) { _ = sh(["-c", command], stdin: higher) }
+        check(UsageStore.shared.reports.first?.windows.first?.level == .critical, "96% is critical")
+        let noLimits = sh(["-c", command], stdin: #"{"cwd":"/x","rate_limits":null}"#)
+        check(noLimits.output == "MY LINE" && ((try? String(contentsOf: UsageStore.claudeFile, encoding: .utf8)) ?? "").contains("96"), "API-key session (null limits): file untouched, line still prints")
+
+        // Codex's answer to account/rateLimits/read.
+        let reset = Int(Clock.now().timeIntervalSince1970) + 3600
+        Sim.set("codex-usage", #"{"rateLimits":{"primary":{"usedPercent":40,"windowDurationMins":300,"resetsAt":\#(reset)},"secondary":{"usedPercent":12,"windowDurationMins":10080,"resetsAt":\#(reset + 86400)},"planType":"plus"}}"#)
+        step("Codex asked", forbid: ["notify:"]) {}
+        let codex = UsageStore.shared.reports.first { $0.agent == "codex" }
+        check(codex?.windows.map(\.label) == ["5-hour", "Weekly"] && codex?.plan == "plus" && codex?.windows.first?.percent == 40, "Codex windows (\(String(describing: codex)))")
+        check(UsageStore.shared.reports.map(\.agent) == ["claude", "codex"], "Claude first, then Codex")
+        check(UsageParse.label(minutes: 43200) == "Monthly", "30-day window is Monthly")
+
+        Sim.clockOffset += 7300
+        step("the 5-hour window resets", ticks: 1) {}
+        check(UsageStore.shared.reports.first { $0.agent == "claude" }?.windows.first?.percent == 0, "a window past its reset reads 0%")
+
+        engine.setClaudeUsage(false)
+        let restored = (try? ConfigFile.loadJSON(settings)) ?? [:]
+        check((restored["statusLine"] as? [String: Any])?["command"] as? String == mine && (restored["statusLine"] as? [String: Any])?["padding"] as? Int == 2,
+              "disconnect puts your status line back exactly")
+        check(!fm.fileExists(atPath: UsageStore.claudeFile.path), "saved limits removed on disconnect")
+
+        // No status line of your own: ours prints nothing, and goes away on disconnect.
+        try? ConfigFile.saveJSON(["model": "opus"], to: settings)
+        engine.setClaudeUsage(true)
+        let bare = ((try? ConfigFile.loadJSON(settings))?["statusLine"] as? [String: Any])?["command"] as? String ?? ""
+        check(sh(["-c", bare], stdin: input).output.isEmpty, "no status line of yours: prints nothing")
+        engine.setClaudeUsage(false)
+        check((try? ConfigFile.loadJSON(settings))?["statusLine"] == nil, "and none after disconnect")
+        // Tap gone (app deleted): your status line still runs.
+        engine.setClaudeUsage(false)
+        try? ConfigFile.saveJSON(before, to: settings)
+        engine.setClaudeUsage(true)
+        let wrapped = ((try? ConfigFile.loadJSON(settings))?["statusLine"] as? [String: Any])?["command"] as? String ?? ""
+        try? fm.removeItem(at: Paths.statuslineScript)
+        check(sh(["-c", wrapped], stdin: input).output == "MY LINE", "without AFK Pug your status line still runs")
+        Installer.installScripts()
+        engine.setClaudeUsage(false)
     }
 
     func hustle() {
