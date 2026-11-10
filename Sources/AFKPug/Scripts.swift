@@ -420,8 +420,9 @@ enum Scripts {
       dir="$HOME/.afkpug/state"
       if [ -d "$dir" ]; then
         tmp="$dir/.usage-claude.$$.tmp"
-        # Only an object: some macOS versions write "null" for a session without limits.
-        if printf '%s' "$input" | /usr/bin/plutil -extract rate_limits json -o "$tmp" - 2>/dev/null &&
+        # Silent on both streams: macOS 15's plutil prints its errors on stdout, which
+        # would end up in the status line. Only an object is kept.
+        if printf '%s' "$input" | /usr/bin/plutil -extract rate_limits json -o "$tmp" - >/dev/null 2>&1 &&
            [ "$(head -c 1 "$tmp" 2>/dev/null)" = "{" ]; then
           mv -f "$tmp" "$dir/usage-claude.json"
         else
