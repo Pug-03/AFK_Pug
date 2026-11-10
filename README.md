@@ -58,8 +58,17 @@ You ask Claude Code to refactor a module, close your MacBook and walk to lunch. 
 - **Has hard limits:** stops at low battery or critical heat, and restores normal sleep even if the app crashes
 - **Can keep the screen on:** while agents work, or for 30 minutes or an hour after
 - **Shows how hard they worked:** agent time, steps and finished jobs, on a chart of the last 24 hours or 7 days
+- **Shows your usage limits:** how much of Claude Code's and Codex's 5-hour and weekly quota is used, with a warning before it runs out
 - **Looks how you like:** black and white by default, or any background and accent color
 - **Stays on your Mac:** no account and no telemetry
+
+### What's new in 0.8
+
+- **Usage limits:** a card shows how much of Claude Code's and Codex's quota is used and when it resets, and warns you at 80% and 95%. For Claude Code, press **Show** once: your own status line keeps working as before
+- **A menu bar icon that shows what's happening:** the A breathes while agents work, blinks orange while one waits for you, and turns into a countdown ring before the Mac sleeps
+- **While you were away:** the hustle chart shows how much work happened while you were away, and how long agents waited for you
+- **A little cheer when a job finishes**, and the hustle chart can be hidden in **Settings → Agents**
+- **Fixed:** a Safari tab or a muted video no longer turns AFK on by itself, and a turn that leaves only a Monitor running no longer keeps the Mac awake
 
 ### What's new in 0.7
 
@@ -487,9 +496,11 @@ Press the gear at the top right of the app.
 | | Only when plugged in: on battery, closing the lid sleeps as usual | off |
 | **Safety** | Stop at battery, from 5% to 50% | 15% |
 | **Agents** | Notify me | on |
+| | Agent hustle chart on the home screen | on |
 | | Wait before sleeping: off, 2, 5 or 15 minutes | 2 min |
 | | Connect or disconnect Claude Code, Codex, Gemini CLI, Cursor | set by you |
 | | Detect other agents | on |
+| | Claude Code usage limits (reads them from its status line) | off |
 | | Let agents keep the Mac awake (MCP) | not connected |
 | **Phone notifications** | ntfy topic name | empty |
 | **Start automatically** | When the charger is connected · While these apps are open | off |
