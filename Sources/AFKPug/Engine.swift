@@ -54,6 +54,8 @@ final class Engine: ObservableObject {
     @Published var lowPowerOnClose: Bool { didSet { save(lowPowerOnClose, "lowPowerOnClose") } }
     @Published var lidOnlyOnPower: Bool { didSet { save(lidOnlyOnPower, "lidOnlyOnPower"); tick() } }
     @Published var notifyAgents: Bool { didSet { save(notifyAgents, "notifyAgents") } }
+    /// The hustle card on the home screen. Hidden or not, the hours are still counted.
+    @Published var showHustle: Bool { didSet { save(showHustle, "showHustle") } }
     @Published var graceMinutes: Int { didSet { save(graceMinutes, "graceMinutes") } }
     /// Keep the screen on for agents: -1 off, 0 while they work, or minutes after they finish.
     @Published var keepScreenMinutes: Int { didSet { save(keepScreenMinutes, "keepScreenMinutes") } }
@@ -195,6 +197,7 @@ final class Engine: ObservableObject {
         lowPowerOnClose = bool("lowPowerOnClose", true)
         lidOnlyOnPower = bool("lidOnlyOnPower", false)
         notifyAgents = bool("notifyAgents", true)
+        showHustle = bool("showHustle", true)
         graceMinutes = int("graceMinutes", 2)
         keepScreenMinutes = int("keepScreenMinutes", -1)
         language = AppLanguage(rawValue: ud.string(forKey: "language") ?? "") ?? .en

@@ -90,6 +90,8 @@ struct SettingsView: View {
                     Section(title: tr("Agents")) {
                         ToggleRow(symbol: "bell", title: tr("Notify me"),
                                   detail: tr("When an agent finishes or needs you"), isOn: $engine.notifyAgents)
+                        ToggleRow(symbol: "chart.bar", title: tr("Agent hustle chart"),
+                                  detail: tr("On the home screen. Still counted while hidden"), isOn: $engine.showHustle)
                         Row(symbol: "hourglass", title: tr("Wait before sleeping"),
                             detail: tr("After the last agent finishes")) {
                             Picker(tr("Wait before sleeping"), selection: $engine.graceMinutes) {

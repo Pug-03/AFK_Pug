@@ -409,6 +409,8 @@ private let thaiV3: [String: String] = [
 
     // Settings: Keep awake
     "Keep awake": "ให้เครื่องตื่น",
+    "Agent hustle chart": "กราฟความขยันของ Agent",
+    "On the home screen. Still counted while hidden": "แสดงบนหน้าหลัก ซ่อนไว้ก็ยังนับอยู่",
     // Usage limits
     "Usage limits": "โควตาการใช้งาน",
     "5-hour": "5 ชั่วโมง",

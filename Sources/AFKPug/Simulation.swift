@@ -812,6 +812,10 @@ private final class Runner {
 
         step("finishes", ticks: 7, expect: ["notify: Claude Code finished"]) { dropHold("claude-h1") }
         check(today().jobs == 1, "a finished turn counts as a job (\(today().jobs))")
+        engine.showHustle = false
+        check(Engine.store.object(forKey: "showHustle") as? Bool == false, "hiding the chart is remembered")
+        engine.showHustle = true
+        check(engine.menuMotion == .still, "no wait after the agents: the icon stops moving (\(engine.menuMotion))")
         check(store.buckets == store.current, "a job shows on the card right away")
 
         let reloaded = HustleStore()

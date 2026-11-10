@@ -310,7 +310,7 @@ struct HomeView: View {
             }
             Modes(engine: engine)
             if engine.agentMode {
-                HustleCard()
+                if engine.showHustle { HustleCard() }
                 UsageCard(engine: engine)
             }
             StatusBar(engine: engine)
