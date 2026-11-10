@@ -730,7 +730,9 @@ private final class Runner {
         step("96%: one more alert", expect: ["notify: Claude Code is at 96% of its 5-hour limit"]) { _ = sh(["-c", command], stdin: higher) }
         check(UsageStore.shared.reports.first?.windows.first?.level == .critical, "96% is critical")
         let noLimits = sh(["-c", command], stdin: #"{"cwd":"/x","rate_limits":null}"#)
-        check(noLimits.output == "MY LINE" && ((try? String(contentsOf: UsageStore.claudeFile, encoding: .utf8)) ?? "").contains("96"), "API-key session (null limits): file untouched, line still prints")
+        let afterNull = (try? String(contentsOf: UsageStore.claudeFile, encoding: .utf8)) ?? "<missing>"
+        check(noLimits.output == "MY LINE", "API-key session (null limits): your line still prints (\(noLimits.output.debugDescription))")
+        check(afterNull.contains("96"), "API-key session (null limits): saved limits kept (\(afterNull.debugDescription))")
 
         // Codex's answer to account/rateLimits/read.
         let reset = Int(Clock.now().timeIntervalSince1970) + 3600
