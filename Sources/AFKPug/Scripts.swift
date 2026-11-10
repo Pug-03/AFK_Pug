@@ -420,7 +420,9 @@ enum Scripts {
       dir="$HOME/.afkpug/state"
       if [ -d "$dir" ]; then
         tmp="$dir/.usage-claude.$$.tmp"
-        if printf '%s' "$input" | /usr/bin/plutil -extract rate_limits json -o "$tmp" - 2>/dev/null && [ -s "$tmp" ]; then
+        # Only an object: some macOS versions write "null" for a session without limits.
+        if printf '%s' "$input" | /usr/bin/plutil -extract rate_limits json -o "$tmp" - 2>/dev/null &&
+           [ "$(head -c 1 "$tmp" 2>/dev/null)" = "{" ]; then
           mv -f "$tmp" "$dir/usage-claude.json"
         else
           rm -f "$tmp"
