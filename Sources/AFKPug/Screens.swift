@@ -47,6 +47,8 @@ enum Screens {
         Sim.set("battery", scene == "battery" ? "12 battery" : "86 battery")
         Sim.set("thermal", "nominal")
         Sim.set("audio", scene == "music" ? "playing" : "silent")
+        // Music only keeps the Mac awake once the lid closes on it.
+        if scene == "music" { Sim.set("lid", "closed") }
         Sim.set("setup", scene == "setup" ? "no" : "yes")
         Sim.set("idle", "600")
         Sim.set("muted", "0")

@@ -10,6 +10,7 @@
 
 ### Fixed
 - A Claude Code turn that ended with only a Monitor running no longer keeps the Mac awake as if the agent were still working. A turn that leaves a background build drops its hold 3 minutes after the build goes quiet (was 15), so the countdown starts.
+- **Keep music playing** no longer turns AFK on by itself while the lid is open. Any app holding the speaker open (a Safari tab, a muted video) used to count as music. macOS already stays awake while audio plays, so now music only counts when you close the lid on it.
 
 ## 0.7.1 - 2026-11-08
 

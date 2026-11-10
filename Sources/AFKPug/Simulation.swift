@@ -960,10 +960,11 @@ private final class Runner {
 
     func music() {
         configure(); boot()
-        step("music playing", expect: ["idle assertion ON", "disablesleep 1"]) { Sim.set("audio", "playing") }
-        check(engine.triggerReason == "music playing", "trigger = music playing")
-        step("close lid", expect: ["lock screen", "pmset displaysleepnow", "SIGSTOP chat apps", "sudo pmset -b lowpowermode 1"],
+        step("music playing, lid open: armed for a close, AFK stays off", expect: ["disablesleep 1"], forbid: ["idle assertion ON"]) { Sim.set("audio", "playing") }
+        check(engine.triggerReason == nil && !engine.isActive && engine.menuMotion == .still, "lid open: music doesn't turn AFK on (\(engine.triggerReason ?? "nil"))")
+        step("close lid", expect: ["idle assertion ON", "lock screen", "pmset displaysleepnow", "SIGSTOP chat apps", "sudo pmset -b lowpowermode 1"],
              forbid: ["mute", "Tink", "pmset sleepnow"]) { Sim.set("lid", "closed") }
+        check(engine.triggerReason == "music playing", "lid closed on music: trigger = music playing")
         step("10 min of music", ticks: 300, forbid: ["mute", "pmset sleepnow", "disablesleep 0"])
         step("music stops (30 s gap allowance)", ticks: 16, expect: ["SIGCONT chat apps", "sudo pmset -b lowpowermode 0", "idle assertion OFF", "disablesleep 0", "pmset sleepnow"],
              forbid: ["unmute"]) { Sim.set("audio", "silent") }
@@ -1381,13 +1382,15 @@ private final class Runner {
     /// Events written while the app wasn't running are dropped at launch, fresh ones kept.
     func sleepNowScenario() {
         configure(); boot()
-        step("music playing", expect: ["idle assertion ON"]) { Sim.set("audio", "playing") }
+        step("music playing, lid open", forbid: ["idle assertion ON"]) { Sim.set("audio", "playing") }
+        check(!engine.canSleepNow, "lid open: nothing to allow, macOS stays up for audio itself")
+        step("lid closed on the music", expect: ["idle assertion ON"]) { Sim.set("lid", "closed") }
         check(engine.canSleepNow && engine.musicApps == ["Music"], "Sleep now offered, Music shown")
         step("Sleep now", expect: ["log: Sleep allowed", "idle assertion OFF"]) { engine.sleepNow() }
         step("music keeps playing: stays snoozed", ticks: 30, forbid: ["idle assertion ON"])
         step("music stops for a while", ticks: 20) { Sim.set("audio", "silent") }
-        step("music again: awake again", expect: ["idle assertion ON"]) { Sim.set("audio", "playing") }
-        step("agent hold ends: grace", ticks: 2) { Sim.set("audio", "silent"); hold("claude-g1") }
+        step("music again, same close: awake again", expect: ["idle assertion ON"]) { Sim.set("audio", "playing") }
+        step("agent hold ends: grace", ticks: 2) { Sim.set("audio", "silent"); Sim.set("lid", "open"); hold("claude-g1") }
         step("hold gone", ticks: 20) { dropHold("claude-g1") }
         check(engine.canSleepNow, "grace can be cut short")
         step("Sleep now during grace", expect: ["idle assertion OFF"]) { engine.sleepNow() }
@@ -4011,10 +4014,12 @@ extension Runner {
         check(engine.subline == tr("Sleeps normally once %@ quits", "Xcode") && engine.triggerKind == .app("Xcode"), "app: \(engine.subline)")
         step("charger trigger") { Sim.set("apps", nil); engine.autoOnPower = true; Sim.set("battery", "80 ac") }
         check(engine.subline == tr("Sleeps normally once you unplug"), "charger: \(engine.subline)")
-        step("music trigger") { engine.autoOnPower = false; Sim.set("audio", "playing") }
+        step("music, lid open") { engine.autoOnPower = false; Sim.set("audio", "playing") }
+        check(engine.triggerReason == nil, "music with the lid open isn't a trigger")
+        step("music trigger: lid closed on it") { Sim.set("lid", "closed") }
         check(engine.subline == tr("Sleeps normally once the music stops"), "music: \(engine.subline)")
         check(engine.canSleepNow, "Sleep now offered for music")
-        step("music stops", ticks: 20, every: 2) { Sim.set("audio", "silent"); Sim.set("battery", "80 battery") }
+        step("music stops", ticks: 20, every: 2) { Sim.set("audio", "silent"); Sim.set("lid", "open"); Sim.set("battery", "80 battery") }
         // Usage-limit waits.
         hk("start", "claude", cj("ui-1", "UserPromptSubmit"))
         hk("fail", "claude", limitFail("ui-1", "You've hit your session limit · resets in 2 hours"))

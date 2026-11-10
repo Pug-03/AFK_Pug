@@ -13,7 +13,7 @@ struct SettingsView: View {
         if engine.keepMusic, engine.musicPlaying, !engine.musicApps.isEmpty {
             return tr("Playing: %@", engine.musicApps.prefix(2).joined(separator: ", "))
         }
-        return tr("Mac stays awake while audio plays")
+        return tr("Keeps playing after you close the lid")
     }
 
     var body: some View {

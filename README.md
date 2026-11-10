@@ -330,7 +330,7 @@ AFK Pug never launches an app for this. Agents found through process detection h
 <td valign="top"><img src="docs/screens/en/music.png" width="230" alt="Awake because music is playing"></td>
 <td valign="top">
 
-**What it means:** YouTube, Spotify or Apple Music is playing, so the Mac stays awake with the sound on. Short gaps between tracks are ignored. With the lid closed, audio only counts if it was already playing when you closed it, so an idle browser tab can't keep a Mac in a bag awake.
+**What it means:** you closed the lid while YouTube, Spotify or Apple Music was playing, so the Mac stays awake and the music keeps going. Short gaps between tracks are ignored. Only audio that was already playing when you closed the lid counts, so an idle browser tab can't keep a Mac in a bag awake. With the lid open AFK Pug stays out of the way: macOS doesn't sleep while audio plays anyway.
 
 **What to do:** nothing. **Allow sleep** stops keeping the Mac awake, so it sleeps when macOS decides, and music stays ignored until it stops and starts again.
 

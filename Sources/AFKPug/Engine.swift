@@ -801,7 +801,10 @@ final class Engine: ObservableObject {
         if snoozeCharger, !battery.onAC { snoozeCharger = false }
         let app = Triggers.runningApp(from: autoApps)
         if let snoozed = snoozeApp, app != snoozed { snoozeApp = nil }
-        if keepMusic, musicOn, !snoozeMusic, !lidClosed || musicAtClose { reason = tr("music playing"); kind = .music }
+        // With the lid open macOS stays awake for audio by itself, so music only counts once
+        // the lid closes on it. Until then the lid override is quietly armed (below).
+        let keepPlaying = keepMusic && musicOn && !snoozeMusic
+        if keepPlaying, lidClosed, musicAtClose { reason = tr("music playing"); kind = .music }
         if autoOnPower, battery.hasBattery, battery.onAC, !snoozeCharger { reason = tr("charger connected"); kind = .charger }
         if let app, app != snoozeApp { reason = app; kind = .app(app) }
         if reason != triggerReason { triggerReason = reason }
@@ -812,7 +815,9 @@ final class Engine: ObservableObject {
 
         let agentsWant = agentMode && (!holds.isEmpty || (graceUntil.map { $0 > now } ?? false))
         let want = trip == nil && (manualOn || agentsWant || triggerReason != nil)
-        let wantLid = want && lidReady && (!lidOnlyOnPower || battery.onAC)
+        // Music with the lid open: ready for a close, without turning AFK on.
+        let musicArmed = trip == nil && keepPlaying && !lidClosed
+        let wantLid = (want || musicArmed) && lidReady && (!lidOnlyOnPower || battery.onAC)
         if want, !isActive {
             // A session starting: re-check a clamshell flag that read Yes without an edge.
             let closed = LidSensor.sessionStarted(now: now)

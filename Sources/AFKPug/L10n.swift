@@ -132,7 +132,7 @@ private let thaiV3: [String: String] = [
     "Waiting for the Mac to cool down": "รอให้เครื่องเย็นลงก่อน",
     "Waiting in case more work comes": "รอเผื่อมีงานต่อ",
     "Keep music playing": "ฟังเพลงต่อได้",
-    "Mac stays awake while audio plays": "ไม่พักเครื่องระหว่างมีเสียงเล่น",
+    "Keeps playing after you close the lid": "พับจอแล้วเพลงยังเล่นต่อ",
     "Playing: %@": "กำลังเล่น: %@",
     "+%d more": "อีก %d รายการ",
     "Close": "ปิด",
