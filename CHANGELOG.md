@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 - 2026-11-10
 
 ### Added
 - **Hide the hustle chart:** Settings → Agents → Agent hustle chart. Hidden or not, the hours are still counted.
