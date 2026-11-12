@@ -8,6 +8,7 @@
 
 ### Changed
 - The README demo is rendered at 2× and downsampled, so the app screen stays sharp when the camera zooms and slow moves no longer step pixel by pixel. The README image is now an animated AVIF at 60 fps and 1600 px (was a 30 fps, 960 px WebP), about 1.5 MB instead of 2 MB, with no stale blocks on slow fades. The MP4 is 1920 px (was 1280) and tagged BT.709 so browsers show the right colors.
+- The README demo is shorter, 13.5 s instead of 21, and shows the app being used: a cursor clicks the A, points at a job, closes the summary, picks 2h and presses Go AFK, and the timer counts down. The laptop's front edge is now one solid piece.
 
 ## 0.8.0 - 2026-11-10
 
