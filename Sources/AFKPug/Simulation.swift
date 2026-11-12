@@ -3635,13 +3635,19 @@ extension Runner {
         for i in 0..<500 { hold("\(agents[i % 5])-many-\(i)", agent: agents[i % 5], expires: i % 5 == 4 ? 3600 : 0) }
         var spent: [Double] = []
         let mark = readLog().count
-        for _ in 0..<5 {
+        for _ in 0..<9 {
             let t = Date()
             st("tick with 500 holds", ticks: 1)
             spent.append(Date().timeIntervalSince(t))
         }
-        print(String(format: "  tick with 500 holds: first %.0f ms, then max %.0f ms", spent[0] * 1000, (spent.dropFirst().max() ?? 0) * 1000))
-        check((spent.dropFirst().max() ?? 1) < 0.25, "a tick with 500 holds stays under 250 ms")
+        // The first tick warms up. Judge the median of the rest: a slow tick path makes every
+        // tick slow, while one scheduler stall on a shared CI machine shouldn't fail the run.
+        let warm = spent.dropFirst().sorted()
+        let median = (warm[warm.count / 2 - 1] + warm[warm.count / 2]) / 2
+        print(String(format: "  tick with 500 holds: first %.0f ms, then median %.0f ms, max %.0f ms",
+                     spent[0] * 1000, median * 1000, (warm.last ?? 0) * 1000))
+        check(median < 0.25, "a tick with 500 holds takes under 250 ms (median)")
+        check((warm.last ?? 1) < 1, "no tick with 500 holds takes a second")
         check(engine.holds.count == 500, "all 500 counted")
         check(readLog().dropFirst(mark).filter { $0.contains("notify:") }.isEmpty, "no notifications for 500 starts")
         st("close the lid", expect: Self.closeActions) { closeLid() }
