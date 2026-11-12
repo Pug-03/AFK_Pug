@@ -65,6 +65,36 @@ enum AppGlyph {
         return image
     }
 
+    /// Bright red behind the waiting badge. White text on it measures 4.7:1.
+    static let waitingRed = NSColor(srgbRed: 0xE5 / 255.0, green: 0x14 / 255.0, blue: 0x1F / 255.0, alpha: 1)
+
+    /// The menu bar while an agent waits for you: a bright red badge with a white A and
+    /// `text`, so it reads from across the room. `dim` is the blink's off beat.
+    static func waitingBadge(text: String, dim: Bool = false) -> NSImage {
+        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let label = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.white])
+        let glyph: CGFloat = 12, pad: CGFloat = 6, gap: CGFloat = 4, height: CGFloat = 18
+        let width = ceil(pad + glyph + gap + label.size().width + pad)
+        let image = NSImage(size: NSSize(width: width, height: height), flipped: true) { _ in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            context.setAlpha(dim ? 0.55 : 1)
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
+            context.addPath(CGPath(roundedRect: CGRect(x: 0, y: 0, width: width, height: height), cornerWidth: 5, cornerHeight: 5, transform: nil))
+            context.setFillColor(waitingRed.cgColor)
+            context.fillPath()
+            let move = CGAffineTransform(translationX: pad, y: (height - glyph) / 2)
+            context.addPath(scaled(glyph, active: true).applying(move).cgPath)
+            context.setFillColor(NSColor.white.cgColor)
+            context.fillPath()
+            label.draw(at: NSPoint(x: pad + glyph + gap, y: (height - label.size().height) / 2))
+            context.endTransparencyLayer()
+            return true
+        }
+        image.isTemplate = false
+        image.accessibilityDescription = text
+        return image
+    }
+
     private static func crossbarPath(_ size: CGFloat) -> Path {
         var bar = Path()
         bar.move(to: CGPoint(x: 9.5, y: 20.5))

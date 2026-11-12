@@ -48,7 +48,6 @@ private struct MenuBarLabel: View {
     private static let breath: [NSImage] = (0..<72).map { i in
         AppGlyph.menuImage(crossbar: 0.6 + 0.4 * cos(Double(i) / 72 * 2 * .pi))
     }
-    private static let amber = AppGlyph.menuImage(crossbar: 1, tint: .systemOrange)
 
     var body: some View {
         HStack(spacing: 4) {
@@ -80,11 +79,14 @@ private struct MenuBarLabel: View {
                 try? await Task.sleep(for: .milliseconds(2400 / 72))
             }
         case .waiting:
-            if still { frame = Self.amber; return }
+            // A red "Needs you" badge, blinking between full and dim so it never disappears.
+            let text = tr("Needs you")
+            let badge = AppGlyph.waitingBadge(text: text), dim = AppGlyph.waitingBadge(text: text, dim: true)
+            if still { frame = badge; return }
             var on = true
             while !Task.isCancelled {
-                frame = on ? Self.amber : AppGlyph.menuImage(active: true); on.toggle()
-                try? await Task.sleep(for: .milliseconds(700))
+                frame = on ? badge : dim; on.toggle()
+                try? await Task.sleep(for: .milliseconds(600))
             }
         case let .countdown(until, length):
             while !Task.isCancelled {

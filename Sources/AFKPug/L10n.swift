@@ -396,6 +396,7 @@ private let thaiV3: [String: String] = [
     "Your agents are done. AFK Pug will let the Mac sleep soon.": "Agent ทำเสร็จหมดแล้ว อีกสักพัก Mac จะพักเครื่อง",
 
     // Agent hustle
+    "Needs you": "รอคุณ",
     "Agent hustle": "ความขยันของ Agent",
     "Napping": "หลับอยู่",
     "Warming up": "เริ่มวอร์ม",
