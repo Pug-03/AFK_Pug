@@ -214,7 +214,7 @@ struct OnboardingView: View {
             Heading(title: tr("See how hard your agents work"),
                     text: tr("The chart on the home screen counts the time your agents spend working, the steps they take and the jobs they finish. Waiting for you and usage limits don't count."))
             // Live, with sample numbers: hover a bar or switch 24h and 7d to try it.
-            HustleCard(store: hustleSample)
+            HustleCard(store: hustleSample, helpButton: false)
                 .padding(.top, 18)
             HustleLegend().padding(.top, 12)
             Text(tr("Sample numbers. Yours start from zero, stay on this Mac, and the chart can be hidden in Settings."))

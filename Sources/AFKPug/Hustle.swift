@@ -257,7 +257,7 @@ enum HustleLevel: Int, CaseIterable {
 
 // MARK: Card
 
-/// What the bars mean, on the welcome tour's chart page.
+/// What the bars mean. Shown by the card's ? and on the welcome tour's chart page.
 struct HustleLegend: View {
     @ObservedObject var themeStore = ThemeStore.shared
 
@@ -312,11 +312,17 @@ struct HustleCard: View {
     /// A job just finished: the count pops and this hour's bar flashes.
     @State private var cheer = 0
     @State private var flash = false
+    /// The ? in the header shows what the chart means, for anyone who skipped the welcome tour.
+    @State private var showHelp = false
+    private let helpButton: Bool
     @Environment(\.panelOpens) private var panelOpens
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private static let chartHeight: CGFloat = 64
 
-    @MainActor init(store: HustleStore? = nil) { self.store = store ?? .shared }
+    @MainActor init(store: HustleStore? = nil, helpButton: Bool = true) {
+        self.store = store ?? .shared
+        self.helpButton = helpButton
+    }
 
     var body: some View {
         // The minute is enough: the store publishes every 15 s at most.
@@ -352,6 +358,16 @@ struct HustleCard: View {
                 chart(bars)
                 axis(bars)
             }
+            if showHelp {
+                VStack(alignment: .leading, spacing: 7) {
+                    HustleLegend()
+                    Text(tr("Waiting for you and usage limits don't count."))
+                        .font(.system(size: 10.5)).foregroundStyle(Theme.sub)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 2)
+                .transition(.opacity)
+            }
         }
         .padding(12)
         .cardBackground(radius: 12)
@@ -380,6 +396,21 @@ struct HustleCard: View {
             .background(Capsule().fill(level == .onFire ? Theme.accent : Theme.surfaceHover))
             .animation(Theme.smooth, value: level)
             .accessibilityElement(children: .combine)
+            if helpButton {
+                Button {
+                    Haptics.tap()
+                    withAnimation(reduceMotion ? nil : Theme.smooth) { showHelp.toggle() }
+                } label: {
+                    Image(systemName: showHelp ? "questionmark.circle.fill" : "questionmark.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(showHelp ? Theme.text : Theme.sub)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(tr("What the chart shows"))
+                .accessibilityLabel(tr("What the chart shows"))
+                .accessibilityAddTraits(showHelp ? .isSelected : [])
+            }
         }
     }
 

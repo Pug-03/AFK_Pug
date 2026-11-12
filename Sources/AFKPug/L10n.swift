@@ -201,6 +201,8 @@ private let thaiV3: [String: String] = [
     "The chart on the home screen counts the time your agents spend working, the steps they take and the jobs they finish. Waiting for you and usage limits don't count.": "กราฟบนหน้าหลักนับเวลาที่ Agent ทำงาน จำนวนขั้นตอน และงานที่ทำเสร็จ เวลาที่รอคุณหรือติดโควตาจะไม่นับ",
     "Solid: work done while you were away": "แท่งทึบ: งานที่ทำตอนคุณไม่อยู่",
     "Faint: work done while you were at the Mac": "แท่งจาง: งานที่ทำตอนคุณอยู่หน้าเครื่อง",
+    "Waiting for you and usage limits don't count.": "เวลาที่รอคุณหรือติดโควตาจะไม่นับ",
+    "What the chart shows": "กราฟนี้บอกอะไร",
     "Point at a bar to see that hour": "ชี้ที่แท่งเพื่อดูรายละเอียดของชั่วโมงนั้น",
     "Sample numbers. Yours start from zero, stay on this Mac, and the chart can be hidden in Settings.": "ตัวเลขนี้เป็นตัวอย่าง ของจริงจะเริ่มนับจากศูนย์ เก็บไว้ในเครื่องนี้เท่านั้น และซ่อนกราฟได้ในการตั้งค่า",
     "Make it yours": "ปรับหน้าตาได้ตามใจ",

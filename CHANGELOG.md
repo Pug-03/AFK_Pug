@@ -4,6 +4,7 @@
 
 ### Added
 - **The welcome tour explains the hustle chart:** a new page after "See what each agent is doing" shows the chart with a sample week, what solid and faint bars mean, and that waiting and usage limits don't count. Hover the bars or switch 24h and 7d to try it.
+- **A ? on the hustle card** shows the same explanation on the home screen, for anyone who already went through the welcome.
 
 ## 0.8.0 - 2026-11-10
 
