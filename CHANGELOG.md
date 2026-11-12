@@ -4,6 +4,7 @@
 
 ### Added
 - **A red “Needs you” badge:** while an agent waits for you, the menu bar shows a bright red badge with the A and “Needs you” (“รอคุณ” in Thai), blinking between full and dim, so it's noticed from across the room. It replaces the orange blink. With Reduce motion on it stays lit.
+- **What the A tells you:** the README's menu bar section shows each state of the A, and the red badge, as a small clip in light and dark with what it means.
 - **The welcome tour explains the hustle chart:** a new page after "See what each agent is doing" shows the chart with a sample week, what solid and faint bars mean, and that waiting and usage limits don't count. Hover the bars or switch 24h and 7d to try it.
 - **A ? on the hustle card** shows the same explanation on the home screen, for anyone who already went through the welcome.
 

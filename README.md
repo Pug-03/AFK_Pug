@@ -62,6 +62,13 @@ You ask Claude Code to refactor a module, close your MacBook and walk to lunch. 
 - **Looks how you like:** black and white by default, or any background and accent color
 - **Stays on your Mac:** no account and no telemetry
 
+### What's new in 0.9
+
+- **A red “Needs you” badge:** when an agent is waiting for you, the menu bar shows a bright red badge that blinks, so you notice from across the room
+- **Smoother menu bar icon:** the A breathes smoothly while agents work, instead of stepping in a way that looked like blinking
+- **The welcome explains the hustle chart**, and a **?** on the card explains it any time
+- **A new demo** at the top of this page: 60 fps and shows the app being used
+
 ### What's new in 0.8
 
 - **Usage limits:** a card shows how much of Claude Code's and Codex's quota is used and when it resets, and warns you at 80% and 95%. For Claude Code, press **Show** once: your own status line keeps working as before
@@ -213,6 +220,18 @@ AFK Pug has no Dock icon. It lives in the menu bar at the top right of your scre
     <img src="docs/guide/menubar-light.png" width="720" alt="The menu bar of a MacBook with a notch, with the A icon highlighted as step 1">
   </picture>
 </p>
+
+**What the A tells you.** It changes with what AFK Pug is doing, so you can check from the menu bar without opening it.
+
+| The A | What it means |
+|---|---|
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/guide/menu-working-dark.avif"><img src="docs/guide/menu-working-light.avif" width="190" alt="The A with its crossbar fading in and out"></picture> | **Breathing:** the crossbar slowly fades in and out. Your agents are working, so the Mac stays awake |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/guide/menu-waiting-en-dark.avif"><img src="docs/guide/menu-waiting-en-light.avif" width="190" alt="A bright red badge reading Needs you, blinking"></picture> | **Red “Needs you” badge:** an agent is waiting for you, to answer a question or allow something. It blinks so you and anyone nearby notice. Click it to see which agent |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/guide/menu-countdown-dark.avif"><img src="docs/guide/menu-countdown-light.avif" width="190" alt="A small A inside a ring that empties"></picture> | **A ring that empties:** every agent is done. When the ring runs out, the Mac can sleep. Set how long in **Settings → Agents → Wait before sleeping** |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/guide/menu-on-dark.png"><img src="docs/guide/menu-on-light.png" width="190" alt="The A with a crossbar, still"></picture> | **Crossbar, still:** awake for another reason, such as a timer you started with **Go AFK** |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/guide/menu-off-dark.png"><img src="docs/guide/menu-off-light.png" width="190" alt="The A without a crossbar"></picture> | **No crossbar:** nothing is keeping the Mac awake. It sleeps as usual |
+
+With **Reduce motion** on in System Settings, nothing moves: the A keeps a full crossbar while agents work, and the red badge stays on while one waits.
 
 Can't see it? See [The A icon is missing](#the-a-icon-is-missing).
 
@@ -635,6 +654,7 @@ swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bi
 scripts/screenshots.sh               # renders the app screens into docs/screens/
 node scripts/guide-illustrations.mjs # draws the install pictures into docs/guide/
 node scripts/demo-video.mjs          # makes the demo video and AVIF (needs ffmpeg with libsvtav1)
+node scripts/menubar-icons.mjs       # makes the menu bar icon clips in docs/guide/ (same needs)
 scripts/build.sh --zip               # packs dist/AFK-Pug.zip for a GitHub release
 ```
 

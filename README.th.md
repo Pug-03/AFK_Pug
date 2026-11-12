@@ -64,6 +64,13 @@
 - **ปรับหน้าตาได้:** ขาวดำเป็นค่าเริ่มต้น หรือเลือกพื้นหลังและสีหลักเองได้
 - **ข้อมูลอยู่ในเครื่อง:** ไม่ต้องมีบัญชี และไม่เก็บข้อมูลการใช้งาน
 
+### มีอะไรใหม่ใน 0.9
+
+- **ป้ายแดง “รอคุณ”:** ตอนมี Agent รอคุณ แถบเมนูขึ้นป้ายแดงสดกะพริบ เห็นได้แม้อยู่ไกลจอ
+- **ไอคอนบนแถบเมนูลื่นขึ้น:** ตัว A หายใจลื่นตอน Agent ทำงาน ไม่ขยับเป็นขั้นจนดูเหมือนกะพริบ
+- **หน้าแนะนำอธิบายกราฟความขยัน** และกดปุ่ม **?** บนการ์ดเพื่อดูคำอธิบายได้ทุกเมื่อ
+- **คลิปสาธิตใหม่** ด้านบนหน้านี้: 60 fps และเห็นการใช้งานแอปจริง
+
 ### มีอะไรใหม่ใน 0.8
 
 - **โควตาการใช้งาน:** การ์ดบอกว่าโควตาของ Claude Code กับ Codex ใช้ไปเท่าไหร่ รีเซ็ตเมื่อไหร่ และเตือนเมื่อถึง 80% กับ 95% ฝั่ง Claude Code กด **แสดง** ครั้งเดียว status line เดิมของคุณยังทำงานเหมือนเดิม
@@ -229,6 +236,18 @@ AFK Pug ไม่มีไอคอนใน Dock แต่อยู่บน me
     <img src="docs/guide/menubar-light.png" width="720" alt="menu bar ของ MacBook ที่มีรอยบาก ไฮไลต์ไอคอน A เป็นขั้นที่ 1">
   </picture>
 </p>
+
+**ตัว A บอกอะไร** ตัว A เปลี่ยนไปตามสิ่งที่ AFK Pug ทำอยู่ ดูจาก menu bar ได้เลยโดยไม่ต้องเปิดแอป
+
+| ตัว A | ความหมาย |
+|---|---|
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/guide/menu-working-dark.avif"><img src="docs/guide/menu-working-light.avif" width="190" alt="ตัว A ที่ขีดกลางค่อยๆ จางแล้วชัด"></picture> | **ขีดกลางค่อยๆ จางแล้วชัด:** Agent กำลังทำงาน เครื่องจึงตื่นอยู่ |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/guide/menu-waiting-th-dark.avif"><img src="docs/guide/menu-waiting-th-light.avif" width="190" alt="ป้ายแดงสดคำว่า รอคุณ กะพริบ"></picture> | **ป้ายแดง “รอคุณ”:** มี Agent รอคุณอยู่ เช่น รอคำตอบหรือรอให้อนุญาต ป้ายกะพริบให้คุณและคนรอบข้างเห็น คลิกเพื่อดูว่าเป็นตัวไหน |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/guide/menu-countdown-dark.avif"><img src="docs/guide/menu-countdown-light.avif" width="190" alt="ตัว A เล็กในวงกลมที่ค่อยๆ หายไป"></picture> | **วงกลมค่อยๆ หายไป:** Agent ทำเสร็จหมดแล้ว พอวงหมด เครื่องจะพักได้ ตั้งเวลาได้ที่ **ตั้งค่า → AI Agent → รอก่อนพักเครื่อง** |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/guide/menu-on-dark.png"><img src="docs/guide/menu-on-light.png" width="190" alt="ตัว A มีขีดกลาง อยู่นิ่ง"></picture> | **มีขีดกลาง อยู่นิ่ง:** เครื่องตื่นด้วยเหตุผลอื่น เช่น ตั้งเวลาเองด้วยปุ่ม **เริ่ม AFK** |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/guide/menu-off-dark.png"><img src="docs/guide/menu-off-light.png" width="190" alt="ตัว A ไม่มีขีดกลาง"></picture> | **ไม่มีขีดกลาง:** ไม่มีอะไรทำให้เครื่องตื่น เครื่องพักตามปกติ |
+
+ถ้าเปิด **ลดการเคลื่อนไหว** (Reduce motion) ในการตั้งค่าระบบ จะไม่มีอะไรขยับ: ตอน Agent ทำงานตัว A จะมีขีดกลางเต็ม และตอนรอคุณป้ายแดงจะขึ้นค้างไว้
 
 ถ้าไม่เห็น ดูที่[ไม่เห็นไอคอน A](#missing-icon)
 
