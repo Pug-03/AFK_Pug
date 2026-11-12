@@ -43,9 +43,10 @@ private struct MenuBarLabel: View {
     @State private var motion = Engine.shared.menuMotion
     @State private var frame: NSImage?
 
-    /// Breathing: the crossbar fades between these over 2.4 s, 8 frames a second.
-    private static let breath: [NSImage] = (0..<20).map { i in
-        AppGlyph.menuImage(crossbar: 0.6 + 0.4 * cos(Double(i) / 20 * 2 * .pi))
+    /// Breathing: the crossbar fades between these over 2.4 s at 30 frames a second, so the
+    /// fade looks continuous. At 8 frames a second it stepped and read as blinking.
+    private static let breath: [NSImage] = (0..<72).map { i in
+        AppGlyph.menuImage(crossbar: 0.6 + 0.4 * cos(Double(i) / 72 * 2 * .pi))
     }
     private static let amber = AppGlyph.menuImage(crossbar: 1, tint: .systemOrange)
 
@@ -76,7 +77,7 @@ private struct MenuBarLabel: View {
             var i = 0
             while !Task.isCancelled {
                 frame = Self.breath[i % Self.breath.count]; i += 1
-                try? await Task.sleep(for: .milliseconds(120))
+                try? await Task.sleep(for: .milliseconds(2400 / 72))
             }
         case .waiting:
             if still { frame = Self.amber; return }
