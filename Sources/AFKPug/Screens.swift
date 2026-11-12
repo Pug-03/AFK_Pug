@@ -88,24 +88,9 @@ enum Screens {
         Sim.set("codex-usage", #"{"rateLimits":{"primary":{"usedPercent":22,"windowDurationMins":300,"resetsAt":\#(now + 3 * 3600)},"secondary":{"usedPercent":41,"windowDurationMins":10080,"resetsAt":\#(now + 4 * 86400)},"planType":"plus"}}"#)
     }
 
-    /// A believable week of agent work for the hustle card: busy afternoons, a late night, a quiet weekend.
+    /// The same week the welcome tour shows.
     private static func seedHustle() {
-        let hour = HustleStore.hour(of: Clock.now())
-        let daily: [Double] = [0.5, 0.9, 0.7, 1.0, 0.25, 0.1, 0.8]
-        var buckets: [HustleBucket] = []
-        for back in 0..<(24 * 7) {
-            let h = hour - back
-            let day = daily[(back / 24) % 7]
-            let local = (h + TimeZone.current.secondsFromGMT() / 3600 + 240) % 24
-            let curve: Double = [0.7, 0.5, 0.3, 0, 0, 0, 0, 0, 0.2, 0.5, 0.8, 0.9, 0.4, 0.7, 1, 1, 0.9, 0.8, 0.5, 0.3, 0.6, 0.8, 0.5, 0.2][local]
-            let wobble = 0.75 + 0.5 * abs(sin(Double(h) * 1.7))
-            let seconds = (3600 * 1.6 * curve * day * wobble).rounded()
-            guard seconds > 0 else { continue }
-            let awayShare = local >= 20 || local < 3 ? 0.9 : (local == 12 ? 0.8 : 0.25)
-            buckets.append(HustleBucket(hour: h, seconds: seconds, steps: Int(seconds / 25), jobs: Int(seconds / 1500),
-                                        away: (seconds * awayShare).rounded(), waited: (seconds * 0.04).rounded()))
-        }
-        if let data = try? JSONEncoder().encode(buckets.reversed()) {
+        if let data = try? JSONEncoder().encode(HustleStore.sample(now: Clock.now())) {
             try? data.write(to: Paths.state.appendingPathComponent("hustle.json"))
         }
     }

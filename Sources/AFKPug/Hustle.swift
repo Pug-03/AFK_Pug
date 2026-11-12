@@ -59,6 +59,34 @@ final class HustleStore: ObservableObject {
         buckets = current
     }
 
+    /// Shows `buckets` and nothing else: never recorded into or saved. For the welcome tour.
+    init(showing buckets: [HustleBucket]) {
+        file = URL(fileURLWithPath: "/dev/null")
+        current = buckets.sorted { $0.hour < $1.hour }
+        self.buckets = current
+    }
+
+    /// A believable week of agent work: busy afternoons, a late night, a quiet weekend.
+    /// Used by the welcome tour and the README screenshots.
+    static func sample(now: Date) -> [HustleBucket] {
+        let hour = hour(of: now)
+        let daily: [Double] = [0.5, 0.9, 0.7, 1.0, 0.25, 0.1, 0.8]
+        var buckets: [HustleBucket] = []
+        for back in 0..<(24 * 7) {
+            let h = hour - back
+            let day = daily[(back / 24) % 7]
+            let local = (h + TimeZone.current.secondsFromGMT() / 3600 + 240) % 24
+            let curve: Double = [0.7, 0.5, 0.3, 0, 0, 0, 0, 0, 0.2, 0.5, 0.8, 0.9, 0.4, 0.7, 1, 1, 0.9, 0.8, 0.5, 0.3, 0.6, 0.8, 0.5, 0.2][local]
+            let wobble = 0.75 + 0.5 * abs(sin(Double(h) * 1.7))
+            let seconds = (3600 * 1.6 * curve * day * wobble).rounded()
+            guard seconds > 0 else { continue }
+            let awayShare = local >= 20 || local < 3 ? 0.9 : (local == 12 ? 0.8 : 0.25)
+            buckets.append(HustleBucket(hour: h, seconds: seconds, steps: Int(seconds / 25), jobs: Int(seconds / 1500),
+                                        away: (seconds * awayShare).rounded(), waited: (seconds * 0.04).rounded()))
+        }
+        return buckets.reversed()
+    }
+
     /// Called every engine tick with this tick's holds. `away` is only asked for while an agent works.
     func record(holds: [AgentHold], now: Date, away: () -> Bool) {
         let gap = lastTick.map { now.timeIntervalSince($0) } ?? 0
@@ -229,6 +257,42 @@ enum HustleLevel: Int, CaseIterable {
 
 // MARK: Card
 
+/// What the bars mean, on the welcome tour's chart page.
+struct HustleLegend: View {
+    @ObservedObject var themeStore = ThemeStore.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Key(fill: Theme.accent, text: tr("Solid: work done while you were away"))
+            Key(fill: Theme.accent.opacity(0.3), text: tr("Faint: work done while you were at the Mac"))
+            Key(symbol: "cursorarrow", text: tr("Point at a bar to see that hour"))
+        }
+    }
+
+    private struct Key: View {
+        @ObservedObject var themeStore = ThemeStore.shared
+        var fill: Color? = nil
+        var symbol: String? = nil
+        let text: String
+
+        var body: some View {
+            HStack(spacing: 8) {
+                Group {
+                    if let fill {
+                        RoundedRectangle(cornerRadius: 2.5, style: .continuous).fill(fill).frame(width: 9, height: 14)
+                    } else if let symbol {
+                        Image(systemName: symbol).font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.sub)
+                    }
+                }
+                .frame(width: 14)
+                .accessibilityHidden(true)
+                Text(text).font(.system(size: 11.5)).foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
 /// Counts up each time the panel opens, so the chart can grow in again.
 private struct PanelOpensKey: EnvironmentKey { static let defaultValue = 0 }
 extension EnvironmentValues {
@@ -240,7 +304,7 @@ extension EnvironmentValues {
 
 struct HustleCard: View {
     @ObservedObject var themeStore = ThemeStore.shared
-    @ObservedObject var store = HustleStore.shared
+    @ObservedObject var store: HustleStore
     @State private var range: HustleRange = .day
     @State private var hovered: Int?
     /// True for still renders, which never appear; opening the panel grows the bars from zero.
@@ -251,6 +315,8 @@ struct HustleCard: View {
     @Environment(\.panelOpens) private var panelOpens
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private static let chartHeight: CGFloat = 64
+
+    @MainActor init(store: HustleStore? = nil) { self.store = store ?? .shared }
 
     var body: some View {
         // The minute is enough: the store publishes every 15 s at most.

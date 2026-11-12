@@ -10,7 +10,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     private var window: NSWindow?
 
     /// Choose a language, set up the two things that need a yes, then one part of the app at a time.
-    enum Step: Int, CaseIterable { case language, welcome, lid, agents, tourAgents, tourTimer, tourLid, tourScreen, tourLook, finish }
+    enum Step: Int, CaseIterable { case language, welcome, lid, agents, tourAgents, tourHustle, tourTimer, tourLid, tourScreen, tourLook, finish }
 
     /// Opens the welcome at `step`. If it's already open, it only comes to the
     /// front: the step the user is on is kept.
@@ -159,6 +159,7 @@ struct OnboardingView: View {
         case .lid: lid
         case .agents: agents
         case .tourAgents: tourAgents
+        case .tourHustle: tourHustle
         case .tourTimer: tourTimer
         case .tourLid: tourLid
         case .tourScreen: tourScreen
@@ -203,6 +204,24 @@ struct OnboardingView: View {
     private static func sampleHold(_ agent: String, prompt: String, cwd: String, tool: String? = nil, target: String? = nil, waiting: Bool = false) -> AgentHold {
         AgentHold(id: "\(agent)-sample", agent: agent, started: Clock.now().addingTimeInterval(-720), expires: nil, reason: nil,
                   task: AgentTask(cwd: cwd, prompt: prompt, tool: tool, target: target, waiting: waiting))
+    }
+
+    /// A sample week, made once per page so the bars don't shift while you look.
+    @State private var hustleSample = HustleStore(showing: HustleStore.sample(now: Clock.now()))
+
+    private var tourHustle: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Heading(title: tr("See how hard your agents work"),
+                    text: tr("The chart on the home screen counts the time your agents spend working, the steps they take and the jobs they finish. Waiting for you and usage limits don't count."))
+            // Live, with sample numbers: hover a bar or switch 24h and 7d to try it.
+            HustleCard(store: hustleSample)
+                .padding(.top, 18)
+            HustleLegend().padding(.top, 12)
+            Text(tr("Sample numbers. Yours start from zero, stay on this Mac, and the chart can be hidden in Settings."))
+                .font(.system(size: 11)).foregroundStyle(Theme.sub)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 10)
+        }
     }
 
     private var tourTimer: some View {
