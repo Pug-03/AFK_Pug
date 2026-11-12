@@ -8,7 +8,7 @@ import SwiftUI
 /// Refuses to run without `AFKPUG_SIM=1`, so no real power state is touched.
 @MainActor
 enum Screens {
-    static let scenes = ["setup", "idle", "timer", "working", "limit", "grace", "music", "battery", "away", "white", "custom"]
+    static let scenes = ["setup", "idle", "timer", "working", "limit", "grace", "music", "battery", "away", "white"]
 
     static func render(_ scene: String, to path: String, language: AppLanguage) -> Int32 {
         guard Sim.enabled else {
@@ -70,13 +70,8 @@ enum Screens {
             Engine.store.set(AppearanceMode.light.rawValue, forKey: "appearance")
             Engine.store.set("#4C9AFF", forKey: "accentColor")
         }
-        if scene == "custom" {
-            Engine.store.set(AppearanceMode.custom.rawValue, forKey: "appearance")
-            Engine.store.set("#1B2A4A", forKey: "backgroundColor")
-            Engine.store.set("#3CCB7F", forKey: "accentColor")
-        }
         Theme.palette = ThemeStore.loadPalette()
-        if ["working", "white", "custom"].contains(scene) { seedHustle(); seedUsage() }
+        if ["working", "white"].contains(scene) { seedHustle(); seedUsage() }
     }
 
     /// Usage limits as Claude Code's status line and Codex would report them.
@@ -100,7 +95,7 @@ enum Screens {
         case "timer":
             engine.start()
             skip(15 * 60, engine)
-        case "working", "white", "custom":
+        case "working", "white":
             task("claude-demo", cwd: "/Users/me/Code/billing-api", prompt: L10n.isThai ? "แก้เทสต์การชำระเงินที่พัง" : "Fix the failing payment tests",
                  now: #"{"tool":"Edit","target":"/Users/me/Code/billing-api/checkout.ts"}"#)
             task("codex-demo", cwd: "/Users/me/Code/website", prompt: L10n.isThai ? "ย้ายหน้าเว็บไป Astro" : "Move the site to Astro",

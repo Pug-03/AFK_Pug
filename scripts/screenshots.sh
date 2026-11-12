@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 swift build
 BIN="$(swift build --show-bin-path)/AFKPug"
-SCENES=(setup idle timer working limit grace music battery away white custom)
+SCENES=(setup idle timer working limit grace music battery away white)
 
 for lang in en th; do
   OUT="docs/screens/$lang"

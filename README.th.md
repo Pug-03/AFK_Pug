@@ -408,7 +408,6 @@ AFK Pug จะไม่เปิดแอปที่ยังไม่ได้
 <p align="center">
   <img src="docs/screens/th/working.png" width="250" alt="พื้นหลังดำ สีหลักขาว">
   <img src="docs/screens/th/white.png" width="250" alt="พื้นหลังขาว สีหลักน้ำเงิน">
-  <img src="docs/screens/th/custom.png" width="250" alt="พื้นหลังกรมท่า สีหลักเขียว">
 </p>
 
 ### เมื่อพับจอ

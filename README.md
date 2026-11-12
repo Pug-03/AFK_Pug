@@ -384,7 +384,6 @@ Text color follows the background and is raised until it's readable, so no combi
 <p align="center">
   <img src="docs/screens/en/working.png" width="250" alt="Black background with a white accent">
   <img src="docs/screens/en/white.png" width="250" alt="White background with a blue accent">
-  <img src="docs/screens/en/custom.png" width="250" alt="Navy background with a green accent">
 </p>
 
 ### When the lid closes
