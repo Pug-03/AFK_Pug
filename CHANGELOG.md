@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 - 2026-11-13
 
 ### Added
 - **A red “Needs you” badge:** while an agent waits for you, the menu bar shows a bright red badge with the A and “Needs you” (“รอคุณ” in Thai), blinking between full and dim, so it's noticed from across the room. It replaces the orange blink. With Reduce motion on it stays lit.
