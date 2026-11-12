@@ -1,7 +1,7 @@
 // Makes the README's demo video: a MacBook drawn in CSS 3D showing the real app screens
 // from docs/screens/. It's an animation, not a screen recording. Every frame is a pure
 // function of time, rendered in headless Chrome, then encoded with ffmpeg.
-// Needs Chrome, ffmpeg and img2webp (brew install webp), and scripts/screenshots.sh run first.
+// Needs Chrome, ffmpeg built with libsvtav1 (Homebrew's is), and scripts/screenshots.sh run first.
 // Usage: node scripts/demo-video.mjs [en|th] [--still <seconds>]
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -13,7 +13,13 @@ const chrome = [process.env.CHROME_PATH, '/Applications/Google Chrome.app/Conten
 if (!chrome) throw new Error('Chrome not found; set CHROME_PATH');
 
 const WIDTH = 1280, HEIGHT = 720, FPS = 60, DURATION = 21;
-const WEBP_FPS = 30, WEBP_WIDTH = 960;
+// Frames render at SCALE x the CSS size and are downsampled, so the zoomed panel stays sharp
+// and slow camera moves don't snap to whole pixels.
+const SCALE = 2, VIDEO_WIDTH = 1920;
+// The README shows the AVIF at 860 CSS px, about 1720 device px on a Retina screen.
+const AVIF_WIDTH = 1600;
+/** Scales, converts with the BT.709 matrix and tags the stream to match, so browsers show the colors as rendered. */
+const toVideo = (width) => `scale=${width}:-2:flags=lanczos:out_color_matrix=bt709,format=yuv420p,setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv`;
 const CAPTIONS = {
   en: {
     start: 'Your agents are working', watch: 'See every job and its current step', close: 'Close the lid',
@@ -114,7 +120,7 @@ function frame(lang, t) {
   .panel{position:absolute;right:13px;top:29px;width:206px;border-radius:13px;overflow:hidden;box-shadow:0 24px 50px rgba(0,0,0,.65),0 0 0 1px rgba(255,255,255,.12);
     opacity:${panelOpacity};transform:translateY(${lerp(-10, 0, panelOpacity)}px) scale(${lerp(0.97, 1, panelOpacity)});transform-origin:100% 0}
   .panel img{display:block;width:100%}
-  .cap{position:absolute;left:50%;bottom:34px;white-space:nowrap;font-size:26px;font-weight:600;letter-spacing:-.01em;padding:10px 22px;border-radius:999px;background:rgba(10,10,14,.72);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
+  .cap{position:absolute;left:50%;bottom:34px;white-space:nowrap;font-size:26px;font-weight:600;letter-spacing:-.01em;padding:10px 22px;border-radius:999px;background:#0a0a0e;box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
   .status{position:absolute;left:50%;top:94px;transform:translateX(-50%);display:flex;align-items:center;gap:14px;padding:13px 22px;border-radius:999px;font-size:21px;font-weight:600;
     background:rgba(255,255,255,.07);box-shadow:inset 0 0 0 1px rgba(255,255,255,.11);opacity:${statusIn}}
   .status i{display:block;width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.2)} .status i.on{background:#62d98e}
@@ -147,13 +153,22 @@ function frame(lang, t) {
 }
 
 // Each worker needs its own Chrome profile: two at once on one profile refuse to start.
-function shoot(html, png, tmp, index, worker = 0) {
+// Headless Chrome now and then hangs on a screenshot, so each try is killed after 60 s.
+async function shoot(html, png, tmp, index, worker = 0) {
   const file = join(tmp, `${index}.html`);
   writeFileSync(file, html);
+  for (let attempt = 1; ; attempt++) {
+    try { return await shootOnce(file, png, tmp, worker); } catch (error) {
+      if (attempt >= 3) throw error;
+    }
+  }
+}
+
+function shootOnce(file, png, tmp, worker) {
   return new Promise((done, fail) => {
-    execFile(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--allow-file-access-from-files', '--force-device-scale-factor=1',
+    execFile(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--allow-file-access-from-files', `--force-device-scale-factor=${SCALE}`,
       `--user-data-dir=${join(tmp, `profile-${worker}`)}`, `--window-size=${WIDTH},${HEIGHT}`, `--screenshot=${png}`, `file://${file}`],
-    (error) => (error ? fail(error) : done()));
+    { timeout: 60_000, killSignal: 'SIGKILL' }, (error) => (error ? fail(error) : done()));
   });
 }
 
@@ -179,16 +194,11 @@ for (const lang of langs.length ? langs : ['en', 'th']) {
     }
   }));
   const input = ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', join(tmp, 'f%05d.png')];
-  execFileSync('ffmpeg', [...input, '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', `docs/demo-${lang}.mp4`]);
-  // GitHub only plays repo media inline as an image. A GIF tops out around 15-25 fps with
-  // banding, so the README shows an animated WebP at WEBP_FPS and links the MP4.
-  const small = join(tmp, 'small');
-  execFileSync('mkdir', [small]);
-  execFileSync('ffmpeg', [...input, '-vf', `fps=${WEBP_FPS},scale=${WEBP_WIDTH}:-2:flags=lanczos`, join(small, 's%05d.png')]);
-  const frames = Array.from({ length: DURATION * WEBP_FPS }, (_, i) => join(small, `s${String(i + 1).padStart(5, '0')}.png`));
-  // Spread the rounding so the frames still add up to exactly DURATION.
-  const delays = frames.map((_, i) => Math.round(((i + 1) * 1000) / WEBP_FPS) - Math.round((i * 1000) / WEBP_FPS));
-  execFileSync('img2webp', ['-loop', '0', '-lossy', '-q', '72', '-m', '6', ...frames.flatMap((f, i) => ['-d', String(delays[i]), f]), '-o', `docs/demo-${lang}.webp`]);
+  execFileSync('ffmpeg', [...input, '-vf', toVideo(VIDEO_WIDTH), '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-movflags', '+faststart', `docs/demo-${lang}.mp4`]);
+  // GitHub only plays repo media inline as an image. A GIF bands and tops out around 20 fps,
+  // and an animated WebP either judders or leaves stale blocks on slow moves. An AVIF is real
+  // AV1 video: 60 fps, clean gradients, and a fraction of the size.
+  execFileSync('ffmpeg', [...input, '-vf', toVideo(AVIF_WIDTH), '-c:v', 'libsvtav1', '-crf', '30', '-preset', '4', '-g', '300', '-loop', '0', `docs/demo-${lang}.avif`]);
   rmSync(tmp, { recursive: true, force: true });
-  console.log(`docs/demo-${lang}.mp4, docs/demo-${lang}.webp`);
+  console.log(`docs/demo-${lang}.mp4, docs/demo-${lang}.avif`);
 }

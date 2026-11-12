@@ -6,6 +6,9 @@
 - **The welcome tour explains the hustle chart:** a new page after "See what each agent is doing" shows the chart with a sample week, what solid and faint bars mean, and that waiting and usage limits don't count. Hover the bars or switch 24h and 7d to try it.
 - **A ? on the hustle card** shows the same explanation on the home screen, for anyone who already went through the welcome.
 
+### Changed
+- The README demo is rendered at 2× and downsampled, so the app screen stays sharp when the camera zooms and slow moves no longer step pixel by pixel. The README image is now an animated AVIF at 60 fps and 1600 px (was a 30 fps, 960 px WebP), about 1.5 MB instead of 2 MB, with no stale blocks on slow fades. The MP4 is 1920 px (was 1280) and tagged BT.709 so browsers show the right colors.
+
 ## 0.8.0 - 2026-11-10
 
 ### Added

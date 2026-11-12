@@ -32,7 +32,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/demo-en.mp4"><img src="docs/demo-en.webp" width="860" alt="Animation of a MacBook: agents work, the lid closes while the work continues, and a summary waits when the lid opens"></a>
+  <a href="docs/demo-en.mp4"><img src="docs/demo-en.avif" width="860" alt="Animation of a MacBook: agents work, the lid closes while the work continues, and a summary waits when the lid opens"></a>
   <br>
   <sub>Made from the app's real screens · <a href="docs/demo-en.mp4">Watch the full-quality video</a></sub>
 </p>
@@ -634,7 +634,7 @@ swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bi
 swift build && AFKPUG_SIM=1 AFKPUG_SIM_DIR=$(mktemp -d) "$(swift build --show-bin-path)/AFKPug" --simulate stress   # 69 adversarial scenarios
 scripts/screenshots.sh               # renders the app screens into docs/screens/
 node scripts/guide-illustrations.mjs # draws the install pictures into docs/guide/
-node scripts/demo-video.mjs          # makes the demo video and WebP (needs ffmpeg, img2webp)
+node scripts/demo-video.mjs          # makes the demo video and AVIF (needs ffmpeg with libsvtav1)
 scripts/build.sh --zip               # packs dist/AFK-Pug.zip for a GitHub release
 ```
 

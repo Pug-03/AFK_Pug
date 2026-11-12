@@ -32,7 +32,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/demo-th.mp4"><img src="docs/demo-th.webp" width="860" alt="แอนิเมชัน MacBook: agent ทำงาน พับจอแล้วงานยังเดินต่อ และมีสรุปงานเมื่อเปิดจอ"></a>
+  <a href="docs/demo-th.mp4"><img src="docs/demo-th.avif" width="860" alt="แอนิเมชัน MacBook: agent ทำงาน พับจอแล้วงานยังเดินต่อ และมีสรุปงานเมื่อเปิดจอ"></a>
   <br>
   <sub>ทำจากหน้าจอจริงของแอป · <a href="docs/demo-th.mp4">ดูวิดีโอแบบคมชัด</a></sub>
 </p>
