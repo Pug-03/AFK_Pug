@@ -101,12 +101,14 @@ function frame(lang, t) {
   .shadow{position:absolute;left:-520px;top:132px;width:1040px;height:640px;background:radial-gradient(50% 50% at 50% 50%,rgba(0,0,0,.8),transparent 72%);transform-origin:50% 0;transform:translateY(12px) rotateX(90deg)}
   /* Base */
   .base{position:absolute;left:-385px;top:128px;width:770px;height:520px;transform-origin:50% 0;transform:rotateX(90deg);transform-style:preserve-3d;
-    border-radius:4px 4px 26px 26px;background:linear-gradient(180deg,#b9bbc0 0%,#a7a9ae 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
+    border-radius:4px 4px 0 0;background:linear-gradient(180deg,#b9bbc0 0%,#a7a9ae 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
   .keys{position:absolute;left:52px;right:52px;top:30px;height:262px;border-radius:9px;background:#17181b;
     background-image:linear-gradient(#26272b 1px,transparent 1px),linear-gradient(90deg,#26272b 1px,transparent 1px);background-size:44.5px 44px;
     box-shadow:inset 0 2px 7px rgba(0,0,0,.9)}
   .pad{position:absolute;left:230px;right:230px;top:310px;height:185px;border-radius:12px;background:linear-gradient(180deg,#b3b5ba,#a2a4a9);box-shadow:inset 0 0 0 1px rgba(0,0,0,.14),inset 0 1px 0 rgba(255,255,255,.4)}
-  .edge{position:absolute;left:-385px;top:128px;width:770px;height:12px;border-radius:0 0 16px 16px;background:linear-gradient(#a0a2a7,#5d5e62);transform:translateZ(520px)}
+  /* The base is a solid slab: top, front and two sides, so its edges meet. */
+  .edge{position:absolute;left:-385px;top:127px;width:770px;height:14px;border-radius:0 0 7px 7px;background:linear-gradient(#a6a8ad,#8b8d92 45%,#5f6065);transform:translateZ(520px)}
+  .side{position:absolute;top:127px;width:520px;height:14px;border-radius:0 0 7px 0;background:linear-gradient(#9a9ca1,#6d6e73);transform-origin:0 0;transform:rotateY(-90deg)}
   /* Lid */
   .lid{position:absolute;left:-385px;top:-372px;width:770px;height:500px;transform-origin:50% 100%;transform:rotateX(${hinge}deg);transform-style:preserve-3d}
   .face{position:absolute;inset:0;border-radius:22px 22px 4px 4px;background:#0a0a0c;box-shadow:inset 0 0 0 2px #2a2b2f,inset 0 0 0 9px #050506;backface-visibility:hidden;overflow:hidden}
@@ -133,7 +135,7 @@ function frame(lang, t) {
   <div class="stage"><div class="cam">
     <div class="shadow"></div>
     <div class="base"><div class="keys"></div><div class="pad"></div></div>
-    <div class="edge"></div>
+    <div class="edge"></div><div class="side" style="left:-385px"></div><div class="side" style="left:385px"></div>
     <div class="lid">
       <div class="back"></div>
       <div class="face"><div class="notch"></div>
@@ -166,7 +168,7 @@ async function shoot(html, png, tmp, index, worker = 0) {
 
 function shootOnce(file, png, tmp, worker) {
   return new Promise((done, fail) => {
-    execFile(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--allow-file-access-from-files', `--force-device-scale-factor=${SCALE}`,
+    execFile(chrome, ['--headless=new', '--hide-scrollbars', '--allow-file-access-from-files', `--force-device-scale-factor=${SCALE}`,
       `--user-data-dir=${join(tmp, `profile-${worker}`)}`, `--window-size=${WIDTH},${HEIGHT}`, `--screenshot=${png}`, `file://${file}`],
     { timeout: 60_000, killSignal: 'SIGKILL' }, (error) => (error ? fail(error) : done()));
   });
