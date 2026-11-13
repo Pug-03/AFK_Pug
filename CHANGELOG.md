@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.2 - 2026-11-13
 
 ### Added
 - **The trackpad answers back:** dragging the Stop at battery slider clicks once for each 5% step, and Go AFK, Stop, the settings buttons, the dropdowns and "+N more" tap the Force Touch trackpad like the switches already did.
