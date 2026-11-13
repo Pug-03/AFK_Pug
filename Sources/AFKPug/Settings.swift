@@ -80,7 +80,11 @@ struct SettingsView: View {
                                 .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
                         }
                         Slider(value: Binding(get: { Double(engine.batteryFloor) },
-                                              set: { engine.batteryFloor = Int($0) }), in: 5...50, step: 5)
+                                              set: { value in
+                                                  guard Int(value) != engine.batteryFloor else { return }
+                                                  Haptics.tick()
+                                                  engine.batteryFloor = Int(value)
+                                              }), in: 5...50, step: 5)
                             .padding(.leading, 30)
                             .accessibilityLabel(tr("Stop at battery"))
                             .accessibilityValue("\(engine.batteryFloor)%")
@@ -98,6 +102,7 @@ struct SettingsView: View {
                                 Text(tr("Off")).tag(0); Text(tr("2 min")).tag(2); Text(tr("5 min")).tag(5); Text(tr("15 min")).tag(15)
                             }
                             .labelsHidden().frame(width: 92)
+                            .onChange(of: engine.graceMinutes) { Haptics.tap() }
                         }
                         ForEach(AgentIntegrations.all) { item in
                             AgentConnectionRow(engine: engine, item: item)
@@ -194,6 +199,7 @@ struct SettingsView: View {
                                 ForEach(AppLanguage.allCases) { lang in Text(lang.label).tag(lang) }
                             }
                             .labelsHidden().frame(width: 110)
+                            .onChange(of: engine.language) { Haptics.tap() }
                         }
                     }
 
@@ -444,7 +450,7 @@ struct PillButton: View {
     @Environment(\.isEnabled) private var enabled
 
     var body: some View {
-        Button(action: action) {
+        Button { Haptics.tap(); action() } label: {
             HStack(spacing: 5) {
                 if let symbol { Image(systemName: symbol).font(.system(size: 10.5, weight: .semibold)) }
                 ZStack {
@@ -488,7 +494,7 @@ struct IconButton: View {
     @State private var hover = false
 
     var body: some View {
-        Button(action: action) {
+        Button { Haptics.tap(); action() } label: {
             Image(systemName: symbol)
                 .font(.system(size: size * 0.45, weight: .medium))
                 .foregroundStyle(hover ? Theme.text : Theme.sub)

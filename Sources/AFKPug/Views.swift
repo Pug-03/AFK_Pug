@@ -636,7 +636,7 @@ struct ActionButton: View {
     @Environment(\.isEnabled) private var enabled
 
     var body: some View {
-        Button(action: action) {
+        Button { Haptics.tap(); action() } label: {
             Text(title)
                 .font(.system(size: 13.5, weight: .semibold))
                 .lineLimit(1)
@@ -1046,6 +1046,7 @@ struct KeepScreenPicker: View {
                 ForEach(options, id: \.minutes) { Text($0.title).tag($0.minutes) }
             }
             .labelsHidden().frame(width: 132)
+            .onChange(of: engine.keepScreenMinutes) { Haptics.tap() }
         }
     }
 }
@@ -1058,7 +1059,7 @@ private struct MoreButton: View {
     @State private var hover = false
 
     var body: some View {
-        Button(action: action) {
+        Button { Haptics.tap(); action() } label: {
             Text(title).font(.system(size: 11, weight: .medium))
                 .foregroundStyle(hover ? Theme.text : Theme.sub)
                 .underline(hover)

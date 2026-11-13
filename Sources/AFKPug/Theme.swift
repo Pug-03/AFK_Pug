@@ -201,6 +201,12 @@ enum Haptics {
         guard !Sim.enabled else { return }
         NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
     }
+
+    /// A softer click for each step a slider snaps to.
+    static func tick() {
+        guard !Sim.enabled else { return }
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+    }
 }
 
 /// The user's appearance choices. Black and white are the defaults.
