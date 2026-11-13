@@ -6,6 +6,9 @@ struct RootView: View {
     @ObservedObject var engine: Engine
     @State var page: Page = .home
     @State private var homeHeight: CGFloat = 520
+    /// Usable height of the screen the panel is on, from the window itself. NSScreen.main
+    /// follows the key window, which can be on another, taller display.
+    @State private var screenHeight: CGFloat?
     /// What the window should be; follows the content on the same curve. 0 until first measured.
     @State private var windowHeight: CGFloat = 0
     /// 1 when open. The panel unfolds from the menu bar each time it opens.
@@ -22,7 +25,7 @@ struct RootView: View {
 
     enum Page { case home, settings }
     static let width: CGFloat = 400
-    private static var maxHeight: CGFloat { max(320, (NSScreen.main?.visibleFrame.height ?? 800) - 8) }
+    private var maxHeight: CGFloat { max(320, (screenHeight ?? NSScreen.main?.visibleFrame.height ?? 800) - 8) }
 
     private struct Measured: Equatable {
         let height: CGFloat
@@ -41,7 +44,7 @@ struct RootView: View {
                         .transition(slide(from: .leading))
                 } else {
                     SettingsView(engine: engine, back: { go(.home) })
-                        .frame(height: min(homeHeight, Self.maxHeight))
+                        .frame(height: min(homeHeight, maxHeight))
                         .transition(slide(from: .trailing))
                 }
             }
@@ -65,7 +68,7 @@ struct RootView: View {
         .clipped()
         .background {
             if fitsWindow {
-                WindowHeightFitter(opened: {
+                WindowHeightFitter(screenChanged: { screenHeight = $0 }, opened: {
                     engine.postponeTick()
                     opens += 1
                     UsageStore.shared.panelOpened(now: Clock.now())
@@ -99,10 +102,10 @@ struct RootView: View {
         let home = HomeView(engine: engine, openSettings: { go(.settings) })
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self, of: \.size.height) { homeHeight = $0 }
-        if fitsWindow, homeHeight > Self.maxHeight {
+        if fitsWindow, homeHeight > maxHeight {
             ScrollView(.vertical) { home }
                 .scrollIndicators(.hidden)
-                .frame(height: Self.maxHeight)
+                .frame(height: maxHeight)
         } else {
             home
         }
@@ -185,11 +188,13 @@ private struct WindowHeightLayout: Layout, Animatable {
 /// A MenuBarExtra window grows with its content but never shrinks. This keeps it at the
 /// root's height as that animates, and its top where it is: the content must not move.
 private struct WindowHeightFitter: NSViewRepresentable {
+    var screenChanged: (CGFloat) -> Void = { _ in }
     var opened: () -> Void = {}
     var closed: () -> Void = {}
 
     func makeNSView(context: Context) -> Probe { Probe() }
     func updateNSView(_ view: Probe, context: Context) {
+        view.screenChanged = screenChanged
         view.opened = opened
         view.closed = closed
         view.applyTheme()
@@ -201,8 +206,10 @@ private struct WindowHeightFitter: NSViewRepresentable {
         /// Hidden, so the next time it becomes key the panel is really opening
         /// (a menu or another window taking focus for a moment doesn't count).
         private var isClosed = true
+        var screenChanged: (CGFloat) -> Void = { _ in }
         var opened: () -> Void = {}
         var closed: () -> Void = {}
+        private var reportedScreen: CGFloat?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -227,8 +234,13 @@ private struct WindowHeightFitter: NSViewRepresentable {
             keyObservers.forEach(NotificationCenter.default.removeObserver)
             keyObservers = []
             guard let window else { return }
+            // A panel opened from the menu bar on another display.
+            keyObservers.append(NotificationCenter.default.addObserver(forName: NSWindow.didChangeScreenNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.reportScreen() }
+            })
             keyObservers.append(NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
+                    self?.reportScreen()
                     guard let self, self.isClosed else { return }
                     self.isClosed = false
                     self.opened()
@@ -249,6 +261,16 @@ private struct WindowHeightFitter: NSViewRepresentable {
             }
         }
 
+        /// The room below the panel's top on its own screen. Reported after layout, since
+        /// it changes SwiftUI state.
+        private func reportScreen() {
+            guard let visible = window?.screen?.visibleFrame else { return }
+            let room = visible.height
+            guard reportedScreen.map({ abs($0 - room) > 0.5 }) ?? true else { return }
+            reportedScreen = room
+            DispatchQueue.main.async { [weak self] in self?.screenChanged(room) }
+        }
+
         /// Called mid-layout, on purpose: a resize made later shows one frame of the root
         /// centred in the old window, and SwiftUI would grow the window first.
         override func setFrameSize(_ newSize: NSSize) {
@@ -259,6 +281,7 @@ private struct WindowHeightFitter: NSViewRepresentable {
         private func fit() {
             let height = bounds.height
             guard let window, height > 0 else { return }
+            reportScreen()
             var frame = window.frame
             // MenuBarExtraWindow hangs the window from the status item, which can sit
             // above the screen when the menu bar hides.

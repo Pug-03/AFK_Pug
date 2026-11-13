@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- With two displays, the panel can scroll again. Its height was capped by the display holding the active window, so opening it from a shorter laptop screen while working on a taller monitor let the list run off the bottom with no way to scroll. It now uses the display the panel is on.
+
 ## 0.9.0 - 2026-11-13
 
 ### Added
