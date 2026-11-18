@@ -25,7 +25,7 @@ struct AgentIntegration: Identifiable, Sendable {
 }
 
 enum AgentIntegrations {
-    static var all: [AgentIntegration] { [claude, codex, gemini, cursor] }
+    static var all: [AgentIntegration] { [claude, codex, gemini, cursor, kiro] }
 
     static func integration(_ id: String) -> AgentIntegration? { all.first { $0.id == id } }
 
@@ -104,6 +104,19 @@ enum AgentIntegrations {
         connect: { try CursorHooks.install() },
         disconnect: { try CursorHooks.uninstall() },
         processNames: ["Cursor Agent"]
+    )
+
+    static let kiro = AgentIntegration(
+        id: "kiro",
+        name: "Kiro CLI",
+        configPath: "~/.kiro/hooks/afkpug.json",
+        isAvailable: { FileManager.default.fileExists(atPath: KiroHooks.fileURL.deletingLastPathComponent().deletingLastPathComponent().path) },
+        isConnected: { KiroHooks.isInstalled() },
+        needsUpgrade: { KiroHooks.needsUpgrade() },
+        connect: { try KiroHooks.install() },
+        disconnect: { try KiroHooks.uninstall() },
+        processNames: ["Kiro CLI"],
+        setupNoteKey: "Kiro CLI loads global hooks from version 3. Restart open Kiro sessions after connecting."
     )
 }
 
@@ -336,5 +349,81 @@ enum CursorHooks {
             if kept.count != list.count { result[event] = kept.isEmpty ? nil : kept }
         }
         return result
+    }
+}
+
+// MARK: - Kiro CLI
+
+/// ~/.kiro/hooks/afkpug.json (Kiro CLI V3 loads global hooks from ~/.kiro/hooks/*.json).
+/// A file of our own, so nothing of the user's is edited:
+/// `{"version": "v1", "hooks": [{"name", "trigger", "action": {"type": "command", "command"}, "timeout"}]}`.
+/// The hook receives `session_id`, `cwd`, `tool_name` ... as JSON on stdin; exit 0 with
+/// no output leaves the turn unchanged (stdout would be added to the agent's context).
+/// Only triggers present in every V3 release, so an older CLI never rejects the file.
+/// https://kiro.dev/docs/hooks/
+enum KiroHooks {
+    static let fileURL = ConfigFile.home(".kiro/hooks/afkpug.json")
+    static let events: [(event: String, action: String)] = [
+        ("UserPromptSubmit", "start"),
+        ("PreToolUse", "touch"),
+        ("PostToolUse", "touch"),
+        ("Stop", "stop"),
+    ]
+
+    private static func entry(_ event: String, _ action: String) -> [String: Any] {
+        ["name": "afkpug-" + event.lowercased(), "trigger": event,
+         "action": ["type": "command", "command": ConfigFile.hookCommand(action, "kiro")],
+         "timeout": 10]
+    }
+
+    private static func command(_ hook: [String: Any]) -> String? {
+        (hook["action"] as? [String: Any])?["command"] as? String
+    }
+
+    private static func isOurs(_ hook: [String: Any]) -> Bool { (command(hook) ?? "").contains(ConfigFile.marker) }
+
+    /// The `"hooks"` array ([] when absent). Any other value is refused instead of replaced.
+    private static func hooks(_ json: [String: Any]) throws -> [[String: Any]] {
+        guard let value = json["hooks"] else { return [] }
+        guard let list = value as? [[String: Any]] else {
+            throw ConfigFile.error(tr("%@ has a \"hooks\" value that is not a list", ConfigFile.display(fileURL)))
+        }
+        return list
+    }
+
+    static func isInstalled() -> Bool {
+        guard let json = try? ConfigFile.loadJSON(fileURL), let list = try? hooks(json) else { return ConfigFile.mentionsHook(fileURL) }
+        return list.contains(where: isOurs)
+    }
+
+    static func needsUpgrade() -> Bool {
+        guard isInstalled(), let json = try? ConfigFile.loadJSON(fileURL), let list = try? hooks(json) else { return false }
+        let mine = list.filter(isOurs)
+        let wanted = events.map { command(entry($0.event, $0.action)) }
+        return mine.count != wanted.count || Set(mine.map(command)) != Set(wanted)
+            || Set(mine.compactMap { $0["trigger"] as? String }) != Set(events.map(\.event))
+    }
+
+    static func install() throws {
+        var json = try ConfigFile.loadJSON(fileURL)
+        var list = try hooks(json).filter { !isOurs($0) }
+        list.append(contentsOf: events.map { entry($0.event, $0.action) })
+        json["hooks"] = list
+        if json["version"] == nil { json["version"] = "v1" }
+        try ConfigFile.saveJSON(json, to: fileURL)
+    }
+
+    /// Takes our hooks out; the file goes too when nothing else is left in it.
+    static func uninstall() throws {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        var json = try ConfigFile.loadJSON(fileURL)
+        guard json["hooks"] != nil else { return }
+        let rest = try hooks(json).filter { !isOurs($0) }
+        if rest.isEmpty, Set(json.keys).isSubset(of: ["version", "hooks"]) {
+            try FileManager.default.removeItem(at: fileURL.resolvingSymlinksInPath())
+            return
+        }
+        json["hooks"] = rest
+        try ConfigFile.saveJSON(json, to: fileURL)
     }
 }

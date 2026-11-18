@@ -89,20 +89,20 @@ struct AgentTask: Equatable {
             ? String(tool.components(separatedBy: "__").last ?? tool) : tool
         let file = target.map { URL(fileURLWithPath: $0).lastPathComponent }.flatMap { $0.isEmpty ? nil : $0 }
         switch name.lowercased() {
-        case "edit", "multiedit", "write", "notebookedit", "replace", "write_file", "edit_file", "apply_patch":
+        case "edit", "multiedit", "write", "notebookedit", "replace", "write_file", "edit_file", "apply_patch", "fs_write":
             return file.map { tr("Editing %@", $0) } ?? tr("Editing files")
-        case "read", "read_file", "read_many_files":
+        case "read", "read_file", "read_many_files", "fs_read":
             return file.map { tr("Reading %@", $0) } ?? tr("Reading files")
-        case "bash", "shell", "run_shell_command", "exec_command", "local_shell":
+        case "bash", "shell", "run_shell_command", "exec_command", "local_shell", "execute_bash":
             let words = (target ?? "").split(whereSeparator: \.isWhitespace).prefix(2).joined(separator: " ")
             return words.isEmpty ? tr("Running a command") : tr("Running %@", words)
         case "grep", "glob", "ls", "search_file_content", "list_directory", "codebase_search":
             return tr("Searching the code")
         case "webfetch", "websearch", "web_fetch", "web_search", "google_web_search":
             return tr("Reading the web")
-        case "task", "agent":
+        case "task", "agent", "use_subagent", "subagent":
             return tr("Running a helper agent")
-        case "todowrite", "write_todos", "update_plan":
+        case "todowrite", "write_todos", "update_plan", "todo_list":
             return tr("Planning")
         default:
             return tr("Using %@", name)
@@ -477,7 +477,7 @@ enum Uninstaller {
             if ConfigFile.mentionsHook(ClaudeHooks.settingsURL) { report.errors.append("Claude Code hooks: \(error.localizedDescription)") }
         }
         for (item, url) in [(AgentIntegrations.codex, CodexHooks.file.url), (AgentIntegrations.gemini, GeminiHooks.file.url),
-                            (AgentIntegrations.cursor, CursorHooks.configURL)] {
+                            (AgentIntegrations.cursor, CursorHooks.configURL), (AgentIntegrations.kiro, KiroHooks.fileURL)] {
             do { try item.disconnect() } catch {
                 if ConfigFile.mentionsHook(url) { report.errors.append("\(item.name) hooks: \(error.localizedDescription)") }
             }

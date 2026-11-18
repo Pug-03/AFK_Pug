@@ -333,6 +333,8 @@ private let thaiV3: [String: String] = [
     "AFK Pug is installed as a Claude Code plugin. Remove it in Claude Code with /plugin uninstall afk-pug.": "AFK Pug ติดตั้งเป็นปลั๊กอินของ Claude Code อยู่ ลบได้ใน Claude Code ด้วยคำสั่ง /plugin uninstall afk-pug",
     "%@ is read-only": "%@ เป็นไฟล์อ่านอย่างเดียว",
     "%@ is not a JSON object": "%@ ไม่ใช่ JSON object",
+    "%@ has a \"hooks\" value that is not a list": "%@ มีค่า \"hooks\" ที่ไม่ใช่ list",
+    "Kiro CLI loads global hooks from version 3. Restart open Kiro sessions after connecting.": "Kiro CLI รองรับ hook ส่วนกลางตั้งแต่เวอร์ชัน 3 เชื่อมต่อแล้วให้เปิดเซสชัน Kiro ที่ค้างอยู่ใหม่",
     "Codex runs new hooks only after you trust them: open Codex and type /hooks.": "Codex จะใช้ hook ใหม่หลังคุณอนุญาตก่อน: เปิด Codex แล้วพิมพ์ /hooks",
 
     // v0.4

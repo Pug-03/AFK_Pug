@@ -13,7 +13,7 @@ enum Scripts {
     ///   fail   Claude StopFailure: drop the hold, "failed" event; a usage limit with a reset
     ///          time keeps an expiring hold until then (so Claude can continue on its own)
     ///   end    session end / interrupt: drop the hold
-    /// Session id: session_id (Claude, Gemini, Codex) or conversation_id (Cursor); without
+    /// Session id: session_id (Claude, Gemini, Codex, Kiro) or conversation_id (Cursor); without
     /// one, the agent's pid. Events are named <time><pid>-<agent>-<kind>@<session>.
     /// Dropping a hold is a claim (atomic rename), so parallel hooks report it once.
     static let hook = #"""
@@ -90,6 +90,8 @@ enum Scripts {
       cwd=$(raw cwd)
       [ -z "$cwd" ] && cwd=$(printf '%s' "$input" | LC_ALL=C grep -oE '"workspace_roots"[[:space:]]*:[[:space:]]*\[[[:space:]]*"([^"\\]|\\.)*"' | head -n 1 | LC_ALL=C sed -E 's/.*\[[[:space:]]*"//; s/"$//')
       p=""; [ "$1" = prompt ] && p=$(raw prompt)
+      # Kiro CLI also passes the prompt as $USER_PROMPT.
+      [ "$1" = prompt ] && [ -z "$p" ] && [ "$agent" = kiro ] && p=$(printf '%s' "$USER_PROMPT" | LC_ALL=C tr '\n\t' '  ' | LC_ALL=C tr -d '\000-\037' | cut -c 1-400 | LC_ALL=C sed -E 's/\\/\\\\/g; s/"/\\"/g')
       find_place
       (umask 077; mkdir -p "$tasks" && printf '{"cwd":"%s","prompt":"%s","app":"%s","tty":"%s","pane":"%s","socket":"%s","root":"%s"}\n' "$cwd" "$p" "$place_app" "$place_tty" "$place_pane" "$place_socket" "$place_root" > "$task.$$.tmp" && mv -f "$task.$$.tmp" "$task") 2>/dev/null
       rm -f "$task.now"

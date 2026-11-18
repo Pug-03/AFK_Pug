@@ -13,6 +13,8 @@ enum ProcessWatcher {
         "codex": "Codex",
         "gemini": "Gemini CLI",
         "cursor-agent": "Cursor Agent",
+        "kiro-cli": "Kiro CLI",
+        "kiro-cli-chat": "Kiro CLI",
         "aider": "Aider",
         "opencode": "OpenCode",
         "amp": "Amp",

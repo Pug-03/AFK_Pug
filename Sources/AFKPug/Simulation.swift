@@ -51,6 +51,7 @@ enum Simulation {
         ("preview-th", "[13] Thai preview after 85 min closed renders, busy Claude hold survives"),
         ("codex-hooks", "Codex ~/.codex/hooks.json: install/upgrade/uninstall, real hook commands, no double hold"),
         ("gemini-hooks", "Gemini CLI settings.json hooks: install/upgrade/uninstall, JSONC refused, real hook commands"),
+        ("kiro-hooks", "Kiro CLI ~/.kiro/hooks/afkpug.json: install/upgrade/uninstall, own file, real hook commands"),
         ("cursor-hooks", "Cursor hooks.json: JSON replies, stop status, Claude hooks run by Cursor, script missing"),
         ("claude-plugin", "Claude Code plugin installed: no settings.json hooks; repo plugin/ commands work"),
         ("usage-limit", "Claude usage limit: hold until the reset (formats, cap, default), auto-resume, errors release"),
@@ -340,6 +341,7 @@ private final class Runner {
         case "preview-grace": previewGrace()
         case "codex-hooks": codexHooks()
         case "gemini-hooks": geminiHooks()
+        case "kiro-hooks": kiroHooks()
         case "cursor-hooks": cursorHooks()
         case "claude-plugin": claudePlugin()
         case "usage-limit": usageLimit()
@@ -2757,6 +2759,61 @@ extension Runner {
             fire(url, "SessionEnd", #"{\#(base),"hook_event_name":"SessionEnd","reason":"exit"}"#)
         }
         check(!exists("gemini-8d1c-gem"), "SessionEnd drops the hold")
+    }
+
+    func kiroHooks() {
+        configure(); boot()
+        let url = KiroHooks.fileURL
+        let fm = FileManager.default
+        func entries() -> [[String: Any]] {
+            ((try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })?["hooks"] as? [[String: Any]] ?? []
+        }
+        func command(_ trigger: String) -> String {
+            entries().filter { $0["trigger"] as? String == trigger }.compactMap { ($0["action"] as? [String: Any])?["command"] as? String }
+                .first { $0.contains(ConfigFile.marker) } ?? ""
+        }
+        try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        check(AgentIntegrations.kiro.isAvailable() && !AgentIntegrations.kiro.isConnected(), "Kiro CLI: available, not connected yet")
+        do { try AgentIntegrations.kiro.connect(); try AgentIntegrations.kiro.connect() } catch { fail("connect threw \(error)") }
+        let mine = entries().filter { (($0["action"] as? [String: Any])?["command"] as? String ?? "").contains(ConfigFile.marker) }
+        check(mine.count == KiroHooks.events.count, "one hook per event, no duplicates (got \(mine.count))")
+        for (event, action) in KiroHooks.events { check(command(event).contains(" \(action) kiro"), "\(event) -> \(action)") }
+        check(AgentIntegrations.kiro.isConnected() && !AgentIntegrations.kiro.needsUpgrade(), "connected, no upgrade needed")
+
+        // The user's own hooks in the same file survive an upgrade and a disconnect.
+        let own = #"{"name":"lint","trigger":"PostFileSave","action":{"type":"command","command":"npx eslint --fix"}}"#
+        let old = #"{"version":"v1","hooks":[\#(own),{"name":"x","trigger":"SessionEnd","action":{"type":"command","command":"/old/bin/afkpug-hook end kiro"}}]}"#
+        try? old.write(to: url, atomically: true, encoding: .utf8)
+        check(AgentIntegrations.kiro.needsUpgrade(), "older install needs an upgrade")
+        do { try AgentIntegrations.kiro.connect() } catch { fail("upgrade threw \(error)") }
+        check(!AgentIntegrations.kiro.needsUpgrade() && entries().contains { $0["name"] as? String == "lint" }, "upgrade keeps the user's hook")
+        do { try AgentIntegrations.kiro.disconnect(); try AgentIntegrations.kiro.disconnect() } catch { fail("disconnect threw \(error)") }
+        check(!AgentIntegrations.kiro.isConnected() && entries().count == 1, "disconnect removes only ours")
+        try? fm.removeItem(at: url)
+        do { try AgentIntegrations.kiro.connect(); try AgentIntegrations.kiro.disconnect() } catch { fail("roundtrip threw \(error)") }
+        check(!fm.fileExists(atPath: url.path), "disconnect deletes the file when nothing else is left")
+        do { try AgentIntegrations.kiro.connect() } catch { fail("reconnect threw \(error)") }
+
+        let base = #""session_id":"kiro-7f3a","cwd":"/Users/u/app""#
+        engine.refreshIntegrations()
+        step("UserPromptSubmit", expect: ["log: Kiro CLI started working", "disablesleep 1"]) {
+            let r = shell(command("UserPromptSubmit"), stdin: #"{\#(base),"hook_event_name":"UserPromptSubmit","prompt":"fix the bug"}"#)
+            check(r.status == 0 && r.output.isEmpty, "no stdout (it would go to the agent's context)")
+        }
+        check(exists("kiro-kiro-7f3a"), "hold named after session_id")
+        step("PreToolUse / PostToolUse touch", forbid: ["finished"]) {
+            shell(command("PreToolUse"), stdin: #"{\#(base),"hook_event_name":"PreToolUse","tool_name":"execute_bash","tool_input":{"command":"npm test"}}"#)
+            shell(command("PostToolUse"), stdin: #"{\#(base),"hook_event_name":"PostToolUse","tool_name":"execute_bash","tool_input":{"command":"npm test"}}"#)
+        }
+        noDoubleHold("Kiro CLI", procs: "  9400 1  40.0 kiro-cli chat\n", holdId: "kiro-kiro-7f3a")
+        step("Stop (finished after 10 s)", ticks: 6, expect: ["log: Kiro CLI finished"]) {
+            shell(command("Stop"), stdin: #"{\#(base),"hook_event_name":"Stop"}"#)
+        }
+        check(!exists("kiro-kiro-7f3a"), "Stop drops the hold")
+        step("prompt from $USER_PROMPT when stdin has none", ticks: 3) {
+            _ = shell("export USER_PROMPT='say \"hi\"'; " + command("UserPromptSubmit"), stdin: #"{\#(base),"hook_event_name":"UserPromptSubmit"}"#)
+        }
+        check(HoldStore.readTask("kiro-kiro-7f3a")?.prompt == #"say "hi""#, "prompt recorded: \(HoldStore.readTask("kiro-kiro-7f3a")?.prompt ?? "nil")")
     }
 
     func cursorHooks() {
