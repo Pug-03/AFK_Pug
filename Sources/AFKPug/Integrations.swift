@@ -386,21 +386,28 @@ enum CursorHooks {
 
 // MARK: - Kiro CLI
 
-/// ~/.kiro/hooks/afkpug.json (Kiro CLI V3 loads global hooks from ~/.kiro/hooks/*.json).
-/// A file of our own, so nothing of the user's is edited:
+/// Kiro CLI V3 loads global hooks from ~/.kiro/hooks/*.json. Two files of our own, so
+/// nothing of the user's is edited:
 /// `{"version": "v1", "hooks": [{"name", "trigger", "action": {"type": "command", "command"}, "timeout"}]}`.
-/// The hook receives `session_id`, `cwd`, `tool_name` ... as JSON on stdin; exit 0 with
-/// no output leaves the turn unchanged (stdout would be added to the agent's context).
-/// Only triggers present in every V3 release, so an older CLI never rejects the file.
+/// The hook receives `session_id`, `cwd`, `prompt`, `tool_name`, `tool_input` ... as JSON on
+/// stdin; exit 0 with no output leaves the turn unchanged (stdout would be added to the
+/// agent's context), and a PermissionRequest hook without a decision keeps the prompt.
+/// PermissionRequest exists from Kiro CLI 3.4.0 only, so it lives in a file of its own: a
+/// CLI that doesn't know the trigger can't reject the rest.
 /// https://kiro.dev/docs/hooks/
 enum KiroHooks {
+    typealias Events = [(event: String, action: String)]
     static let fileURL = ConfigFile.home(".kiro/hooks/afkpug.json")
-    static let events: [(event: String, action: String)] = [
+    static let permissionURL = ConfigFile.home(".kiro/hooks/afkpug-permission.json")
+    static let events: Events = [
         ("UserPromptSubmit", "start"),
         ("PreToolUse", "touch"),
         ("PostToolUse", "touch"),
         ("Stop", "stop"),
+        ("SessionEnd", "end"),
     ]
+    static let permissionEvents: Events = [("PermissionRequest", "wait")]
+    private static let files: [(url: URL, events: Events)] = [(fileURL, events), (permissionURL, permissionEvents)]
 
     private static func entry(_ event: String, _ action: String) -> [String: Any] {
         ["name": "afkpug-" + event.lowercased(), "trigger": event,
@@ -415,47 +422,63 @@ enum KiroHooks {
     private static func isOurs(_ hook: [String: Any]) -> Bool { (command(hook) ?? "").contains(ConfigFile.marker) }
 
     /// The `"hooks"` array ([] when absent). Any other value is refused instead of replaced.
-    private static func hooks(_ json: [String: Any]) throws -> [[String: Any]] {
+    private static func hooks(_ json: [String: Any], _ url: URL) throws -> [[String: Any]] {
         guard let value = json["hooks"] else { return [] }
         guard let list = value as? [[String: Any]] else {
-            throw ConfigFile.error(tr("%@ has a \"hooks\" value that is not a list", ConfigFile.display(fileURL)))
+            throw ConfigFile.error(tr("%@ has a \"hooks\" value that is not a list", ConfigFile.display(url)))
         }
         return list
     }
 
-    static func isInstalled() -> Bool {
-        guard let json = try? ConfigFile.loadJSON(fileURL), let list = try? hooks(json) else { return ConfigFile.mentionsHook(fileURL) }
+    /// Connected when the main file has our hooks.
+    static func isInstalled() -> Bool { has(fileURL) }
+
+    private static func has(_ url: URL) -> Bool {
+        guard let json = try? ConfigFile.loadJSON(url), let list = try? hooks(json, url) else { return ConfigFile.mentionsHook(url) }
         return list.contains(where: isOurs)
     }
 
     static func needsUpgrade() -> Bool {
-        guard isInstalled(), let json = try? ConfigFile.loadJSON(fileURL), let list = try? hooks(json) else { return false }
-        let mine = list.filter(isOurs)
-        let wanted = events.map { command(entry($0.event, $0.action)) }
-        return mine.count != wanted.count || Set(mine.map(command)) != Set(wanted)
-            || Set(mine.compactMap { $0["trigger"] as? String }) != Set(events.map(\.event))
+        guard isInstalled() else { return false }
+        return files.contains { url, events in
+            guard let json = try? ConfigFile.loadJSON(url), let list = try? hooks(json, url) else { return false }
+            let mine = list.filter(isOurs)
+            let wanted = events.map { command(entry($0.event, $0.action)) }
+            return mine.count != wanted.count || Set(mine.map(command)) != Set(wanted)
+                || Set(mine.compactMap { $0["trigger"] as? String }) != Set(events.map(\.event))
+        }
     }
 
     static func install() throws {
-        var json = try ConfigFile.loadJSON(fileURL)
-        var list = try hooks(json).filter { !isOurs($0) }
-        list.append(contentsOf: events.map { entry($0.event, $0.action) })
-        json["hooks"] = list
-        if json["version"] == nil { json["version"] = "v1" }
-        try ConfigFile.saveJSON(json, to: fileURL)
+        for (url, events) in files {
+            var json = try ConfigFile.loadJSON(url)
+            var list = try hooks(json, url).filter { !isOurs($0) }
+            list.append(contentsOf: events.map { entry($0.event, $0.action) })
+            json["hooks"] = list
+            if json["version"] == nil { json["version"] = "v1" }
+            try ConfigFile.saveJSON(json, to: url)
+        }
     }
 
-    /// Takes our hooks out; the file goes too when nothing else is left in it.
+    /// Takes our hooks out; a file goes too when nothing else is left in it.
     static func uninstall() throws {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
-        var json = try ConfigFile.loadJSON(fileURL)
+        var firstError: Error?
+        for (url, _) in files {
+            do { try remove(from: url) } catch { firstError = firstError ?? error }
+        }
+        if let firstError { throw firstError }
+    }
+
+    private static func remove(from url: URL) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        var json = try ConfigFile.loadJSON(url)
         guard json["hooks"] != nil else { return }
-        let rest = try hooks(json).filter { !isOurs($0) }
+        let rest = try hooks(json, url).filter { !isOurs($0) }
         if rest.isEmpty, Set(json.keys).isSubset(of: ["version", "hooks"]) {
-            try FileManager.default.removeItem(at: fileURL.resolvingSymlinksInPath())
+            try FileManager.default.removeItem(at: url.resolvingSymlinksInPath())
             return
         }
         json["hooks"] = rest
-        try ConfigFile.saveJSON(json, to: fileURL)
+        try ConfigFile.saveJSON(json, to: url)
     }
 }

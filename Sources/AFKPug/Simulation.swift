@@ -2800,19 +2800,21 @@ extension Runner {
         configure(); boot()
         let url = KiroHooks.fileURL
         let fm = FileManager.default
-        func entries() -> [[String: Any]] {
-            ((try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })?["hooks"] as? [[String: Any]] ?? []
+        let permission = KiroHooks.permissionURL
+        func entries(_ file: URL? = nil) -> [[String: Any]] {
+            ((try? Data(contentsOf: file ?? url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })?["hooks"] as? [[String: Any]] ?? []
         }
         func command(_ trigger: String) -> String {
-            entries().filter { $0["trigger"] as? String == trigger }.compactMap { ($0["action"] as? [String: Any])?["command"] as? String }
+            (entries() + entries(permission)).filter { $0["trigger"] as? String == trigger }.compactMap { ($0["action"] as? [String: Any])?["command"] as? String }
                 .first { $0.contains(ConfigFile.marker) } ?? ""
         }
         try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         check(AgentIntegrations.kiro.isAvailable() && !AgentIntegrations.kiro.isConnected(), "Kiro CLI: available, not connected yet")
         do { try AgentIntegrations.kiro.connect(); try AgentIntegrations.kiro.connect() } catch { fail("connect threw \(error)") }
-        let mine = entries().filter { (($0["action"] as? [String: Any])?["command"] as? String ?? "").contains(ConfigFile.marker) }
-        check(mine.count == KiroHooks.events.count, "one hook per event, no duplicates (got \(mine.count))")
-        for (event, action) in KiroHooks.events { check(command(event).contains(" \(action) kiro"), "\(event) -> \(action)") }
+        func ours(_ file: URL) -> Int { entries(file).filter { (($0["action"] as? [String: Any])?["command"] as? String ?? "").contains(ConfigFile.marker) }.count }
+        check(ours(url) == KiroHooks.events.count && ours(permission) == 1, "one hook per event, no duplicates (got \(ours(url)) + \(ours(permission)))")
+        check(entries(permission).first?["trigger"] as? String == "PermissionRequest", "PermissionRequest sits in a file of its own")
+        for (event, action) in KiroHooks.events + KiroHooks.permissionEvents { check(command(event).contains(" \(action) kiro"), "\(event) -> \(action)") }
         check(AgentIntegrations.kiro.isConnected() && !AgentIntegrations.kiro.needsUpgrade(), "connected, no upgrade needed")
 
         // The user's own hooks in the same file survive an upgrade and a disconnect.
@@ -2823,10 +2825,15 @@ extension Runner {
         do { try AgentIntegrations.kiro.connect() } catch { fail("upgrade threw \(error)") }
         check(!AgentIntegrations.kiro.needsUpgrade() && entries().contains { $0["name"] as? String == "lint" }, "upgrade keeps the user's hook")
         do { try AgentIntegrations.kiro.disconnect(); try AgentIntegrations.kiro.disconnect() } catch { fail("disconnect threw \(error)") }
-        check(!AgentIntegrations.kiro.isConnected() && entries().count == 1, "disconnect removes only ours")
+        check(!AgentIntegrations.kiro.isConnected() && entries().count == 1 && !fm.fileExists(atPath: permission.path), "disconnect removes only ours, and the permission file")
+        // 0.10.0 wrote four events and no permission file: reconnecting upgrades it.
+        do { try AgentIntegrations.kiro.connect() } catch { fail("connect threw \(error)") }
+        try? fm.removeItem(at: permission)
+        check(AgentIntegrations.kiro.needsUpgrade(), "missing permission file needs an upgrade")
         try? fm.removeItem(at: url)
+        try? fm.removeItem(at: permission)
         do { try AgentIntegrations.kiro.connect(); try AgentIntegrations.kiro.disconnect() } catch { fail("roundtrip threw \(error)") }
-        check(!fm.fileExists(atPath: url.path), "disconnect deletes the file when nothing else is left")
+        check(!fm.fileExists(atPath: url.path) && !fm.fileExists(atPath: permission.path), "disconnect deletes the files when nothing else is left")
         do { try AgentIntegrations.kiro.connect() } catch { fail("reconnect threw \(error)") }
 
         let base = #""session_id":"kiro-7f3a","cwd":"/Users/u/app""#
@@ -2841,10 +2848,24 @@ extension Runner {
             shell(command("PostToolUse"), stdin: #"{\#(base),"hook_event_name":"PostToolUse","tool_name":"execute_bash","tool_input":{"command":"npm test"}}"#)
         }
         noDoubleHold("Kiro CLI", procs: "  9400 1  40.0 kiro-cli chat\n", holdId: "kiro-kiro-7f3a")
+        step("PermissionRequest: waiting, hold kept", expect: ["notify: Kiro CLI needs you"]) {
+            let r = shell(command("PermissionRequest"), stdin: #"{\#(base),"hook_event_name":"PermissionRequest","tool_name":"execute_bash","tool_input":{"command":"rm -rf build"},"permission":{"capability":"shell"}}"#)
+            check(r.status == 0 && r.output.isEmpty, "no decision printed: Kiro still asks you")
+        }
+        check(exists("kiro-kiro-7f3a"), "hold survives the permission prompt")
         step("Stop (finished after 10 s)", ticks: 6, expect: ["log: Kiro CLI finished"]) {
             shell(command("Stop"), stdin: #"{\#(base),"hook_event_name":"Stop"}"#)
         }
         check(!exists("kiro-kiro-7f3a"), "Stop drops the hold")
+        step("SessionEnd drops a leftover hold", forbid: ["finished"]) {
+            shell(command("UserPromptSubmit"), stdin: #"{\#(base),"hook_event_name":"UserPromptSubmit","prompt":"x"}"#)
+            shell(command("SessionEnd"), stdin: #"{\#(base),"hook_event_name":"SessionEnd"}"#)
+        }
+        check(!exists("kiro-kiro-7f3a"), "SessionEnd drops the hold")
+        step("prompt from stdin, as Kiro 3.4.0 sends it", ticks: 3) {
+            shell(command("UserPromptSubmit"), stdin: #"{\#(base),"hook_event_name":"UserPromptSubmit","prompt":"ตอนนี้ fix \"auth\" bug"}"#)
+        }
+        check(HoldStore.readTask("kiro-kiro-7f3a")?.prompt == "ตอนนี้ fix \"auth\" bug", "prompt recorded: \(HoldStore.readTask("kiro-kiro-7f3a")?.prompt ?? "nil")")
         step("prompt from $USER_PROMPT when stdin has none", ticks: 3) {
             _ = shell("export USER_PROMPT='say \"hi\"'; " + command("UserPromptSubmit"), stdin: #"{\#(base),"hook_event_name":"UserPromptSubmit"}"#)
         }
