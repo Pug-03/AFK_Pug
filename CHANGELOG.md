@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0 - 2026-11-18
+
+### Added
+- **Kiro CLI:** Settings → Agents → Kiro CLI connects it through its own hook file, `~/.kiro/hooks/afkpug.json` (Kiro CLI V3), so the Mac stays awake while Kiro works and its jobs show up with the project, your request and the current step. Disconnecting removes only AFK Pug's hooks. Older Kiro CLI versions are still found by process detection.
+- **Qwen Code:** Settings → Agents → Qwen Code connects it through native hooks in `~/.qwen/settings.json` instead of process detection, so the list shows what it is doing and notifies you when it waits for an answer.
+
 ## 0.9.2 - 2026-11-13
 
 ### Added
