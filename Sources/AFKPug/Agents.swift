@@ -343,7 +343,7 @@ enum Installer {
 
 /// A settings file whose hooks look like Claude Code's:
 /// `{"hooks": {"<Event>": [{"matcher": ..., "hooks": [{"type": "command", "command": ...}]}]}}`.
-/// Claude Code and Gemini CLI both use this shape.
+/// Claude Code, Gemini CLI and Qwen Code use this shape.
 struct NestedHooksFile: Sendable {
     let url: URL
     let agent: String
@@ -477,7 +477,8 @@ enum Uninstaller {
             if ConfigFile.mentionsHook(ClaudeHooks.settingsURL) { report.errors.append("Claude Code hooks: \(error.localizedDescription)") }
         }
         for (item, url) in [(AgentIntegrations.codex, CodexHooks.file.url), (AgentIntegrations.gemini, GeminiHooks.file.url),
-                            (AgentIntegrations.cursor, CursorHooks.configURL), (AgentIntegrations.kiro, KiroHooks.fileURL)] {
+                            (AgentIntegrations.cursor, CursorHooks.configURL), (AgentIntegrations.kiro, KiroHooks.fileURL),
+                            (AgentIntegrations.qwen, QwenHooks.file.url)] {
             do { try item.disconnect() } catch {
                 if ConfigFile.mentionsHook(url) { report.errors.append("\(item.name) hooks: \(error.localizedDescription)") }
             }

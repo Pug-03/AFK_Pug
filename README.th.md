@@ -56,7 +56,7 @@
 - **ไม่ให้จอดับได้:** ตอน agent ทำงาน หรือต่ออีก 30 นาทีถึง 1 ชั่วโมง
 - **ดูได้ว่า agent ขยันแค่ไหน:** เวลาทำงาน จำนวนขั้นตอน และงานที่เสร็จ เป็นกราฟ 24 ชั่วโมงหรือ 7 วันล่าสุด
 - **ดูโควตาที่เหลือได้:** โควตา 5 ชั่วโมงและรายสัปดาห์ของ Claude Code กับ Codex ใช้ไปเท่าไหร่ พร้อมเตือนก่อนหมด
-- **ตื่นตาม agent:** Claude Code, Codex, Gemini CLI, Cursor, Kiro CLI และอื่นๆ
+- **ตื่นตาม agent:** Claude Code, Codex, Gemini CLI, Cursor, Kiro CLI, Qwen Code และอื่นๆ
 - **รอโควตา Claude รีเซ็ต:** เครื่องตื่นรอจนถึงเวลารีเซ็ต เพื่อให้งานทำต่อได้
 - **ประหยัดแบต:** ปิดหน้าจอ ปิดเสียง เปิดโหมดพลังงานต่ำ แล้วคืนค่าเดิมเมื่อเปิดจอ
 - **ฟังเพลงต่อได้:** เพลงที่เปิดอยู่ก่อนพับจอจะเล่นต่อ
@@ -481,8 +481,9 @@ AFK Pug จะไม่เปิดแอปที่ยังไม่ได้
 | Codex | Hook ใน `~/.codex/hooks.json` หลังเชื่อถือด้วย `/hooks` |
 | Gemini CLI | Hook ใน `~/.gemini/settings.json` |
 | Cursor (agent ในแอปและ `cursor-agent`) | Hook ใน `~/.cursor/hooks.json` ใช้เฉพาะ event สำหรับสังเกตการณ์ จึงไม่กระทบสิ่งที่คุณอนุมัติ |
+| Qwen Code | Hook ใน `~/.qwen/settings.json` |
 | Kiro CLI (V3) | Hook ใน `~/.kiro/hooks/afkpug.json` ซึ่งเป็นไฟล์ของ AFK Pug เอง |
-| Aider, OpenCode, Amp, Goose, Qwen Code | ตรวจจับ process (**ตั้งค่า → AI agent → ตรวจจับ agent อื่นด้วย**) นับว่าทำงานเมื่อ process ใช้ CPU |
+| Aider, OpenCode, Amp, Goose | ตรวจจับ process (**ตั้งค่า → AI agent → ตรวจจับ agent อื่นด้วย**) นับว่าทำงานเมื่อ process ใช้ CPU |
 | อื่นๆ | [คำสั่ง `afkpug`](#cli) |
 
 แอปแก้เฉพาะส่วนของตัวเอง เขียนผ่าน symlink ได้ เก็บไฟล์เวอร์ชันแรกสุดไว้เป็น `<file>.afkpug-backup` และไม่แตะไฟล์ที่เป็น read-only
@@ -545,7 +546,7 @@ open "afkpug://sleep-now"           # เหมือนปุ่มให้พ
 | **AI agent** | แจ้งเตือน | เปิด |
 | | กราฟความขยันของ Agent บนหน้าหลัก | เปิด |
 | | รอก่อนพักเครื่อง: ปิด, 2, 5 หรือ 15 นาที | 2 นาที |
-| | เชื่อมต่อหรือยกเลิก Claude Code, Codex, Gemini CLI, Cursor, Kiro CLI | คุณเลือกเอง |
+| | เชื่อมต่อหรือยกเลิก Claude Code, Codex, Gemini CLI, Cursor, Kiro CLI, Qwen Code | คุณเลือกเอง |
 | | ตรวจจับ agent อื่นด้วย | เปิด |
 | | โควตาของ Claude Code (อ่านจาก status line) | ปิด |
 | | ให้ agent สั่งไม่ให้เครื่องพักได้เอง (MCP) | ยังไม่เชื่อมต่อ |

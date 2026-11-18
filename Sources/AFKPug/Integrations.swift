@@ -25,7 +25,7 @@ struct AgentIntegration: Identifiable, Sendable {
 }
 
 enum AgentIntegrations {
-    static var all: [AgentIntegration] { [claude, codex, gemini, cursor, kiro] }
+    static var all: [AgentIntegration] { [claude, codex, gemini, cursor, kiro, qwen] }
 
     static func integration(_ id: String) -> AgentIntegration? { all.first { $0.id == id } }
 
@@ -104,6 +104,18 @@ enum AgentIntegrations {
         connect: { try CursorHooks.install() },
         disconnect: { try CursorHooks.uninstall() },
         processNames: ["Cursor Agent"]
+    )
+
+    static let qwen = AgentIntegration(
+        id: "qwen",
+        name: "Qwen Code",
+        configPath: "~/.qwen/settings.json",
+        isAvailable: { FileManager.default.fileExists(atPath: QwenHooks.file.url.deletingLastPathComponent().path) },
+        isConnected: { QwenHooks.file.isInstalled() },
+        needsUpgrade: { QwenHooks.file.needsUpgrade() },
+        connect: { try QwenHooks.file.install() },
+        disconnect: { try QwenHooks.file.uninstall() },
+        processNames: ["Qwen Code"]
     )
 
     static let kiro = AgentIntegration(
@@ -274,6 +286,26 @@ enum GeminiHooks {
     ]
     static let file = NestedHooksFile(url: ConfigFile.home(".gemini/settings.json"), agent: "gemini", events: events) { event in
         ["name": "afkpug-" + event.lowercased(), "timeout": 5000]
+    }
+}
+
+// MARK: - Qwen Code
+
+/// ~/.qwen/settings.json `hooks` (a Gemini CLI fork, same shape as Claude Code's; timeouts in s).
+/// StopFailure only releases: the "fail" action reads Claude's usage-limit messages.
+/// https://qwenlm.github.io/qwen-code-docs/en/users/features/hooks/
+enum QwenHooks {
+    static let events: [(event: String, action: String)] = [
+        ("UserPromptSubmit", "start"),
+        ("PreToolUse", "touch"),
+        ("PostToolUse", "touch"),
+        ("Notification", "notify"),   // permission_prompt -> waiting
+        ("Stop", "stop"),
+        ("StopFailure", "end"),
+        ("SessionEnd", "end"),
+    ]
+    static let file = NestedHooksFile(url: ConfigFile.home(".qwen/settings.json"), agent: "qwen", events: events) { event in
+        ["name": "afkpug-" + event.lowercased(), "timeout": 10]
     }
 }
 

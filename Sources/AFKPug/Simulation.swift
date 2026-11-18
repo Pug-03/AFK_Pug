@@ -51,6 +51,7 @@ enum Simulation {
         ("preview-th", "[13] Thai preview after 85 min closed renders, busy Claude hold survives"),
         ("codex-hooks", "Codex ~/.codex/hooks.json: install/upgrade/uninstall, real hook commands, no double hold"),
         ("gemini-hooks", "Gemini CLI settings.json hooks: install/upgrade/uninstall, JSONC refused, real hook commands"),
+        ("qwen-hooks", "Qwen Code settings.json hooks: install/upgrade/uninstall, real hook commands, no double hold"),
         ("kiro-hooks", "Kiro CLI ~/.kiro/hooks/afkpug.json: install/upgrade/uninstall, own file, real hook commands"),
         ("cursor-hooks", "Cursor hooks.json: JSON replies, stop status, Claude hooks run by Cursor, script missing"),
         ("claude-plugin", "Claude Code plugin installed: no settings.json hooks; repo plugin/ commands work"),
@@ -341,6 +342,7 @@ private final class Runner {
         case "preview-grace": previewGrace()
         case "codex-hooks": codexHooks()
         case "gemini-hooks": geminiHooks()
+        case "qwen-hooks": qwenHooks()
         case "kiro-hooks": kiroHooks()
         case "cursor-hooks": cursorHooks()
         case "claude-plugin": claudePlugin()
@@ -1514,7 +1516,7 @@ private final class Runner {
     func uninstallAll() {
         configure(); boot()
         do { try ClaudeHooks.install() } catch { fail("install hooks: \(error)") }
-        for item in [AgentIntegrations.codex, AgentIntegrations.gemini, AgentIntegrations.cursor] {
+        for item in [AgentIntegrations.codex, AgentIntegrations.gemini, AgentIntegrations.cursor, AgentIntegrations.qwen] {
             do { try item.connect() } catch { fail("connect \(item.name): \(error)") }
         }
         step("Go AFK, close the lid", expect: ["disablesleep 1", "lock screen"]) { engine.start(); Sim.set("lid", "closed") }
@@ -2759,6 +2761,39 @@ extension Runner {
             fire(url, "SessionEnd", #"{\#(base),"hook_event_name":"SessionEnd","reason":"exit"}"#)
         }
         check(!exists("gemini-8d1c-gem"), "SessionEnd drops the hold")
+    }
+
+    func qwenHooks() {
+        configure(); boot()
+        let url = QwenHooks.file.url
+        let seed = #"{"theme":"dark","hooks":{"PreToolUse":[{"matcher":"write_file","hooks":[{"name":"mine","type":"command","command":"./check.sh","timeout":30}]}]}}"#
+        let old = #"{"theme":"dark","hooks":{"PreToolUse":[{"matcher":"write_file","hooks":[{"name":"mine","type":"command","command":"./check.sh","timeout":30}]}],"Stop":[{"hooks":[{"type":"command","command":"\#(ConfigFile.hookCommand("done", "qwen"))"}]}]}}"#
+        integrationBasics(AgentIntegrations.qwen, url: url, seed: seed, events: QwenHooks.events, old: old) {
+            $0.contains("mine") && $0.contains("check.sh") && $0.contains("theme")
+        }
+        let base = #""session_id":"qw-1","cwd":"/Users/u/app""#
+        engine.refreshIntegrations()
+        step("UserPromptSubmit", expect: ["log: Qwen Code started working", "disablesleep 1"]) {
+            check(fire(url, "UserPromptSubmit", #"{\#(base),"hook_event_name":"UserPromptSubmit","prompt":"add tests"}"#).isEmpty, "no stdout")
+        }
+        check(exists("qwen-qw-1"), "hold named after session_id")
+        step("PreToolUse / PostToolUse touch", forbid: ["finished"]) {
+            fire(url, "PreToolUse", #"{\#(base),"hook_event_name":"PreToolUse","tool_name":"run_shell_command","tool_input":{"command":"npm test"}}"#)
+            fire(url, "PostToolUse", #"{\#(base),"hook_event_name":"PostToolUse","tool_name":"run_shell_command","tool_input":{"command":"npm test"}}"#)
+        }
+        noDoubleHold("Qwen Code", procs: "  9500 1  40.0 node /opt/homebrew/lib/node_modules/@qwen-code/qwen-code/cli.js\n", holdId: "qwen-qw-1")
+        step("permission prompt: waiting", expect: ["notify: Qwen Code needs you"]) {
+            fire(url, "Notification", #"{\#(base),"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Allow?"}"#)
+        }
+        step("Stop (finished after 10 s)", ticks: 6, expect: ["log: Qwen Code finished"]) {
+            fire(url, "Stop", #"{\#(base),"hook_event_name":"Stop"}"#)
+        }
+        check(!exists("qwen-qw-1"), "Stop drops the hold")
+        step("StopFailure releases silently", ticks: 6, forbid: ["finished"]) {
+            fire(url, "UserPromptSubmit", #"{\#(base),"hook_event_name":"UserPromptSubmit","prompt":"x"}"#)
+            fire(url, "StopFailure", #"{\#(base),"hook_event_name":"StopFailure","error":"rate_limit"}"#)
+        }
+        check(!exists("qwen-qw-1"), "StopFailure drops the hold")
     }
 
     func kiroHooks() {

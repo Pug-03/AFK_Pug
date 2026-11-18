@@ -50,7 +50,7 @@ You ask Claude Code to refactor a module, close your MacBook and walk to lunch. 
 </p>
 
 - **Works with the lid closed:** no monitor or dongle needed
-- **Follows your agents:** Claude Code, Codex, Gemini CLI, Cursor, Kiro CLI and more
+- **Follows your agents:** Claude Code, Codex, Gemini CLI, Cursor, Kiro CLI, Qwen Code and more
 - **Shows what each one is doing:** the project, your request and the current step, and which jobs have finished
 - **Waits out a Claude usage limit:** stays awake until the reset, so the task can continue
 - **Easy on the battery:** screen off, sound muted, Low Power Mode, all restored when you open the lid
@@ -457,8 +457,9 @@ For your phone, install the free [ntfy](https://ntfy.sh) app, subscribe to a top
 | Codex | Native hooks in `~/.codex/hooks.json`, after you trust them with `/hooks` |
 | Gemini CLI | Native hooks in `~/.gemini/settings.json` |
 | Cursor (app agent and `cursor-agent`) | Native hooks in `~/.cursor/hooks.json` (observational events only, so nothing you approve changes) |
+| Qwen Code | Native hooks in `~/.qwen/settings.json` |
 | Kiro CLI (V3) | Native hooks in `~/.kiro/hooks/afkpug.json`, a file of its own |
-| Aider, OpenCode, Amp, Goose, Qwen Code | Process detection (**Settings → Agents → Detect other agents**): counts as working while the process tree uses CPU |
+| Aider, OpenCode, Amp, Goose | Process detection (**Settings → Agents → Detect other agents**): counts as working while the process tree uses CPU |
 | Anything else | The [`afkpug` command](#command-line) |
 
 AFK Pug edits only its own entries, writes through symlinks, keeps your very first version of each file as `<file>.afkpug-backup`, and refuses read-only files.
@@ -517,7 +518,7 @@ Press the gear at the top right of the app.
 | **Agents** | Notify me | on |
 | | Agent hustle chart on the home screen | on |
 | | Wait before sleeping: off, 2, 5 or 15 minutes | 2 min |
-| | Connect or disconnect Claude Code, Codex, Gemini CLI, Cursor, Kiro CLI | set by you |
+| | Connect or disconnect Claude Code, Codex, Gemini CLI, Cursor, Kiro CLI, Qwen Code | set by you |
 | | Detect other agents | on |
 | | Claude Code usage limits (reads them from its status line) | off |
 | | Let agents keep the Mac awake (MCP) | not connected |
@@ -674,7 +675,7 @@ Sources/AFKPug/
 ├── PowerControl.swift  pmset, IOKit assertions, one-time setup
 ├── Sensors.swift       lid, battery and thermal state
 ├── Agents.swift        holds, events, Claude Code hooks, watchdog, uninstaller
-├── Integrations.swift  Codex, Gemini CLI, Cursor and Kiro CLI hooks, careful config file editing
+├── Integrations.swift  Codex, Gemini CLI, Cursor, Kiro CLI and Qwen Code hooks, careful config file editing
 ├── Updater.swift       checks for, verifies and installs new versions
 ├── Extras.swift        process detection, chat pause, lock, hotkey, ntfy, MCP, audio
 ├── Scripts.swift       hook, CLI and watchdog shell scripts
