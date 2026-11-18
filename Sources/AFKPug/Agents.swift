@@ -100,7 +100,7 @@ struct AgentTask: Equatable {
             return tr("Searching the code")
         case "webfetch", "websearch", "web_fetch", "web_search", "google_web_search":
             return tr("Reading the web")
-        case "task", "agent", "use_subagent", "subagent":
+        case "task", "agent", "use_subagent", "invoke_sub_agent", "subagent":
             return tr("Running a helper agent")
         case "todowrite", "write_todos", "update_plan", "todo_list":
             return tr("Planning")
