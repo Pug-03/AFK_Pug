@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.1 - 2026-11-18
+
+### Added
+- **Kiro CLI tells you when it waits for you:** with Kiro CLI 3.4.0 or later, a permission prompt now shows the red "Needs you" badge and notifies you, like the other agents. It sits in its own file, `~/.kiro/hooks/afkpug-permission.json`, so an older Kiro CLI can't reject the main hooks. AFK Pug never answers the prompt for you. Press Connect again to upgrade an existing Kiro CLI connection.
+- **Kiro CLI releases its hold when a session ends,** not only when a turn finishes.
+
+### Fixed
+- Kiro CLI's helper agents show as "Running a helper agent" instead of "Using invoke_sub_agent".
+
 ## 0.10.0 - 2026-11-18
 
 ### Added
