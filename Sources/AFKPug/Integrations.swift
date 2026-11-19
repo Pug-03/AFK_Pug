@@ -127,7 +127,6 @@ enum AgentIntegrations {
         needsUpgrade: { KiroHooks.needsUpgrade() },
         connect: { try KiroHooks.install() },
         disconnect: { try KiroHooks.uninstall() },
-        processNames: ["Kiro CLI"],
         setupNoteKey: "Kiro CLI loads global hooks from version 3. Restart open Kiro sessions after connecting."
     )
 }

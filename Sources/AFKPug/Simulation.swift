@@ -2847,7 +2847,9 @@ extension Runner {
             shell(command("PreToolUse"), stdin: #"{\#(base),"hook_event_name":"PreToolUse","tool_name":"execute_bash","tool_input":{"command":"npm test"}}"#)
             shell(command("PostToolUse"), stdin: #"{\#(base),"hook_event_name":"PostToolUse","tool_name":"execute_bash","tool_input":{"command":"npm test"}}"#)
         }
-        noDoubleHold("Kiro CLI", procs: "  9400 1  40.0 kiro-cli chat\n", holdId: "kiro-kiro-7f3a")
+        // An idle Kiro CLI session keeps its node and bun processes at 10-15% CPU for hours,
+        // so process detection would hold the Mac awake (lid override on) with nothing to do.
+        check(ProcessWatcher.match("kiro-cli") == nil && ProcessWatcher.match("kiro-cli chat") == nil, "Kiro CLI is not detected by process")
         step("PermissionRequest: waiting, hold kept", expect: ["notify: Kiro CLI needs you"]) {
             let r = shell(command("PermissionRequest"), stdin: #"{\#(base),"hook_event_name":"PermissionRequest","tool_name":"execute_bash","tool_input":{"command":"rm -rf build"},"permission":{"capability":"shell"}}"#)
             check(r.status == 0 && r.output.isEmpty, "no decision printed: Kiro still asks you")
