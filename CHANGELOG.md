@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.4 - 2026-11-19
+
+### Fixed
+- **An idle agent could keep the Mac awake for hours.** When a turn ended without the agent saying so (you pressed Esc, or it crashed), AFK Pug kept the job for up to 6 hours as long as the agent's process used a little CPU, so one long build wouldn't be cut off. But some agents use CPU just sitting at their prompt (Kiro CLI uses 10-15 %), so the Mac stayed awake with the lid closed and nothing to do. Now that only counts while a tool is actually running. Otherwise the job ends 15 minutes after its last step, as intended.
+- **AFK Pug's own Codex usage check counted as Codex working.** Reading Codex's limits starts `codex app-server` every 5 minutes, and process detection could take it for Codex and keep the Mac awake for about 2.5 minutes each time.
+- **CI passes again.** Two stress tests still expected four agent connections after Kiro CLI and Qwen Code were added.
+
+### Changed
+- The menu bar A stops breathing, and the "Needs you" badge stops blinking, while the lid is closed or the screen is asleep. Nobody can see them then, and they redrew up to 30 times a second.
+
 ## 0.10.3 - 2026-11-19
 
 ### Fixed
