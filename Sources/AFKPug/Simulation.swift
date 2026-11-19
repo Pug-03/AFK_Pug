@@ -3478,9 +3478,11 @@ extension Runner {
 
     func connectAll() {
         do { try ClaudeHooks.install() } catch { fail("claude install \(error)") }
-        for id in ["codex", "gemini", "cursor"] { engine.connect(id) }
+        // Every hook integration, so a new one can't be left out of these runs.
+        for item in AgentIntegrations.all where item.id != "claude" { engine.connect(item.id) }
         engine.refreshIntegrations()
-        check(engine.connected.values.allSatisfy { $0 } && engine.connected.count == 4, "all four connected (\(engine.connected))")
+        check(engine.connected.values.allSatisfy { $0 } && engine.connected.count == AgentIntegrations.all.count,
+              "all \(AgentIntegrations.all.count) connected (\(engine.connected))")
     }
 
     func s2FourAgents() {
