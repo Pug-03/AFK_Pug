@@ -136,7 +136,8 @@ final class UsageStore: ObservableObject {
     var alert: (String, String) -> Void = { _, _ in }
 
     private init() {
-        alerted = Set(UserDefaults.standard.stringArray(forKey: "usageAlerted") ?? [])
+        // Engine.store: the simulator gets its own, cleared for every scenario.
+        alerted = Set(Engine.store.stringArray(forKey: "usageAlerted") ?? [])
     }
 
     func tick(now: Date) {
@@ -220,7 +221,7 @@ final class UsageStore: ObservableObject {
         if changed {
             // Only the recent ones are worth keeping.
             if alerted.count > 200 { alerted = Set(alerted.sorted().suffix(100)) }
-            UserDefaults.standard.set(Array(alerted), forKey: "usageAlerted")
+            Engine.store.set(Array(alerted), forKey: "usageAlerted")
         }
     }
 
