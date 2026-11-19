@@ -174,6 +174,12 @@ enum HoldStore {
     static let bgUntouchedAfter: TimeInterval = 3 * 60
     /// Hard cap for holds without an expiry, busy or not.
     static let staleAfter: TimeInterval = 6 * 3600
+    /// Agents whose connected hooks report a tool starting (PreToolUse, BeforeTool), so their
+    /// hold says when a tool is running ("tool":1). For them a busy tree only counts during
+    /// a tool: an agent idling at its prompt can use CPU too (Kiro CLI sits at 10-15 %),
+    /// and after a turn that ended without a Stop hook that would hold the Mac awake for
+    /// hours. Cursor's hooks only report a tool afterwards, so it keeps the old rule.
+    static let reportsToolStart: Set<String> = ["claude", "codex", "gemini", "qwen", "kiro"]
     /// No writer sets an expiry further than this ahead (CLI max 24 h, MCP 12 h,
     /// usage limit 6 h): anything beyond is corrupt and must not hold forever.
     static let maxExpiry: TimeInterval = 24 * 3600 + 60
@@ -202,7 +208,12 @@ enum HoldStore {
             let expiresRaw = (json["expires"] as? Double).flatMap { $0.isFinite ? $0 : nil } ?? 0
             let expires = expiresRaw > 0 ? Date(timeIntervalSince1970: min(expiresRaw, 4e10)) : nil
             let pid = (json["pid"] as? NSNumber)?.int32Value ?? 0
-            let quietAfter = (json["bg"] as? NSNumber)?.intValue == 1 ? bgUntouchedAfter : untouchedAfter
+            let background = (json["bg"] as? NSNumber)?.intValue == 1
+            let quietAfter = background ? bgUntouchedAfter : untouchedAfter
+            let agentName = (json["agent"] as? String ?? "").lowercased()
+            // Busy CPU only explains silence while a tool runs (or background work, or an
+            // agent whose hooks can't say when a tool starts).
+            let busyCounts = background || (json["tool"] as? NSNumber)?.intValue == 1 || !reportsToolStart.contains(agentName)
 
             var stale: Bool
             if let expires {
@@ -212,7 +223,7 @@ enum HoldStore {
                 stale = expires < now || tooFar
             } else {
                 let untouched = now.timeIntervalSince(modified)
-                stale = untouched > staleAfter || (untouched > quietAfter && !(pid > 1 && ProcessWatcher.treeBusy(pid)))
+                stale = untouched > staleAfter || (untouched > quietAfter && !(busyCounts && pid > 1 && ProcessWatcher.treeBusy(pid)))
             }
             // Holds that name their owner die with it (a killed terminal never runs the Stop hook).
             if pid > 1, kill(pid, 0) != 0, errno == ESRCH { stale = true }

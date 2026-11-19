@@ -3,6 +3,8 @@ enum Scripts {
     /// Called by agent hooks: afkpug-hook <action> <agent>  (hook JSON on stdin)
     ///   start  prompt submitted (UserPromptSubmit, BeforeAgent, beforeSubmitPrompt): create the hold
     ///   touch  tool calls: re-arm the hold (recreate it if missing or if it is a usage-limit hold).
+    ///          A pre-tool event marks a tool as running ("tool":1) until the next post-tool event:
+    ///          only then may a busy process tree keep an untouched hold (one long build).
     ///          Within 60 s of stop/end only a pre-tool event (new work) recreates it, so late
     ///          post-tool events (Cursor) can't resurrect a finished turn; an interrupt never does.
     ///   stop   turn end (Stop, AfterAgent, Cursor stop): drop the hold, "done" event
@@ -108,10 +110,22 @@ enum Scripts {
     drop_task() { rm -f "$task" "$task.now"; }
     # Kept for the app's "finished" list; it deletes them, or they age out after an hour.
     keep_task() { [ -f "$task" ] && touch "$task"; }
+    # A pre-tool event: a tool is running now (cleared by the post-tool event after it).
+    inflight=""
+    case "$action" in touch) case "$(field hook_event_name)" in PreToolUse|BeforeTool|preToolUse) inflight=1 ;; esac ;; esac
+    # Re-arm an existing hold, adding or dropping the running-tool mark.
+    rearm() {
+      had=""; LC_ALL=C grep -q '"tool":1' "$hold" 2>/dev/null && had=1
+      if [ "$had" = "$inflight" ]; then touch "$hold"; return; fi
+      tmp="$root/holds/.$agent-$sid.$$.tmp"
+      if [ -n "$inflight" ]; then LC_ALL=C sed 's/}[[:space:]]*$/,"tool":1}/' "$hold" > "$tmp"
+      else LC_ALL=C sed 's/,"tool":1//' "$hold" > "$tmp"; fi && mv -f "$tmp" "$hold"
+    }
     # create [expires] [reason]
     create() {
       rm -f "$ended"
       extra=""; [ -n "$2" ] && extra=",\"reason\":\"$2\""
+      [ -n "$inflight" ] && [ -z "$1" ] && extra="$extra,\"tool\":1"
       tmp="$root/holds/.$agent-$sid.$$.tmp"
       printf '{"agent":"%s","started":%s,"expires":%s,"pid":%s%s}\n' "$agent" "$now" "${1:-0}" "$owner" "$extra" > "$tmp" && mv -f "$tmp" "$hold"
     }
@@ -231,7 +245,7 @@ enum Scripts {
         # postToolUseFailure from an interrupt: the user stopped the agent.
         printf '%s' "$input" | LC_ALL=C grep -Eq '"is_interrupt"[[:space:]]*:[[:space:]]*true' && exit 0
         # A usage-limit hold (fixed expiry) turns back into a normal one when work resumes.
-        if [ -f "$hold" ] && LC_ALL=C grep -q '"expires":0,' "$hold"; then save_now; touch "$hold"; exit 0; fi
+        if [ -f "$hold" ] && LC_ALL=C grep -q '"expires":0,' "$hold"; then save_now; rearm; exit 0; fi
         if recently_ended; then
           case "$(field hook_event_name)" in PreToolUse|BeforeTool|preToolUse) ;; *) exit 0 ;; esac
         fi

@@ -223,9 +223,9 @@ private final class Runner {
         print("  FAIL: \(message)")
     }
 
-    func hold(_ id: String, agent: String = "claude", expires: TimeInterval = 0, pid: Int32 = 0) {
+    func hold(_ id: String, agent: String = "claude", expires: TimeInterval = 0, pid: Int32 = 0, tool: Bool = false) {
         let now = Clock.now().timeIntervalSince1970
-        let json = "{\"agent\":\"\(agent)\",\"started\":\(Int(now)),\"expires\":\(expires > 0 ? Int(now + expires) : 0),\"pid\":\(pid)}"
+        let json = "{\"agent\":\"\(agent)\",\"started\":\(Int(now)),\"expires\":\(expires > 0 ? Int(now + expires) : 0),\"pid\":\(pid)\(tool ? ",\"tool\":1" : "")}"
         let url = Paths.holds.appendingPathComponent(id)
         try? json.write(to: url, atomically: true, encoding: .utf8)
         age(id, by: 0)
@@ -1260,10 +1260,25 @@ private final class Runner {
             check(Date().timeIntervalSince((try? holdURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) < 5, "touch re-armed the hold")
             age("claude-s1", by: 0)
         }
+        let pre = #"{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"swift build"}}"#
+        let post = #"{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"swift build"}}"#
+        script(Paths.hookScript, ["touch", "claude"], stdin: pre)
+        check(holdJSON("claude-s1")?["tool"] as? Int == 1, "PreToolUse marks a tool as running")
         step("one 40 min build (owner tree busy), no touches", ticks: 3, forbid: ["unmute", "pmset sleepnow"]) {
             Sim.set("procs", busy); age("claude-s1", by: 40 * 60)
         }
-        check(engine.holds.contains { $0.id == "claude-s1" }, "busy owner keeps an untouched hold")
+        check(engine.holds.contains { $0.id == "claude-s1" }, "busy owner keeps an untouched hold while a tool runs")
+        script(Paths.hookScript, ["touch", "claude"], stdin: post)
+        check(holdJSON("claude-s1")?["tool"] == nil && holdJSON("claude-s1")?["agent"] as? String == "claude", "PostToolUse clears the mark and keeps the hold")
+        // The bag bug: the turn ended without a Stop hook and the agent idles at its prompt
+        // with its own CPU use (Kiro CLI sits at 10-15 %). That used to hold for 6 hours.
+        let idleBusy = "  \(me)     1  12.0 /usr/local/bin/claude\n"
+        step("tool done, Esc, agent idles at 12 % CPU, 16 min untouched", forbid: ["pmset sleepnow"]) { Sim.set("procs", idleBusy); age("claude-s1", by: 16 * 60) }
+        check(!engine.holds.contains { $0.id == "claude-s1" }, "an idle agent's own CPU doesn't keep the hold (got \(engine.holds.map(\.id)))")
+        step("grace runs out after the dropped hold", ticks: 61, expect: ["disablesleep 0", "pmset sleepnow"])
+        step("UserPromptSubmit again", expect: ["log: Claude Code started working", "disablesleep 1"]) { script(Paths.hookScript, ["start", "claude"], stdin: input) }
+        script(Paths.hookScript, ["touch", "claude"], stdin: pre)
+        step("another long build", ticks: 3, forbid: ["pmset sleepnow"]) { Sim.set("procs", busy); age("claude-s1", by: 40 * 60) }
         step("Esc: no Stop hook, Claude idle at the prompt, 16 min untouched", forbid: ["pmset sleepnow"]) { Sim.set("procs", idle); age("claude-s1", by: 16 * 60) }
         check(!engine.holds.contains { $0.id == "claude-s1" } && engine.graceUntil != nil, "hold dropped after 15 min idle, grace started")
         if case let .countdown(until, length) = engine.menuMotion {
@@ -1584,7 +1599,7 @@ private final class Runner {
         L10n.language = .th
         let me = getpid()
         Sim.set("procs", "  \(me)     1   0.4 claude\n  9001 \(me)  60.0 cargo build\n")
-        step("hold + close") { hold("claude-s1", pid: me); hold("cli-x", agent: "cli", expires: 3 * 3600); engine.start(); Sim.set("lid", "closed") }
+        step("hold + close") { hold("claude-s1", pid: me, tool: true); hold("cli-x", agent: "cli", expires: 3 * 3600); engine.start(); Sim.set("lid", "closed") }
         step("85 min closed", ticks: 85, every: 60) { Sim.set("battery", "41 battery"); Sim.set("thermal", "serious") }
         step("open") { Sim.set("lid", "open") }
         check(engine.holds.contains { $0.id == "claude-s1" }, "busy Claude hold still listed")
