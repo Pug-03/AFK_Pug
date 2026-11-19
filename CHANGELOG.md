@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.2 - 2026-11-19
+
+### Fixed
+- **The Mac stayed awake and hot with Kiro CLI open and nothing running.** An idle Kiro CLI session keeps its helper processes at 10-15% CPU for hours, so process detection counted it as working and kept the lid override on. Kiro CLI is no longer found by process; connect it in Settings → Agents instead, and it holds the Mac awake only while it works. If the Mac is running hot with AFK Pug in a bag, update to this version or quit AFK Pug.
+- **A closed Mac stayed awake because of LINE.** LINE keeps an audio stream open for hours with nothing playing, and with "Keep music playing" on that counted as music, so closing the lid kept the Mac awake. A chat app (LINE, Slack, Discord, WhatsApp, Telegram, Messenger, Teams) now counts as sound only during a call or a voice message, when it also uses the microphone. Pausing chat apps while you're away works on an idle LINE again for the same reason.
+
 ## 0.10.1 - 2026-11-18
 
 ### Added
