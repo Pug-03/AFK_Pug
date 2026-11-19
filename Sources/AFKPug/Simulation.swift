@@ -2885,6 +2885,10 @@ extension Runner {
         // An idle Kiro CLI session keeps its node and bun processes at 10-15% CPU for hours,
         // so process detection would hold the Mac awake (lid override on) with nothing to do.
         check(ProcessWatcher.match("kiro-cli") == nil && ProcessWatcher.match("kiro-cli chat") == nil, "Kiro CLI is not detected by process")
+        // AFK Pug's own `codex app-server` (the usage reading) is no user agent.
+        let me = getpid()
+        let found = ProcessWatcher.parse("  \(me)     1   1.0 AFKPug\n  9500 \(me)  40.0 /opt/homebrew/bin/codex app-server\n  9600     1  40.0 /opt/homebrew/bin/codex\n", ownPid: me)
+        check(found.map(\.pid) == [9600], "our own codex app-server isn't counted, the user's codex is (got \(found.map(\.pid)))")
         step("PermissionRequest: waiting, hold kept", expect: ["notify: Kiro CLI needs you"]) {
             let r = shell(command("PermissionRequest"), stdin: #"{\#(base),"hook_event_name":"PermissionRequest","tool_name":"execute_bash","tool_input":{"command":"rm -rf build"},"permission":{"capability":"shell"}}"#)
             check(r.status == 0 && r.output.isEmpty, "no decision printed: Kiro still asks you")

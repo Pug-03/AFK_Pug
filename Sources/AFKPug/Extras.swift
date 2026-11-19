@@ -93,7 +93,13 @@ enum ProcessWatcher {
     }
 
     static func parse(_ out: String, ownPid: Int32) -> [Found] {
-        let (table, agents) = table(out, ownPid: ownPid)
+        var (table, agents) = table(out, ownPid: ownPid)
+        // Our own children aren't the user's agents: the usage reading starts
+        // `codex app-server` every 5 min, which would count as Codex working.
+        var ours = Set<Int32>()
+        var stack = table.children[ownPid] ?? []
+        while let c = stack.popLast(), ours.insert(c).inserted { stack.append(contentsOf: table.children[c] ?? []) }
+        agents.removeAll { ours.contains($0.0) }
 
         // Skip agents nested inside another matched agent (e.g. node -> codex).
         let agentPids = Set(agents.map(\.0))
