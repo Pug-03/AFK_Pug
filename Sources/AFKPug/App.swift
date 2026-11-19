@@ -66,6 +66,12 @@ private struct MenuBarLabel: View {
         .task(id: motion) { await animate(motion) }
     }
 
+    /// Nobody can see the menu bar: lid closed or the screen asleep. Drawing 30 frames a
+    /// second then only costs power (and heat in a bag), so the loops wait instead.
+    private static var unseen: Bool {
+        Engine.shared.lidClosed || CGDisplayIsAsleep(CGMainDisplayID()) != 0
+    }
+
     private func animate(_ motion: MenuMotion) async {
         let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         switch motion {
@@ -75,6 +81,7 @@ private struct MenuBarLabel: View {
             if still { frame = nil; return }
             var i = 0
             while !Task.isCancelled {
+                if Self.unseen { if frame != nil { frame = nil }; try? await Task.sleep(for: .seconds(1)); continue }
                 frame = Self.breath[i % Self.breath.count]; i += 1
                 try? await Task.sleep(for: .milliseconds(2400 / 72))
             }
@@ -85,6 +92,7 @@ private struct MenuBarLabel: View {
             if still { frame = badge; return }
             var on = true
             while !Task.isCancelled {
+                if Self.unseen { if frame !== badge { frame = badge }; try? await Task.sleep(for: .seconds(1)); continue }
                 frame = on ? badge : dim; on.toggle()
                 try? await Task.sleep(for: .milliseconds(600))
             }
