@@ -223,7 +223,10 @@ enum Scripts {
       printf '%s\n' "$types" | LC_ALL=C grep -vq '"monitor"'
     }
     case "$action" in
-      start) save_task prompt; create ;;
+      start)
+        # Qwen Code fires UserPromptSubmit again mid-turn with an empty prompt: keep the request.
+        if [ -z "$(raw prompt)" ] && [ -z "$USER_PROMPT" ] && [ -f "$task" ]; then create; exit 0; fi
+        save_task prompt; create ;;
       touch)
         # postToolUseFailure from an interrupt: the user stopped the agent.
         printf '%s' "$input" | LC_ALL=C grep -Eq '"is_interrupt"[[:space:]]*:[[:space:]]*true' && exit 0

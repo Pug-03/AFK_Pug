@@ -298,6 +298,7 @@ enum QwenHooks {
         ("UserPromptSubmit", "start"),
         ("PreToolUse", "touch"),
         ("PostToolUse", "touch"),
+        ("PostToolUseFailure", "touch"),   // a failed or blocked tool
         ("Notification", "notify"),   // permission_prompt -> waiting
         ("Stop", "stop"),
         ("StopFailure", "end"),

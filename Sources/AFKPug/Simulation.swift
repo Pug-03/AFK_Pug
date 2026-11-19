@@ -2782,7 +2782,12 @@ extension Runner {
         step("PreToolUse / PostToolUse touch", forbid: ["finished"]) {
             fire(url, "PreToolUse", #"{\#(base),"hook_event_name":"PreToolUse","tool_name":"run_shell_command","tool_input":{"command":"npm test"}}"#)
             fire(url, "PostToolUse", #"{\#(base),"hook_event_name":"PostToolUse","tool_name":"run_shell_command","tool_input":{"command":"npm test"}}"#)
+            fire(url, "PostToolUseFailure", #"{\#(base),"hook_event_name":"PostToolUseFailure","tool_name":"run_shell_command","tool_input":{"command":"sleep 6; echo hi"}}"#)
         }
+        // Seen in Qwen Code 0.28.0: after a tool result it sends UserPromptSubmit again with "prompt":"".
+        fire(url, "UserPromptSubmit", #"{\#(base),"hook_event_name":"UserPromptSubmit","prompt_id":"p#0","prompt":""}"#)
+        check(HoldStore.readTask("qwen-qw-1")?.prompt == "add tests", "an empty mid-turn UserPromptSubmit keeps the request (got \(HoldStore.readTask("qwen-qw-1")?.prompt ?? "nil"))")
+        check(exists("qwen-qw-1"), "and keeps the hold")
         noDoubleHold("Qwen Code", procs: "  9500 1  40.0 node /opt/homebrew/lib/node_modules/@qwen-code/qwen-code/cli.js\n", holdId: "qwen-qw-1")
         step("permission prompt: waiting", expect: ["notify: Qwen Code needs you"]) {
             fire(url, "Notification", #"{\#(base),"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Allow?"}"#)
