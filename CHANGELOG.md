@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.3 - 2026-11-19
+
+### Fixed
+- **Qwen Code kept its request in the list.** Checked against Qwen Code 0.28.0: partway through a turn it reports a new prompt with no text, which blanked the request shown for the job. The request now stays until the turn ends. A tool that fails or is blocked also counts as activity now.
+
+### Checked
+- Kiro CLI 3.4.0 and Qwen Code 0.28.0 were tested end to end on a real Mac: a job appears with its request and current step, a permission prompt shows the red "Needs you" badge while the agent still waits for your answer, and the job goes away when the turn or session ends.
+
 ## 0.10.2 - 2026-11-19
 
 ### Fixed
