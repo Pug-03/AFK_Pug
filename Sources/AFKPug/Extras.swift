@@ -167,7 +167,8 @@ enum ChatPauser {
             try? "sim".write(to: file, atomically: true, encoding: .utf8)
             return
         }
-        let audible = AudioWatcher.outputPids()
+        // A chat app's idle stream doesn't make it a call: only one that also records does.
+        let audible = AudioWatcher.audiblePids()
         // Without per-process audio (macOS < 14.2) we can't tell who is playing: stay safe.
         if audible == nil, AudioWatcher.deviceRunning() { return }
         var pids: [Int32] = []
@@ -627,10 +628,32 @@ enum AudioWatcher {
         }
         var ignored = ChatPauser.pausedPids()
         ignored.insert(getpid())
-        if let pids = outputPids() {
+        if let pids = audiblePids() {
             return !pids.subtracting(ignored).isEmpty
         }
         return deviceRunning()
+    }
+
+    /// Output pids that count as sound. A chat app (LINE, Slack, ...) keeps a silent output
+    /// stream open for hours (LINE.MediaService), which would keep a closed Mac awake in a bag:
+    /// its audio only counts while the same app also records (a call or a voice message).
+    static func audiblePids() -> Set<pid_t>? {
+        guard let output = outputPids() else { return nil }
+        return filterChat(output: output, input: inputPids() ?? [], chatApp: chatApp)
+    }
+
+    /// `chatApp(pid)`: the chat app a pid belongs to, nil for anything else.
+    static func filterChat(output: Set<pid_t>, input: Set<pid_t>, chatApp: (pid_t) -> String?) -> Set<pid_t> {
+        let recording = Set(input.compactMap(chatApp))
+        return output.filter { pid in chatApp(pid).map(recording.contains) ?? true }
+    }
+
+    /// The chat app whose bundle holds this process (helpers and XPC services included).
+    static func chatApp(_ pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4096)
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        let path = String(cString: buffer)
+        return ChatPauser.apps.first { path.contains("/\($0).app/") }
     }
 
     /// Names of the apps producing sound right now (for the UI), best effort.
@@ -638,7 +661,7 @@ enum AudioWatcher {
         if let fake = Sim.value("audio") { return fake == "silent" ? [] : (fake == "chat" ? ["Slack"] : ["Music"]) }
         var ignored = ChatPauser.pausedPids()
         ignored.insert(getpid())
-        guard let pids = outputPids()?.subtracting(ignored) else { return [] }
+        guard let pids = audiblePids()?.subtracting(ignored) else { return [] }
         var names: [String] = []
         for pid in pids.sorted() {
             if let app = NSRunningApplication(processIdentifier: pid), let name = app.localizedName {
@@ -659,11 +682,17 @@ enum AudioWatcher {
     /// PIDs with running audio output, nil before macOS 14.2.
     static func outputPids() -> Set<pid_t>? {
         guard #available(macOS 14.2, *) else { return nil }
-        return processOutputPids()
+        return processPids(kAudioProcessPropertyIsRunningOutput)
+    }
+
+    /// PIDs recording audio (a microphone in use), nil before macOS 14.2.
+    static func inputPids() -> Set<pid_t>? {
+        guard #available(macOS 14.2, *) else { return nil }
+        return processPids(kAudioProcessPropertyIsRunningInput)
     }
 
     @available(macOS 14.2, *)
-    private static func processOutputPids() -> Set<pid_t>? {
+    private static func processPids(_ selector: AudioObjectPropertySelector) -> Set<pid_t>? {
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList,
                                                  mScope: kAudioObjectPropertyScopeGlobal,
                                                  mElement: kAudioObjectPropertyElementMain)
@@ -676,7 +705,7 @@ enum AudioWatcher {
         for object in objects {
             var running: UInt32 = 0
             var runningSize = UInt32(MemoryLayout<UInt32>.size)
-            address.mSelector = kAudioProcessPropertyIsRunningOutput
+            address.mSelector = selector
             guard AudioObjectGetPropertyData(object, &address, 0, nil, &runningSize, &running) == noErr, running != 0 else { continue }
             var pid: pid_t = 0
             var pidSize = UInt32(MemoryLayout<pid_t>.size)

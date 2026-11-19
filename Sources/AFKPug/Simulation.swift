@@ -52,6 +52,7 @@ enum Simulation {
         ("codex-hooks", "Codex ~/.codex/hooks.json: install/upgrade/uninstall, real hook commands, no double hold"),
         ("gemini-hooks", "Gemini CLI settings.json hooks: install/upgrade/uninstall, JSONC refused, real hook commands"),
         ("qwen-hooks", "Qwen Code settings.json hooks: install/upgrade/uninstall, real hook commands, no double hold"),
+        ("chat-idle-audio", "a chat app's silent output stream isn't music; a call (mic on) still is"),
         ("kiro-hooks", "Kiro CLI ~/.kiro/hooks/afkpug.json: install/upgrade/uninstall, own file, real hook commands"),
         ("cursor-hooks", "Cursor hooks.json: JSON replies, stop status, Claude hooks run by Cursor, script missing"),
         ("claude-plugin", "Claude Code plugin installed: no settings.json hooks; repo plugin/ commands work"),
@@ -343,6 +344,7 @@ private final class Runner {
         case "codex-hooks": codexHooks()
         case "gemini-hooks": geminiHooks()
         case "qwen-hooks": qwenHooks()
+        case "chat-idle-audio": chatIdleAudio()
         case "kiro-hooks": kiroHooks()
         case "cursor-hooks": cursorHooks()
         case "claude-plugin": claudePlugin()
@@ -2794,6 +2796,19 @@ extension Runner {
             fire(url, "StopFailure", #"{\#(base),"hook_event_name":"StopFailure","error":"rate_limit"}"#)
         }
         check(!exists("qwen-qw-1"), "StopFailure drops the hold")
+    }
+
+    /// LINE.MediaService keeps an output stream open for hours with nothing playing; counted
+    /// as music, it armed the lid override and kept a closed Mac awake (and hot) in a bag.
+    func chatIdleAudio() {
+        let apps: [pid_t: String] = [10: "LINE", 11: "LINE", 20: "Slack"]
+        let chat: (pid_t) -> String? = { apps[$0] }
+        check(AudioWatcher.filterChat(output: [10], input: [], chatApp: chat).isEmpty, "idle LINE stream: not sound")
+        check(AudioWatcher.filterChat(output: [10], input: [11], chatApp: chat) == [10], "LINE call (its other process records): sound")
+        check(AudioWatcher.filterChat(output: [10], input: [20], chatApp: chat).isEmpty, "Slack's mic doesn't make LINE audible")
+        check(AudioWatcher.filterChat(output: [10, 30], input: [], chatApp: chat) == [30], "music from another app still counts")
+        check(AudioWatcher.filterChat(output: [30], input: [30], chatApp: chat) == [30], "a non-chat app recording and playing counts")
+        check(AudioWatcher.chatApp(getpid()) == nil, "this process is no chat app")
     }
 
     func kiroHooks() {
